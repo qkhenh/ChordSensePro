@@ -1,0 +1,341 @@
+% !TeX program = lualatex
+% FORMAT AND PACKAGES
+% {
+\documentclass[a4paper]{article}
+\usepackage{fontspec}
+% \setmainfont{Times New Roman} % Or another font with Vietnamese support
+% \usepackage[T1,T5]{fontenc} % Replaced by fontspec for LuaLaTeX
+\usepackage{lmodern}       % scalable Latin Modern fonts
+% Disable microtype expansion if non-scalable fonts might be used
+\usepackage[expansion=false]{microtype}     % micro-typography (load after fonts)
+\usepackage{lastpage}
+% \usepackage[utf8]{inputenc} % Not needed with LuaLaTeX
+\usepackage[vietnamese,english]{babel}  
+\usepackage{textcomp} 
+\usepackage{ragged2e}
+\usepackage{parskip}
+\usepackage{float}
+\usepackage{a4wide,amssymb,epsfig,latexsym,multicol,array,hhline,fancyhdr}
+\usepackage{amsmath}
+\usepackage[lined,boxed,commentsnumbered]{algorithm2e}
+\usepackage{enumerate}
+\usepackage{xcolor}
+\usepackage{graphicx}							% Standard graphics package
+\usepackage{array}
+\usepackage{tabularx, caption}
+\usepackage{wrapfig}
+\usepackage{multirow}
+\usepackage{multicol}
+\usepackage{rotating}
+\usepackage{graphics}
+\usepackage{geometry}
+\usepackage{setspace}
+\usepackage{epsfig}
+\usepackage{tikz}
+\usepackage{xfrac}
+\usepackage{bm}
+\usepackage{multirow}
+\usepackage{longtable}
+\usepackage{listings} %for pasting code (python, c++, java,...)
+\usepackage{xcolor}
+\usepackage{placeins} %for keep picture sequen
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage[colorlinks]{hyperref}
+\usepackage{tcolorbox}
+\usepackage{caption}
+\usepackage{makecell}
+\usepackage{booktabs}
+\usepackage{pifont}
+\usepackage{subcaption}
+\usepackage{calc}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage[
+ sort=none,% no sorting or indexing required
+ abbreviations,% create list of abbreviations
+ symbols,% create list of symbols
+ stylemods,style=list, % set the default glossary style
+ nogroupskip, nonumberlist, nomain
+]{glossaries-extra}
+
+\usepackage[
+    backend=biber,
+    style=numeric, % Hoặc 'apa', 'ieee' tùy yêu cầu
+    sorting=none   % Sắp xếp theo thứ tự xuất hiện
+]{biblatex}
+\setlength{\bibitemsep}{1em} % Tăng khoảng cách giữa các tài liệu tham khảo
+\addbibresource{citations.bib} % Removed incorrect file name
+
+\newcommand{\cmark}{\ding{51}} % Dấu tick
+\newcommand{\xmark}{\ding{55}} % Dấu chéo
+%% Color
+
+\graphicspath{{image/}}
+\newlength{\ucLeft}
+
+% FORMATTING
+% {
+\DeclareMathOperator{\arccot}{arccot}
+\captionsetup[table]{name=Table}
+\captionsetup[figure]{name=Figure}
+\newenvironment{Description}{\list{}{%
+    \let\makelabel\descriptionlabel    % this comes from the original description environment
+    \setlength{\rightmargin}{\leftmargin}% this comes from the original quote environment
+    \setlength{\labelwidth}{0pt}%          this is new
+    }}{\endlist}
+
+\addbibresource{citations.bib}
+    
+\hypersetup{urlcolor=blue,linkcolor=black,citecolor=black,colorlinks=true} 
+\usetikzlibrary{arrows,snakes,backgrounds}
+\definecolor{mathblue}{RGB}{0,114,188}
+\newtheorem{theorem}{{\bf Theorem}}
+\newtheorem{property}{{\bf Property}}
+\newtheorem{proposition}{{\bf Proposition}}
+\newtheorem{corollary}[proposition]{{\bf Corollary}}
+\newtheorem{lemma}[proposition]{{\bf Lemma}}
+
+\AtBeginDocument{\renewcommand{\listfigurename}{List of Figures}}
+\AtBeginDocument{\renewcommand{\listtablename}{List of Tables}}
+\AtBeginDocument{\renewcommand*\contentsname{Contents}}
+\AtBeginDocument{\renewcommand*\refname{References}}
+
+\setlength{\headheight}{40pt}
+\pagestyle{fancy}
+\fancyhead{} % clear all header fields
+\fancyhead[L]{
+ \begin{tabular}{rl}
+    \begin{picture}(25,15)(0,0)
+    \put(0,-8){\includegraphics[width=8mm, height=8mm]{hcmut.png}}
+   \end{picture}&
+	\begin{tabular}{l}
+		\textbf{\bf \ttfamily University of Technology, Ho Chi Minh City}\\
+		\textbf{\bf \ttfamily Faculty of Computer Science and Engineering}
+	\end{tabular} 	
+ \end{tabular}
+}
+\fancyhead[R]{
+	\begin{tabular}{l}
+		\tiny \bf \\
+		\tiny \bf 
+	\end{tabular}  }
+\fancyfoot{} % clear all footer fields
+\fancyfoot[L]{\scriptsize \ttfamily IoT Multidisciplinary Project - Academic year 2025-2026}
+\fancyfoot[R]{\scriptsize \ttfamily Page {\thepage}/\pageref{LastPage}}
+\renewcommand{\headrulewidth}{0.3pt}
+\renewcommand{\footrulewidth}{0.3pt}
+
+\setcounter{secnumdepth}{4}
+\setcounter{tocdepth}{4}
+
+\makeatletter
+\newcounter {subsubsubsection}[subsubsection]
+\renewcommand\thesubsubsubsection{\thesubsubsection .\@alph\c@subsubsubsection}
+\newcommand\subsubsubsection{\@startsection{subsubsubsection}{4}{\z@}%
+                                     {-3.25ex\@plus -1ex \@minus -.2ex}%
+                                     {1.5ex \@plus .2ex}%
+                                     {\normalfont\normalsize\bfseries}}
+\newcommand*\l@subsubsubsection{\@dottedtocline{3}{10.0em}{4.1em}}
+\newcommand*{\subsubsubsectionmark}[1]{}
+\makeatother
+% }
+
+% ACRONYMS & SYMBOLS
+% {
+\setabbreviationstyle{long-short}
+\newabbreviation{ode}{ODE}{(First-Order) Ordinary Differential Equation}
+\newabbreviation{ivp}{IVP}{Initial-Value Problem}
+\newabbreviation{lte}{LTE}{Local Truncation Error}
+\newabbreviation{ds}{DS}{Dynamical System}
+\newabbreviation{fig}{Fig.}{Figure}
+\newabbreviation{tab}{Tab.}{Table}
+\newabbreviation{sys}{Sys.}{System of Equations}
+\newabbreviation{eq}{Eq.}{Equation}
+\newabbreviation{eg}{e.g.}{For Example}
+\newabbreviation{ie}{i.e.}{That Is}
+\glsxtrnewsymbol[description = {Set of natural numbers}]{natural}{\ensuremath{\mathbb{N}}}
+\glsxtrnewsymbol[description = {Set of real numbers}]{real}{\ensuremath{\mathbb{R}}}
+\glsxtrnewsymbol[description = {Set of positive real numbers}]{real_positive}{\ensuremath{\mathbb{R}^+}}
+% }
+
+% DOCUMENT
+\begin{document}
+\justifying
+% TITLE PAGE
+\begin{titlepage}
+\begin{center}
+VIETNAM NATIONAL UNIVERSITY, HO CHI MINH CITY \\
+UNIVERSITY OF TECHNOLOGY \\
+FACULTY OF COMPUTER SCIENCE AND ENGINEERING
+\end{center}
+
+\vspace{1cm}
+
+\begin{figure}[h!]
+\begin{center}
+\includegraphics[width=3cm]{hcmut.png}
+\end{center}
+\end{figure}
+
+\vspace{1cm}
+
+\begin{center}
+\begin{tabular}{c}
+\multicolumn{1}{l}{\textbf{{\Large IoT MULTIDISCIPLINARY PROJECT}}}\\
+~~\\
+~~\\
+\hline
+\\
+\multicolumn{1}{l}{\textbf{{\Large Project}}}\\
+\\
+\textbf{\textit{{\LARGE ChordSense Pro}}}\\
+\textbf{\textit{{\normalsize An AI-Powered Context-Aware System for Musician's}}}\\
+\textbf{\textit{{\normalsize Interactive Practice Workspace with Harmonic Analysis Support}}}\\
+\\
+\hline
+\end{tabular}
+\end{center}
+
+\vspace{2cm}
+
+\begin{table}[h]
+\centering
+    \begin{tabular}{rl}
+    \textbf{Instructor}: & Võ Thị Ngọc Châu\\
+
+    & \\[10pt]
+    \textbf{Students}: & Mai Chung Tiến - 2353177 \emph{(CC01 - Team 05)} \\
+    & Đặng Quốc Khánh - 2352515 \emph{(CC01 - Team 05, \textbf{Leader})}\\
+    \end{tabular}
+\end{table}
+
+\begin{center}
+{\footnotesize HO CHI MINH CITY, SEPTEMBER 2026}
+\end{center}
+\end{titlepage}
+
+%list of content
+\pagebreak
+\tableofcontents
+\pagebreak
+
+% Member list
+\section*{Member list \& Workload}
+\addcontentsline{toc}{section}{Member list \& Workload}
+\begin{center}
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{|c|p{5cm}|p{5cm}|c|}
+\hline
+\textbf{No.} & \textbf{Member} & \textbf{Role} & \textbf{\% done}\\
+\hline
+%%%%%Student 1%%%%%%%%%%
+1 & Mai Chung Tien (2353177) & Full Stack Developer & 100\%\\
+\hline
+%%%%%Student 2%%%%%%%%%%%
+2 & Dang Quoc Khanh (2352515) & Data Engineer \& AI Developer & 100\%\\
+\hline
+\end{tabular}
+\caption{\label{table1}Member list \& workload}
+\end{table}
+\end{center}
+
+%%%% noi dung
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\pagebreak
+\setlength{\parindent}{0pt}
+
+% =============================================
+% PROJECT DESCRIPTION
+% =============================================
+\section{Project Title}
+
+\textbf{ChordSense Pro} --- An AI-Powered Context-Aware System for Musician's Interactive Practice Workspace with Harmonic Analysis Support
+
+\section{Background and Motivation}
+
+For musicians who play guitar, piano, or any chordal instrument, one of the most fundamental skills is understanding the \textbf{harmonic structure} of a song --- which chords are used, how they function within the musical key, and how they relate to each other. This knowledge is essential for learning songs by ear, improvising, and composing original music.
+
+Currently available tools on the market leave a significant gap:
+
+\begin{itemize}
+    \item \textbf{Chord recognition tools} (e.g., ChordAI, Chordify) can automatically identify chords from a song, but they stop there. They provide raw chord labels (e.g., ``Am7'', ``G9'') with no deeper musical context --- no analysis of harmonic function, no scale suggestions, and no interactive practice features.
+    \item \textbf{Sheet music players} (e.g., Song Master Pro) offer looping and playback control, but lack intelligent harmonic analysis and cannot recognize complex extended chords (9th, 11th, 13th) reliably.
+    \item Neither category allows musicians to \textbf{edit, annotate, and save} their own version of a chord chart with personalized voicings or corrections.
+\end{itemize}
+
+The core insight of this project is that \textbf{chord recognition is only the raw data layer}. The real value lies in \textbf{translating that raw data into musical knowledge} and providing a \textbf{closed-loop practice environment} where musicians can analyze, study, and drill any song they want.
+
+\section{Project Objectives}
+
+\textbf{ChordSense Pro} is a full-stack web application combining an AI-powered chord detection engine with a client-side harmonic analysis engine and an interactive practice workspace.
+
+\subsection{AI-Powered Chord Detection (DE/AI)}
+
+The system accepts a song input (YouTube URL or uploaded audio file) and produces a time-stamped chord event timeline. Key contributions:
+
+\begin{itemize}
+    \item \textbf{Source separation:} Isolate the harmonic instrument track from drums, bass, and vocals using Demucs before analysis.
+    \item \textbf{Extended chord recognition:} Using a fine-tuned deep learning model (\textbf{MERT-v1-330M} + LoRA, Cascaded 3-Head architecture), the system reliably recognizes complex chords including 9th, 11th, 13th, diminished, and augmented extensions --- which current commercial tools (ChordAI, Chordify) handle poorly. The model is trained on Google Colab Pro (A100 GPU) for maximum accuracy on extended chords.
+    \item \textbf{Beat-aligned output:} Chord events are synchronized to the beat grid (BPM, time signature, offset) enabling pixel-accurate display on the visual grid.
+    \item \textbf{Real-time detection:} Sub-500ms latency for live microphone input during practice sessions.
+\end{itemize}
+
+\subsection{Harmonic Analysis and Interactive Workspace (BE/FE)}
+
+Built on the client side to eliminate network latency, the Harmonic Engine provides:
+
+\begin{itemize}
+    \item \textbf{Roman Numeral Analysis:} Each chord is automatically labeled with its harmonic function (I, ii, V7, etc.) within the song's detected key, helping musicians understand why a progression sounds the way it does.
+    \item \textbf{Scale Mapping:} Each chord is mapped to its corresponding improvisation scale (Ionian, Mixolydian, Dorian, etc.), providing instant guidance for soloists.
+    \item \textbf{Smart Grid View:} A synchronized, beat-aligned chord grid that highlights the current chord in real time, with click-to-seek (accuracy $<$100ms) and A/B looping for drilling specific sections.
+    \item \textbf{Practice Tools:} Web Audio API metronome and playback speed control (0.5x, 0.75x) without pitch distortion.
+    \item \textbf{Edit Marker and Personal Library:} Musicians can override AI-detected chords with their own interpretation and save personalized chord charts to a cloud playlist.
+    \item \textbf{Chord Dictionary:} An interactive encyclopedia with guitar fretboard and piano keyboard diagrams, with in-browser audio synthesis.
+\end{itemize}
+
+\section{Practical Significance}
+
+\begin{itemize}
+    \item \textbf{For self-taught musicians:} Enables anyone to learn the harmonic structure of any song in minutes, without formal theory training or expensive lessons.
+    \item \textbf{For advanced musicians and composers:} Deep harmonic context (Roman numerals, scale mapping) accelerates understanding of complex jazz and contemporary progressions.
+    \item \textbf{Scientific contribution:} The project proposes a Cascaded 3-Head LoRA architecture for extended chord recognition that outperforms current commercial tools, and publishes an open Vietnamese piano chord dataset for the research community.
+\end{itemize}
+
+\section{Team and Responsibilities}
+
+\begin{table}[H]
+\centering
+\small
+\renewcommand{\arraystretch}{1.5}
+\begin{tabularx}{\textwidth}{|l|l|X|}
+\hline
+\textbf{Member} & \textbf{Role} & \textbf{Responsibilities} \\
+\hline
+Dang Quoc Khanh &
+\makecell[l]{Data Engineer \\ \& AI Developer} &
+\begin{itemize}[nosep, leftmargin=*]
+  \item Audio ETL pipeline (download, source separation, segmentation)
+  \item Training dataset preparation and augmentation
+  \item AI model: MERT + LoRA Cascaded 3-Head fine-tuning
+  \item REST API for chord detection and full-song analysis
+\end{itemize} \\
+\hline
+Mai Chung Tien &
+Full Stack Developer &
+\begin{itemize}[nosep, leftmargin=*]
+  \item Web App UI (Smart Grid Player, Chord Dictionary)
+  \item Client-side Harmonic Engine (Roman numeral, Scale mapping)
+  \item REST API and database design (PostgreSQL/Prisma)
+  \item WebRTC integration for live microphone chord detection
+\end{itemize} \\
+\hline
+\end{tabularx}
+\caption{Team responsibilities}
+\end{table}
+
+\end{document}
+
+

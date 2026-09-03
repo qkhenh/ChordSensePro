@@ -1,0 +1,46 @@
+﻿# Node / React
+node_modules/
+dist/
+.vite/
+*.local
+
+# Python / AI
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.onnx
+*.pt
+*.pth
+*.bin
+*.safetensors
+wandb/
+runs/
+checkpoints/
+outputs/
+.cache/
+
+# LaTeX
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.pdf
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# Env
+.env
+.env.local
+.env.production
+*.key
