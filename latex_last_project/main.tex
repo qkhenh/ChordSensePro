@@ -295,9 +295,6 @@ A key differentiator of ChordSense Pro is its ability to generate musical notati
 
 \begin{itemize}
     \item \textbf{Mode A --- Vocal Music $\rightarrow$ ChordPro Format:} For songs with lyrics, the system runs Whisper ASR on the separated vocal track to extract word-level timestamps, then aligns detected chord change events to lyric word boundaries, producing a standard ChordPro sheet:
-    \begin{quote}
-        \texttt{Em l\`{a} [F]ai t\`{u} \dj{}âu b\uhorn{}ó\'{c} [G]\dj{}\'{e}n n\ohorn{}i \dj{}ây di\d{u} [Am]d\`{a}ng chân ph\uhorn{}\ohorn{}ng}
-    \end{quote}
     Export formats: \texttt{.chordpro}, \texttt{.txt}, \texttt{.pdf}.
 
     \item \textbf{Mode B --- Instrumental Music $\rightarrow$ Lead Sheet:} For instrumental tracks (guitar solo, piano, synth lead), the separated melody track is processed by \textbf{CREPE} (pitch tracking) or \textbf{Basic Pitch} (Spotify, polyphonic transcription) to extract note events with onset/duration. Notes are quantized to the beat grid and rendered as a standard lead sheet using \textbf{VexFlow} in the browser. Export formats: \texttt{.mid}, \texttt{.musicxml}, \texttt{.pdf}.
