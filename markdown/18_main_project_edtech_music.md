@@ -1,6 +1,6 @@
-# ChordSense Pro: An AI-Powered Context-Aware System for Musician's Interactive Practice Workspace with Harmonic Analysis Support
+﻿# ChordSense Pro: An AI-Powered Context-Aware System for Musician's Interactive Practice Workspace with Harmonic Analysis Support
 
-> **Mục tiêu:** Xây dựng hệ thống EdTech end-to-end: Thu thập dữ liệu âm nhạc từ curriculum + dataset chuẩn → ETL Pipeline (DDD) → AI nhận dạng hợp âm từ audio theo thời gian thực → Web App hỗ trợ học sinh THCS luyện tập nhạc cụ. Đủ phức tạp cho đồ án tốt nghiệp, có đóng góp khoa học rõ ràng trong domain EdTech + MIR Việt Nam.
+> **Mục tiêu:** Xây dựng hệ thống AI end-to-end dành cho nhạc công: Thu thập + xử lý dữ liệu âm nhạc → fine-tune MERT-v1-330M (Cascaded 3-Head + LoRA) để nhận diện extended chord → Sheet Generation (ChordPro cho nhạc có lời, Lead Sheet cho nhạc không lời) → Web App thực hành hòa âm tương tác. Đóng góp khoa học rõ ràng trong MIR (Music Information Retrieval) với dataset VN Piano Extended Chord.
 
 > **Bối cảnh:** GVHD gợi ý chuyển hướng sang learning technologies cho môn văn thể mỹ phổ thông sau khi nhận xét đồ án âm nhạc thuần túy (phân tích + gợi ý) không có đủ academic contribution.
 
@@ -20,6 +20,7 @@ Các giải pháp nhận diện hợp âm hiện tại (ChordAI, Chordify) đang
 - **Không có phân tích hòa âm ngữ cảnh**: Không hiển thị chức năng bậc (I, IV, V), không gợi ý âm giai tương ứng
 - **Môi trường luyện tập rời rạc**: Không có A/B Loop, metronome, speed shifting tích hợp trong cùng giao diện
 - **Không có cá nhân hóa**: Không cho phép chỉnh sửa hợp âm, không lưu thư viện bản nhạc riêng
+- **Không tạo được sheet nhạc**: Không xuất được ChordPro (nhạc có lời) hay lead sheet (nhạc không lời) để nhạc công dùng thực tế
 
 ### ChordSense giải quyết gì?
 
@@ -1621,4 +1622,5 @@ Tháng 6:
 | Demo impact | "Xem chart nhạc" | **"Gảy đàn → AI nhận dạng / Import bài → học ngay"** |
 | Dataset đóng góp | Không | ✅ **VN guitar chord dataset** |
 | Mở rộng sau thesis | Hạn chế | **Lớn** (sheet music, solfege, ear training) |
+
 
