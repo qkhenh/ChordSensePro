@@ -289,6 +289,20 @@ The system accepts a song input (YouTube URL or uploaded audio file) and produce
     \item \textbf{Real-time detection:} Sub-500ms latency for live microphone input during practice sessions.
 \end{itemize}
 
+\subsection{Sheet Generation Engine (DE/AI + FE)}
+
+A key differentiator of ChordSense Pro is its ability to generate musical notation directly from audio --- bridging the gap between raw chord detection and practical musician output. The system supports two modes based on the input type:
+
+\begin{itemize}
+    \item \textbf{Mode A --- Vocal Music $\rightarrow$ ChordPro Format:} For songs with lyrics, the system runs Whisper ASR on the separated vocal track to extract word-level timestamps, then aligns detected chord change events to lyric word boundaries, producing a standard ChordPro sheet:
+    \begin{quote}
+        \texttt{Em l\`{a} [F]ai t\`{u} \dj{}âu b\uhorn{}ó\'{c} [G]\dj{}\'{e}n n\ohorn{}i \dj{}ây di\d{u} [Am]d\`{a}ng chân ph\uhorn{}\ohorn{}ng}
+    \end{quote}
+    Export formats: \texttt{.chordpro}, \texttt{.txt}, \texttt{.pdf}.
+
+    \item \textbf{Mode B --- Instrumental Music $\rightarrow$ Lead Sheet:} For instrumental tracks (guitar solo, piano, synth lead), the separated melody track is processed by \textbf{CREPE} (pitch tracking) or \textbf{Basic Pitch} (Spotify, polyphonic transcription) to extract note events with onset/duration. Notes are quantized to the beat grid and rendered as a standard lead sheet using \textbf{VexFlow} in the browser. Export formats: \texttt{.mid}, \texttt{.musicxml}, \texttt{.pdf}.
+\end{itemize}
+
 \subsection{Harmonic Analysis and Interactive Workspace (BE/FE)}
 
 Built on the client side to eliminate network latency, the Harmonic Engine provides:
@@ -307,6 +321,7 @@ Built on the client side to eliminate network latency, the Harmonic Engine provi
 \begin{itemize}
     \item \textbf{For self-taught musicians:} Enables anyone to learn the harmonic structure of any song in minutes, without formal theory training or expensive lessons.
     \item \textbf{For advanced musicians and composers:} Deep harmonic context (Roman numerals, scale mapping) accelerates understanding of complex jazz and contemporary progressions.
+    \item \textbf{Sheet generation:} Uniquely among student-level tools, ChordSense Pro generates musician-ready output --- ChordPro sheets for vocal music and lead sheets (with melody transcription) for instrumental tracks --- exporting to standard formats (\texttt{.chordpro}, \texttt{.mid}, \texttt{.musicxml}, \texttt{.pdf}).
     \item \textbf{Scientific contribution:} The project proposes a Cascaded 3-Head LoRA architecture for extended chord recognition that outperforms current commercial tools, and publishes an open Vietnamese piano chord dataset for the research community.
 \end{itemize}
 
@@ -327,6 +342,7 @@ Dang Quoc Khanh &
   \item Training dataset preparation and augmentation
   \item AI model: MERT + LoRA Cascaded 3-Head fine-tuning
   \item REST API for chord detection and full-song analysis
+  \item Sheet generation pipeline: Whisper ASR alignment (Mode A) and CREPE/Basic Pitch melody transcription (Mode B)
 \end{itemize} \\
 \hline
 Mai Chung Tien &
@@ -336,6 +352,7 @@ Full Stack Developer &
   \item Client-side Harmonic Engine (Roman numeral, Scale mapping)
   \item REST API and database design (PostgreSQL/Prisma)
   \item WebRTC integration for live microphone chord detection
+  \item VexFlow integration for browser-side lead sheet rendering and export
 \end{itemize} \\
 \hline
 \end{tabularx}
@@ -343,6 +360,8 @@ Full Stack Developer &
 \end{table}
 
 \end{document}
+
+
 
 
 

@@ -27,7 +27,7 @@
 ```
                     ┌────────────────────────────────────┐
                     │       CHORD RECOGNITION ENGINE      │
-                    │   MERT-v1-95M + LoRA Cascaded Head │
+                    │   MERT-v1-330M + LoRA Cascaded Head │
                     └──────────────┬─────────────────────┘
                                    │
               ┌────────────────────┼────────────────────┐
@@ -541,3 +541,125 @@ Tháng 6:
    Test set riêng cho 9th/11th/13th/dim/aug
    Gap rõ ràng để justify thesis contribution
 ```
+
+---
+
+## 11. Output Modes — Vocal vs Instrumental
+
+ChordSense Pro hỗ trợ 2 chế độ output tùy theo loại nhạc đầu vào:
+
+---
+
+### Mode A — Vocal Music → ChordPro Format
+
+**Use case:** Nhạc có lời hát — pop, ballad, folk, nhạc Việt.
+
+**Pipeline:**
+```
+Audio (có lời)
+  │
+  ├─► Demucs v4 (source separation)
+  │         │
+  │         ├── harmony track → MERT-v1-330M → Chord timestamps
+  │         │                   [F:0.02s] [G:1.14s] [Am:2.30s]...
+  │         │
+  │         └── vocal track  → OpenAI Whisper → Lyrics + word timestamps
+  │                             "Em"(0.00s) "là"(0.10s) "ai"(0.21s)...
+  │
+  ▼
+Chord-Lyric Alignment
+  → map chord change timestamp → nearest lyric word boundary
+  │
+  ▼
+ChordPro Format output
+```
+
+**Output example:**
+```
+Em là [F]ai từ đâu bước [G]đến nơi đây dịu [Am]dàng chân phương
+Em là [F]ai tựa như ánh [G]nắng ban mai ngọt [C]ngào trong sương
+```
+
+**Export formats:** .chordpro, .txt, .pdf
+
+---
+
+### Mode B — Instrumental Music → Lead Sheet
+
+**Use case:** Nhạc không lời — guitar instrumental, piano solo, jazz, film score, synthesis lead.
+
+**Pipeline:**
+```
+Audio (không lời)
+  │
+  ▼
+Demucs v4
+  ├── drums  (bỏ qua)
+  ├── bass   (bỏ qua / optional)
+  └── other  ← guitar lead / synth lead / piano melody
+         │
+         ├─► MERT-v1-330M → Chord timeline
+         │                   Fmaj7(0.0s) G7(2.0s) Am7(4.0s)...
+         │
+         └─► CREPE / Basic Pitch (Spotify)
+             → Melody note events (monophonic / polyphonic)
+             → [F4: 0.02s–0.18s] [G4: 0.18s–0.32s] [A4: 0.32s–0.50s]...
+                    │
+                    ▼
+             Quantize → beat grid (snap to nearest 16th note)
+                    │
+                    ▼
+             VexFlow (browser render) → Lead Sheet
+```
+
+**Output example:**
+```
+    Fmaj7           G7              Am7
+╔══════════════════════════════════════════╗
+║  C5─D5─E5─F5   | G5─F5─E5─D5  | C5─── ║  ← melody notes
+║   ♩  ♩  ♩  ♩   |  ♩  ♩  ♩  ♩  |  𝅗𝅥    ║  ← rhythm
+╚══════════════════════════════════════════╝
+```
+
+**Export formats:** .mid (MIDI), .musicxml, .pdf (sheet music), .png
+
+---
+
+### Bảng so sánh 2 mode
+
+| | Mode A — Vocal | Mode B — Instrumental |
+|---|---|---|
+| Input | Nhạc có lời | Nhạc không lời |
+| Chord detection | MERT-v1-330M ✅ | MERT-v1-330M ✅ |
+| Lyrics | Whisper ASR ✅ | Không cần |
+| Melody notes | Không cần | CREPE / Basic Pitch ✅ |
+| Output | ChordPro format | Lead Sheet (staff notation) |
+| Render | Text / PDF | VexFlow (web) / MuseScore |
+| Export | .chordpro .txt .pdf | .mid .musicxml .pdf |
+
+---
+
+### Tech Stack bổ sung cho Output Modes
+
+| Tool | Vai trò | License |
+|------|---------|---------|
+| **OpenAI Whisper** | Lyrics extraction + word-level timestamps | MIT |
+| **CREPE** (Google/Marl) | Monophonic pitch/melody detection | MIT |
+| **Basic Pitch** (Spotify) | Polyphonic note transcription → MIDI | Apache 2.0 |
+| **VexFlow** | Render sheet music trên browser (JS) | MIT |
+| **music21** | MusicXML generation, music theory ops | BSD |
+| **LilyPond** (optional) | High-quality PDF sheet music render | GPL |
+
+---
+
+### Accuracy benchmark (Melody transcription)
+
+| Loại nhạc | Model | Expected accuracy |
+|-----------|-------|------------------|
+| Guitar solo đơn note | CREPE | ~85–92% |
+| Synth lead (sine/saw) | CREPE | ~90%+ |
+| Piano melody | Basic Pitch | ~85%+ |
+| Guitar rhythm phức tạp | Basic Pitch | ~70–80% |
+
+> Note: Accuracy phụ thuộc nhiều vào chất lượng source separation của Demucs.
+> Fine-tune CREPE trên GuitarSet dataset có thể cải thiện thêm ~5–10%.
