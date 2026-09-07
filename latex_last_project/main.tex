@@ -1,4 +1,4 @@
-﻿% !TeX program = lualatex
+% !TeX program = lualatex
 % FORMAT AND PACKAGES
 % {
 \documentclass[a4paper]{article}
@@ -248,117 +248,154 @@ FACULTY OF COMPUTER SCIENCE AND ENGINEERING
 \setlength{\parindent}{0pt}
 
 % =============================================
-% PROJECT DESCRIPTION
+% SECTION 1: PROJECT OVERVIEW
 % =============================================
 \section{Project Title \& Logo}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=4cm]{draft_logo2.jpg}
+    \includegraphics[width=7cm]{draft_logo2.jpg}
     \caption*{\textit{ChordSense Pro --- Project Logo}}
 \end{figure}
 
 \textbf{ChordSense Pro} --- An AI-Powered Context-Aware System for Musician's Interactive Practice Workspace with Harmonic Analysis Support
 
-\section{Background and Motivation}
+\medskip
+\noindent\textit{Tagline: ``Deep Analysis --- Precision Practice --- Complete Mastery''}
 
-For musicians who play guitar, piano, or any chordal instrument, one of the most fundamental skills is understanding the \textbf{harmonic structure} of a song --- which chords are used, how they function within the musical key, and how they relate to each other. This knowledge is essential for learning songs by ear, improvising, and composing original music.
-
-Currently available tools on the market leave a significant gap:
-
-\begin{itemize}
-    \item \textbf{Chord recognition tools} (e.g., ChordAI, Chordify) can automatically identify chords from a song, but they stop there. They provide raw chord labels (e.g., ``Am7'', ``G9'') with no deeper musical context --- no analysis of harmonic function, no scale suggestions, and no interactive practice features.
-    \item \textbf{Sheet music players} (e.g., Song Master Pro) offer looping and playback control, but lack intelligent harmonic analysis and cannot recognize complex extended chords (9th, 11th, 13th) reliably.
-    \item Neither category allows musicians to \textbf{edit, annotate, and save} their own version of a chord chart with personalized voicings or corrections.
-\end{itemize}
-
-The core insight of this project is that \textbf{chord recognition is only the raw data layer}. The real value lies in \textbf{translating that raw data into musical knowledge} and providing a \textbf{closed-loop practice environment} where musicians can analyze, study, and drill any song they want.
-
-\section{Project Objectives}
-
-\textbf{ChordSense Pro} is a full-stack web application combining an AI-powered chord detection engine with a client-side harmonic analysis engine and an interactive practice workspace.
-
-\subsection{AI-Powered Chord Detection (DE/AI)}
-
-The system accepts a song input (YouTube URL or uploaded audio file) and produces a time-stamped chord event timeline. Key contributions:
+% =============================================
+% SECTION 2: CONTEXT & BACKGROUND
+% =============================================
+\section{Context \& Background}
 
 \begin{itemize}
-    \item \textbf{Source separation:} Isolate the harmonic instrument track from drums, bass, and vocals using Demucs before analysis.
-    \item \textbf{Extended chord recognition:} Using a fine-tuned deep learning model (\textbf{MERT-v1-330M} + LoRA, Cascaded 3-Head architecture), the system reliably recognizes complex chords including 9th, 11th, 13th, diminished, and augmented extensions --- which current commercial tools (ChordAI, Chordify) handle poorly. The model is trained on Google Colab Pro (A100 GPU) for maximum accuracy on extended chords.
-    \item \textbf{Beat-aligned output:} Chord events are synchronized to the beat grid (BPM, time signature, offset) enabling pixel-accurate display on the visual grid.
-    \item \textbf{Real-time detection:} Sub-500ms latency for live microphone input during practice sessions.
+    \item \textbf{Digital Music Learning Trends.}
+    Modern instrumentalists --- guitarists, pianists, bassists, and songwriters --- increasingly rely on digital media (YouTube videos, streaming tracks, local audio files) for self-study, transcribing, and practice routines.
+
+    \item \textbf{Rise of Automatic Chord Recognition (ACR).}
+    Advances in Machine Learning and Digital Signal Processing (DSP) have enabled automatic chord transcription platforms such as ChordAI, Chordify, and Song Master Pro, making chord detection accessible to a wide audience.
+
+    \item \textbf{The Industry Gap.}
+    Traditional ACR solutions treat chord label detection as the final deliverable. However, for a practicing musician, raw chord symbols are simply \textbf{unprocessed data}. True musicianship requires understanding the \textbf{harmonic function} of each chord (Roman numerals, scale relationships) and having access to a \textbf{structured, interactive practice environment} --- neither of which existing tools provide.
 \end{itemize}
 
-\subsection{Sheet Generation Engine (DE/AI + FE)}
+% =============================================
+% SECTION 3: PROBLEM STATEMENT
+% =============================================
+\section{Problem Statement}
 
-A key differentiator of ChordSense Pro is its ability to generate musical notation directly from audio --- bridging the gap between raw chord detection and practical musician output. The system supports two modes based on the input type:
+Current ACR solutions create significant friction for musicians across three key dimensions:
+
+\begin{enumerate}
+
+    \item \textbf{Lack of Harmonic and Contextual Insight.}
+    Most platforms only output isolated chord labels (e.g., \texttt{C}, \texttt{G}, \texttt{Am}, \texttt{Em}) with no analysis of their function within the song's key.
+    \begin{itemize}
+        \item They lack \textbf{Roman Numeral Analysis} (e.g., I -- V -- vi -- IV), making it impossible for players to grasp progression logic, understand chord relationships, or transpose across keys with confidence.
+        \item No \textbf{Scale Mapping} is provided, leaving musicians without guidance when attempting to improvise solos, construct vocal harmonies, or compose fills.
+    \end{itemize}
+
+    \item \textbf{Fragmented Practice Workflow.}
+    Musicians are forced to juggle multiple disconnected applications simultaneously: a media player for audio playback, a separate app for chord charts, a standalone metronome for timing, and a fingering reference tool.
+    \begin{itemize}
+        \item Crucial practice capabilities --- such as millisecond-precision click-to-seek, A/B looping for difficult passages, and pitch-preserving tempo shifting --- are either absent or poorly implemented.
+    \end{itemize}
+
+    \item \textbf{Rigidity and High Latency.}
+    AI chord detection is inherently imperfect, yet most web-based tools offer no mechanism for users to override erroneous detections or substitute alternative voicings.
+    \begin{itemize}
+        \item Switching between simplified (\emph{Basic}) and extended (\emph{Precise}) chord representations typically requires a server round-trip, introducing sluggish response times and disrupting the user's practice flow.
+    \end{itemize}
+
+\end{enumerate}
+
+% =============================================
+% SECTION 4: THE SOLUTION — CHORDSENSE PRO
+% =============================================
+\section{The Solution: ChordSense Pro}
+
+\textbf{ChordSense Pro} transforms raw AI chord detection into actionable musical intelligence within an \textbf{all-in-one, end-to-end interactive workspace}. The system is composed of four tightly integrated subsystems:
+
+\subsection{Client-Side Harmonic Engine}
+
+Implemented entirely in the browser to eliminate network latency:
 
 \begin{itemize}
-    \item \textbf{Mode A --- Vocal Music $\rightarrow$ ChordPro Format:} For songs with lyrics, the system runs Whisper ASR on the separated vocal track to extract word-level timestamps, then aligns detected chord change events to lyric word boundaries, producing a standard ChordPro sheet:
-    Export formats: \texttt{.chordpro}, \texttt{.txt}, \texttt{.pdf}.
-
-    \item \textbf{Mode B --- Instrumental Music $\rightarrow$ Lead Sheet:} For instrumental tracks (guitar solo, piano, synth lead), the separated melody track is processed by \textbf{CREPE} (pitch tracking) or \textbf{Basic Pitch} (Spotify, polyphonic transcription) to extract note events with onset/duration. Notes are quantized to the beat grid and rendered as a standard lead sheet using \textbf{VexFlow} in the browser. Export formats: \texttt{.mid}, \texttt{.musicxml}, \texttt{.pdf}.
+    \item \textbf{Roman Numeral Analysis:} Each detected chord is automatically labeled with its harmonic function relative to the song's detected key. For example, in C Major, \texttt{Dm} is dynamically annotated as \emph{ii} and \texttt{G7} as \emph{V7}.
+    \item \textbf{Context-Aware Scale Mapping:} Each chord is mapped to its recommended improvisation scale (e.g., Ionian, Dorian, Mixolydian), providing instant, actionable guidance for soloing and lead playing.
+    \item \textbf{Zero-Latency Mode Switching:} Toggling between \emph{Basic} (simplified) and \emph{Precise} (extended) chord representations is handled entirely client-side via a down-mapping algorithm --- no server communication required.
 \end{itemize}
 
-\subsection{Harmonic Analysis and Interactive Workspace (BE/FE)}
-
-Built on the client side to eliminate network latency, the Harmonic Engine provides:
+\subsection{Interactive Practice Workspace and Synchronized Player}
 
 \begin{itemize}
-    \item \textbf{Roman Numeral Analysis:} Each chord is automatically labeled with its harmonic function (I, ii, V7, etc.) within the song's detected key, helping musicians understand why a progression sounds the way it does.
-    \item \textbf{Scale Mapping:} Each chord is mapped to its corresponding improvisation scale (Ionian, Mixolydian, Dorian, etc.), providing instant guidance for soloists.
-    \item \textbf{Smart Grid View:} A synchronized, beat-aligned chord grid that highlights the current chord in real time, with click-to-seek (accuracy $<$100ms) and A/B looping for drilling specific sections.
-    \item \textbf{Practice Tools:} Web Audio API metronome and playback speed control (0.5x, 0.75x) without pitch distortion.
-    \item \textbf{Edit Marker and Personal Library:} Musicians can override AI-detected chords with their own interpretation and save personalized chord charts to a cloud playlist.
-    \item \textbf{Chord Dictionary:} An interactive encyclopedia with guitar fretboard and piano keyboard diagrams, with in-browser audio synthesis.
+    \item \textbf{Smart Bar-Based Grid View:} A beat-aligned chord grid rendered with sub-100ms synchronization accuracy using \texttt{requestAnimationFrame}, bypassing Virtual DOM overhead for real-time performance.
+    \item \textbf{Click-to-Seek and A/B Looping:} Clicking any bar on the grid seeks audio playback to that bar's exact timestamp. Users drag-select a range of bars to create seamless A/B loops for targeted finger-technique drilling.
+    \item \textbf{Dynamic Metronome and Pitch-Preserving Speed Shift:} A Web Audio API metronome generates accurate click pulses synchronized to the track's BPM. Playback speed can be scaled to $0.5\times$ or $0.75\times$ without pitch distortion.
 \end{itemize}
 
-\section{Practical Significance}
+\subsection{Ultimate Chord Dictionary with Built-In Synthesizer}
 
 \begin{itemize}
-    \item \textbf{For self-taught musicians:} Enables anyone to learn the harmonic structure of any song in minutes, without formal theory training or expensive lessons.
-    \item \textbf{For advanced musicians and composers:} Deep harmonic context (Roman numerals, scale mapping) accelerates understanding of complex jazz and contemporary progressions.
-    \item \textbf{Sheet generation:} Uniquely among student-level tools, ChordSense Pro generates musician-ready output --- ChordPro sheets for vocal music and lead sheets (with melody transcription) for instrumental tracks --- exporting to standard formats (\texttt{.chordpro}, \texttt{.mid}, \texttt{.musicxml}, \texttt{.pdf}).
-    \item \textbf{Scientific contribution:} The project proposes a Cascaded 3-Head LoRA architecture for extended chord recognition that outperforms current commercial tools, and publishes an open Vietnamese piano chord dataset for the research community.
+    \item Interactive visual fingering diagrams for both \textbf{Guitar Fretboards} and \textbf{Piano Keyboards} are displayed for every chord on the grid.
+    \item An in-browser \textbf{Soundfont Synthesizer} audibly renders voicing structures upon user click, enabling immediate ear training without any external tools.
 \end{itemize}
 
-\section{Team and Responsibilities}
+\subsection{User Customization and Cloud Storage (UGC)}
+
+\begin{itemize}
+    \item An \textbf{Edit Marker} modal allows users to correct AI-detected chords, modify bass note voicings, or insert new chord events at any timestamp.
+    \item The Harmonic Engine \textbf{automatically recalculates} Roman numerals and scale suggestions in real time whenever a user edit is made.
+    \item All original AI analyses and user-customized charts are persisted in an \textbf{Event-Based Timeline schema} (PostgreSQL JSONB), enabling cloud-synced personal playlists with full edit history.
+\end{itemize}
+
+% =============================================
+% SECTION 5: TARGET AUDIENCE
+% =============================================
+\section{Target Audience}
+
+\begin{enumerate}
+
+    \item \textbf{Gigging Musicians and Band Members.}
+    Performing musicians who need to rapidly transcribe, internalize, and rehearse setlists directly from YouTube recordings or audio demos. The Roman Numeral Analysis layer enables immediate transposition to match a vocalist's key during live rehearsals or on stage.
+
+    \item \textbf{Music Students and Self-Taught Learners.}
+    Beginners and intermediate players seeking to progress beyond mechanical chord memorization toward genuine music theory comprehension. The A/B Loop and pitch-preserving speed-shift tools are particularly valuable for mastering fast chord transitions at a controlled tempo.
+
+    \item \textbf{Music Producers, Songwriters, and Educators.}
+    Music creators who analyze harmonic progressions in hit records to extract inspiration for new compositions. Educators can leverage the interactive Smart Grid and Scale Mapping as a dynamic visual teaching aid for music theory instruction.
+
+\end{enumerate}
+
+% =============================================
+% SECTION 6: COMPETITIVE POSITIONING
+% =============================================
+\section{Competitive Positioning}
+
+Table~\ref{table:comparison} summarizes the key differentiators between ChordSense Pro and existing market solutions.
 
 \begin{table}[H]
 \centering
-\small
-\renewcommand{\arraystretch}{1.5}
-\begin{tabularx}{\textwidth}{|l|l|X|}
+\renewcommand{\arraystretch}{1.6}
+\begin{tabularx}{\textwidth}{|p{3.5cm}|X|X|}
 \hline
-\textbf{Member} & \textbf{Role} & \textbf{Responsibilities} \\
+\textbf{Feature / Criterion} & \textbf{Traditional Tools} \newline \textit{(Chordify)} & \textbf{ChordSense Pro} \\
 \hline
-Dang Quoc Khanh &
-\makecell[l]{Data Engineer \\ \& AI Developer} &
-\begin{itemize}[nosep, leftmargin=*]
-  \item Audio ETL pipeline (download, source separation, segmentation)
-  \item Training dataset preparation and augmentation
-  \item AI model: MERT + LoRA Cascaded 3-Head fine-tuning
-  \item REST API for chord detection and full-song analysis
-  \item Sheet generation pipeline: Whisper ASR alignment (Mode A) and CREPE/Basic Pitch melody transcription (Mode B)
-\end{itemize} \\
+\textbf{Output Data} &
+Raw chord labels only (\texttt{C}, \texttt{G}, \texttt{Am}) &
+Contextual harmonic intelligence: Roman Numeral Analysis + Scale Mapping + voicing diagrams \\
 \hline
-Mai Chung Tien &
-Full Stack Developer &
-\begin{itemize}[nosep, leftmargin=*]
-  \item Web App UI (Smart Grid Player, Chord Dictionary)
-  \item Client-side Harmonic Engine (Roman numeral, Scale mapping)
-  \item REST API and database design (PostgreSQL/Prisma)
-  \item WebRTC integration for live microphone chord detection
-  \item VexFlow integration for browser-side lead sheet rendering and export
-\end{itemize} \\
+\textbf{Practice Environment} &
+Disconnected external tools (separate metronome, media player, chord app) &
+All-in-one integrated workspace: Synchronized Player + Smart Grid + A/B Loop + Audio Synth \\
+\hline
+\textbf{Customization \& Sync} &
+Fixed AI labels; no override; no cloud sync &
+Live user overrides + real-time theory recalculation + cloud playlist synchronization \\
 \hline
 \end{tabularx}
-\caption{Team responsibilities}
+\caption{Competitive comparison: ChordSense Pro vs.\ existing tools}
+\label{table:comparison}
 \end{table}
 
 \end{document}
-
-
-
-
-
