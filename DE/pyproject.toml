@@ -18,7 +18,7 @@ audio = [
     "soundfile>=0.12.1",
     "audiomentations>=0.36.0",
     "yt-dlp>=2024.11.18",
-    "madmom>=0.16.1",
+    "demucs>=4.0.0",
 ]
 db = [
     "asyncpg>=0.30.0",

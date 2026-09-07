@@ -49,20 +49,31 @@
 ### 2.1 Ba Luồng Dữ Liệu
 
 ```
-LUỒNG 1: Curriculum (1 lần, static)
-  Nguồn: SGK GDPT 2018 Âm nhạc THCS (PDF công khai)
-  Nội dung: Chord list theo từng khối lớp (6-9)
-  Output: PostgreSQL tables: chords, lessons
-  DAG: dag_curriculum_ingest (manual trigger)
+LUỒNG 1: Song Analysis (on-demand, per user request)
+  Nguồn: YouTube URL hoặc audio file upload từ user
+  Pipeline: yt-dlp → Demucs → Beat tracking → Segmentation
+            → MERT-330M Cascaded 3-Head → HMM smoothing
+  Output:
+    - PostgreSQL: song_analyses (chord timeline, BPM, key)
+    - Sheet output: ChordPro (vocal) hoặc Lead Sheet (instrumental)
+    - MongoDB: raw audio segments (lưu để retrain sau)
+  DAG: dag_song_analysis (triggered per request)
 
-LUỒNG 2: Training Audio (1 lần, offline)
-  Nguồn: Dataset học thuật (CC license)
-  Output: Parquet files → /data/training/
-  DAG: dag_dataset_ingest (manual trigger, chạy ~4-6 giờ)
+LUỒNG 2: Training Data Ingest (1 lần, offline)
+  Nguồn: Dataset học thuật CC license
+          RWC + McGill Billboard + JAAH + ChoCo + Pianoteq synthetic
+  Pipeline: Download → Parse JAMS annotation → Segment audio
+            → Augmentation (pitch-shift ×12 + noise/reverb)
+            → Export Parquet
+  Output: /data/training/chord_dataset_v1.parquet
+  DAG: dag_dataset_ingest (manual trigger, ~4-6 giờ)
 
-LUỒNG 3: Student Interaction (real-time, ongoing)
-  Nguồn: WebRTC audio từ user (2s WAV)
-  Output: PostgreSQL: chord_attempts, practice_sessions
+LUỒNG 3: Analytics Rollup (nightly, ongoing)
+  Nguồn: PostgreSQL — practice_sessions, chord_attempts
+  Pipeline: Aggregate per (user, chord, date)
+            → Rolling 3-day accuracy
+            → chord_mastery flag update
+  Output: PostgreSQL: user_chord_mastery, session_summaries
   DAG: dag_analytics_rollup (23:30 daily)
 ```
 
@@ -82,30 +93,35 @@ LUỒNG 3: Student Interaction (real-time, ongoing)
 ### 2.3 Airflow DAGs
 
 ```
-dag_curriculum_ingest    → schedule=None (1 lần)
-  Task 1: Parse SGK PDF → chord list per grade
-  Task 2: Seed PostgreSQL: chords, lessons, curriculum_path
-  Task 3: Validate integrity
+dag_song_analysis        → schedule=None (triggered per request)
+  Task 1: download_audio   — yt-dlp → WAV (mono, 44.1kHz)
+  Task 2: source_separate  — Demucs htdemucs → "other" track
+  Task 3: beat_track       — madmom BeatTracker → beat_times[]
+  Task 4: segment_audio    — 2s segments, căn theo beat
+  Task 5: run_inference    — MERT-330M + LoRA → chord events
+  Task 6: post_process     — HMM smoothing + key detection
+  Task 7: generate_sheet   — ChordPro (vocal) / Lead Sheet (instrumental)
+  Task 8: persist_results  — Save to PostgreSQL + MongoDB
 
-dag_dataset_ingest       → schedule=None (1 lần)
-  Task 1: Download McGill + RWC + JAAH + ChoCo
-  Task 2: Parse JAMS → (audio_segment, chord_label) pairs
-  Task 3: Render Pianoteq synthetic extended chords
-  Task 4: Audio preprocessing: resample 22050Hz → chroma CQT → mel spectrogram
-  Task 5: Augmentation pipeline (pitch-shift x12 + noise)
-  Task 6: Export chord_dataset_v1.parquet → /data/training/
+dag_dataset_ingest       → schedule=None (manual trigger, 1 lần)
+  Task 1: download_datasets  — McGill + RWC + JAAH + ChoCo
+  Task 2: parse_annotations  — JAMS → (audio_segment, chord_label) pairs
+  Task 3: render_synthetic   — Pianoteq: extended chords thiếu trong dataset
+  Task 4: preprocess_audio   — resample 24kHz, normalize loudness (-14 LUFS)
+  Task 5: augment            — pitch-shift ×12 keys + noise + reverb
+  Task 6: export_parquet     — chord_dataset_v1.parquet → /data/training/
 
 dag_analytics_rollup     → schedule="30 23 * * *"
-  Task 1: Aggregate chord_attempts → accuracy per (student, chord, date)
-  Task 2: Tính rolling 3-day accuracy
-  Task 3: Update student_chord_mastery (is_mastered flag)
-  Task 4: Update lesson_completions nếu đủ điều kiện
+  Task 1: aggregate_attempts  — accuracy per (user, chord, date)
+  Task 2: rolling_accuracy    — 3-day rolling window
+  Task 3: update_mastery      — chord_mastery flag (threshold ≥ 80%)
+  Task 4: update_sessions     — session_summaries stats
 
 dag_model_retrain        → schedule="0 2 1 * *" (monthly)
-  Task 1: Export student recordings được review → new training samples
-  Task 2: Merge với existing training data
-  Task 3: Fine-tune LoRA thêm (Phase 3 on new data)
-  Task 4: Evaluate WCS → deploy nếu cải thiện
+  Task 1: export_new_samples  — MongoDB recordings đã verified → training set
+  Task 2: merge_datasets      — Merge với chord_dataset_v1.parquet
+  Task 3: finetune_lora       — Additional LoRA fine-tune on Colab
+  Task 4: evaluate_and_deploy — Compare WCS → swap model nếu cải thiện
 ```
 
 ---
@@ -121,9 +137,10 @@ YouTube URL / File Upload
 [1] Download: yt-dlp → WAV (mono, 44.1kHz)
     │
     ▼
-[2] Source Separation: Demucs (Meta AI, open-source)
-    → Tách: drums | bass | other (piano) | vocals
-    → Chỉ giữ lại "other" track
+[2] Source Separation: Demucs htdemucs_6s (Meta AI, open-source)
+    → Tách 6 stems: drums | bass | vocals | other | guitar | piano
+    → Lấy stem "piano" (primary) hoặc "guitar" (fallback nếu không có piano)
+    → htdemucs_6s cho phép isolate piano trực tiếp — chroma features sạch hơn htdemucs 4-stem
     │
     ▼
 [3] Beat Tracking: madmom BeatTracker
@@ -483,14 +500,14 @@ CREATE TABLE chord_attempts (
     timestamp       TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE TABLE student_chord_mastery (
-    student_id          UUID,
+CREATE TABLE user_chord_mastery (
+    user_id             UUID,
     chord               VARCHAR(10),
     date                DATE,
     accuracy_today      FLOAT,
     rolling_accuracy_3d FLOAT,
     is_mastered         BOOLEAN DEFAULT FALSE,
-    PRIMARY KEY (student_id, chord, date)
+    PRIMARY KEY (user_id, chord, date)
 );
 ```
 
@@ -543,8 +560,8 @@ Optimization:
 ```
 Tháng 1:
   Tuần 1-2: Setup Docker (PostgreSQL + MongoDB + Airflow + Redis)
-  Tuần 3:   dag_curriculum_ingest: parse SGK → seed DB
-  Tuần 4:   Audio processing pipeline (Librosa + Demucs + madmom)
+  Tuần 3:   dag_dataset_ingest: setup pipeline + download datasets (RWC, JAAH, ChoCo)
+  Tuần 4:   Audio processing pipeline (Librosa + Demucs + librosa.beat)
 
 Tháng 2:
   Tuần 1-2: dag_dataset_ingest: download McGill + JAAH + ChoCo
@@ -723,3 +740,5 @@ Demucs v4
 
 > Note: Accuracy phụ thuộc nhiều vào chất lượng source separation của Demucs.
 > Fine-tune CREPE trên GuitarSet dataset có thể cải thiện thêm ~5–10%.
+
+

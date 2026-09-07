@@ -58,7 +58,7 @@ class ProcessingResult(Generic[T]):
         return self._value
     
     def unwrap_or(self, default: T) -> T:
-        return self._value if self.is_ok else default
+        return self._value if self._value is not None else default
     
     def __repr__(self) -> str:
         return f"Ok({self._value!r})" if self.is_ok else f"Err({self._error!r})"
