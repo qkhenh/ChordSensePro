@@ -44,3 +44,5 @@ Thumbs.db
 .env.local
 .env.production
 *.key
+
+latex_last_project
