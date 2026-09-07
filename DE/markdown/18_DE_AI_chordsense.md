@@ -13,6 +13,9 @@
 | **Pretrained model** | MERT-v1-330M (`m-a-p/MERT-v1-330M`) |
 | **Fine-tuning method** | LoRA (PEFT) — rank r=16 |
 | **Model architecture** | Cascaded 3-Head (Root → Quality → Extension) |
+| **Head 1 — Root** | 12 classes: C / C# / D / D# / E / F / F# / G / G# / A / A# / B |
+| **Head 2 — Quality** | 5 classes: major / minor / dominant / diminished / suspended *(aug đã bỏ → quy về major + #5)* |
+| **Head 3 — Extension** | 15 classes: none / b5 / #5 / maj7 / min7 / dom7 / add9 / b9 / nat9 / #9 / nat11 / #11 / nat13 / b13 / alt |
 | **Dataset chính** | RWC + McGill Billboard + JAAH + ChoCo + Pianoteq synthetic |
 | **Augmentation chính** | Pitch-shift + label update (×12 keys) + noise/reverb |
 | **Loss function** | Focal Loss (γ=2) cho Head 3 (Extended) |
@@ -229,39 +232,86 @@ lora_config = LoraConfig(
 
 ### 4.3 Cascaded 3-Head Architecture ⭐ Contribution chính
 
+> **Quyết định taxonomy:**
+> - `aug` bị **loại khỏi Quality** vì `aug = major + #5` → redundant
+> - `b11` **không tồn tại** như extension độc lập: b11 = diminished 4th = enharmonic với major 3rd (4 semitones). Trong practice notation, người ta dùng `#11`, không dùng `b11`.
+> - Extension mở rộng lên 15 classes để cover đầy đủ alterations thực tế.
+
 ```
 MERT (frozen) → 1024-dim embedding
     │
     ▼
-┌─────────────────────────────────────────┐
-│  HEAD 1 — ROOT (12 classes)             │
-│  Linear(1024→128) → ReLU → Linear(128→12)│
-│  → root_logits: [C=0.02, ..., A=0.91,...]
-│  Accuracy target: >95%                  │
-└───────────────┬─────────────────────────┘
-                │ concat root_logits
-                ▼
-┌─────────────────────────────────────────┐
-│  HEAD 2 — QUALITY (6 classes)           │
-│  Input: [embedding(1024) + root(12)]    │
-│  Linear(1036→128) → ReLU → Linear(128→6)│
-│  Classes: major/minor/dominant/dim/aug/sus
-│  Accuracy target: >85%                  │
-└───────────────┬─────────────────────────┘
-                │ concat root + quality logits
-                ▼
-┌─────────────────────────────────────────┐
-│  HEAD 3 — EXTENSION (8 classes)         │
-│  Input: [embedding(1024) + root(12) + quality(6)]
-│  Linear(1042→256) → ReLU → Dropout(0.3)│
-│  → Linear(256→64) → ReLU → Linear(64→8)│
-│  Classes: none/maj7/min7/dom7/9th/11th/13th/altered
-│  Loss: Focal Loss (γ=2)                 │
-│  Accuracy target: >70%                  │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  HEAD 1 — ROOT (12 classes)                             │
+│  Linear(1024→128) → ReLU → Linear(128→12)               │
+│  C / C# / D / D# / E / F / F# / G / G# / A / A# / B   │
+│  Accuracy target: >95%                                  │
+└───────────────────────┬─────────────────────────────────┘
+                        │ concat root_logits (12,)
+                        ▼
+┌─────────────────────────────────────────────────────────┐
+│  HEAD 2 — QUALITY (5 classes)                           │
+│  Input: [embedding(1024) + root_logits(12)] = (1036,)   │
+│  Linear(1036→128) → ReLU → Linear(128→5)                │
+│                                                         │
+│  0: major      — 1-3-5        (e.g. C, Cmaj7)          │
+│  1: minor      — 1-b3-5       (e.g. Am, Dm7)           │
+│  2: dominant   — implies b7   (e.g. G7, G7#9)          │
+│  3: diminished — 1-b3-b5      (e.g. Bdim, Bdim7)       │
+│  4: suspended  — sus2 / sus4  (e.g. Csus2, Gsus4)      │
+│                                                         │
+│  ⚠️ aug KHÔNG ở đây → encode = major + #5 (ext)        │
+│  Accuracy target: >85%                                  │
+└───────────────────────┬─────────────────────────────────┘
+                        │ concat root(12) + quality_logits(5)
+                        ▼
+┌─────────────────────────────────────────────────────────┐
+│  HEAD 3 — EXTENSION (15 classes)                        │
+│  Input: [embedding(1024) + root(12) + quality(5)] = (1041,)
+│  Linear(1041→256) → ReLU → Dropout(0.3)                │
+│  → Linear(256→64) → ReLU → Linear(64→15)               │
+│  Loss: Focal Loss (γ=2) — class imbalance               │
+│                                                         │
+│  — 5TH ALTERATIONS —                                   │
+│  0: none     — natural 5th, no extension  (e.g. C, Am) │
+│  1: b5       — tritone / dim5  (e.g. Cm7b5, C7b5)      │
+│  2: #5       — aug 5th → absorbs "aug"  (e.g. Caug, C7#5)
+│                                                         │
+│  — 7TH LAYER —                                         │
+│  3: maj7     — major 7th  (e.g. Cmaj7, Fmaj7)          │
+│  4: min7     — minor 7th  (e.g. Am7, Dm7)              │
+│  5: dom7     — dominant 7th  (e.g. G7, C7)             │
+│                                                         │
+│  — 9TH LAYER —                                         │
+│  6: add9     — 9th, NO 7th  (e.g. Cadd9, Gadd9)        │
+│  7: b9       — flat 9  (e.g. G7b9, E7b9)               │
+│  8: nat9     — natural 9  (e.g. Cmaj9, Am9, G9)        │
+│  9: #9       — sharp 9 / Hendrix  (e.g. G7#9, C7#9)   │
+│                                                         │
+│  — 11TH LAYER —                                        │
+│  10: nat11   — natural 11  (e.g. Fmaj11, Cm11)         │
+│  11: #11     — Lydian / tritone sub  (e.g. Cmaj7#11)   │
+│               (b11 = enharmonic major 3rd → không dùng)│
+│                                                         │
+│  — 13TH LAYER —                                        │
+│  12: nat13   — natural 13  (e.g. G13, Cmaj13)          │
+│  13: b13     — flat 13 / altered  (e.g. G7b13)         │
+│                                                         │
+│  — COMPOUND ALTERATION —                               │
+│  14: alt     — G7alt = b9+#9+#11+b13 cùng lúc          │
+│               (catch-all cho altered dominant phức tạp) │
+│                                                         │
+│  Accuracy target: >70% (class 0-5), >55% (class 6-14)  │
+└─────────────────────────────────────────────────────────┘
 
-Final output: "A" + "minor" + "min7" → Am7
-              "G" + "dominant" + "altered" → G7#9
+Final output combinations:
+  "A" + "minor"    + min7  → Am7
+  "C" + "major"    + #5   → Caug  (không còn "aug" quality)
+  "G" + "dominant" + #9   → G7#9 (Hendrix chord)
+  "G" + "dominant" + alt  → G7alt
+  "C" + "major"    + #11  → Cmaj7#11 (Lydian)
+  "G" + "dominant" + b13  → G7b13
+  "B" + "diminished"+ none → Bdim
 ```
 
 > **Cascaded vs Parallel:** Head 3 biết root context từ Head 1 → phân biệt Am7 vs C6 tốt hơn (cùng 4 nốt nhưng khác root).
@@ -350,7 +400,8 @@ waveform_aug = A.Compose([
 Per-head:    Accuracy, F1-macro mỗi Head 1/2/3
 Chord-level: Chord Accuracy (CA), Weighted Chord Score (WCS)
 Latency:     ms/request (real-time target ≤500ms)
-Extended:    Riêng accuracy trên 9th/11th/13th/dim/aug
+Extended:    Riêng accuracy trên b9/nat9/#9, #11, b13, alt, b5/#5
+             (các classes 6–14 của Head 3 — ít data nhất)
 ```
 
 ---
@@ -358,17 +409,26 @@ Extended:    Riêng accuracy trên 9th/11th/13th/dim/aug
 ## 6. API Contracts (DE/AI → BE)
 
 ```
+# ── Real-time recognition (Practice Mode) ──────────────────────
 POST /api/v1/recognize
   Body:     { "audio": "<base64 WAV 2s>" }
   Response: {
-    "chord": "Am7",
-    "root": "A",         "root_conf": 0.97,
-    "quality": "minor",  "quality_conf": 0.91,
-    "extension": "min7", "extension_conf": 0.78,
+    "chord": "Am7",          -- human-readable label
+    "root": "A",             "root_conf": 0.97,
+    "quality": "minor",      "quality_conf": 0.91,
+    -- extension: one of [none/b5/#5/maj7/min7/dom7/add9/b9/nat9/#9/nat11/#11/nat13/b13/alt]
+    "extension": "min7",     "extension_conf": 0.78,
     "alternatives": [{"chord": "C6", "conf": 0.12}],
     "latency_ms": 385
   }
 
+-- Ví dụ thêm với extended chords:
+  G7#9  → root=G, quality=dominant, extension=#9
+  Caug  → root=C, quality=major,    extension=#5
+  G7alt → root=G, quality=dominant, extension=alt
+  Cmaj7#11 → root=C, quality=major, extension=#11
+
+# ── Song analysis (Learning Flow) ──────────────────────────────
 POST /api/v1/song/analyze
   Body:     { "youtube_url": "..." }
   Response: { "job_id": "uuid", "status": "processing" }
@@ -457,7 +517,7 @@ Audio Processing:
 
 AI Framework:
   PyTorch 2.0+        Base framework
-  HuggingFace MERT    "m-a-p/MERT-v1-95M"
+  HuggingFace MERT    "m-a-p/MERT-v1-330M"   ← 330M (không phải 95M)
   PEFT                LoRA implementation
   torchaudio          SpecAugment transforms
   MLflow              Experiment tracking + model registry
