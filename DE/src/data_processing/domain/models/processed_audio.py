@@ -20,11 +20,12 @@ class ProcessedAudio:
     audio_file:  AudioFile
 
     # Populated by each handler in sequence
-    wav_path:    Path | None = None          # set by data_loader (input to chain)
-    stem_path:   Path | None = None          # set by SeparateHandler
-    beat_times:  list[float] = field(default_factory=list)  # set by BeatHandler
-    tempo_bpm:   float | None = None         # set by BeatHandler
-    segments:    list[AudioSegment] = field(default_factory=list)  # set by FeatureHandler
+    wav_path:        Path | None = None          # set by data_loader (input to chain)
+    stem_path:       Path | None = None          # set by SeparateHandler
+    beat_times:      list[float] = field(default_factory=list)  # set by BeatHandler
+    tempo_bpm:       float | None = None         # set by BeatHandler
+    segments:        list[AudioSegment] = field(default_factory=list)  # set by SegmentHandler+
+    annotation_path: Path | None = None          # set by caller for training pipeline (JAMS/Harte/CSV)
 
     error:       str | None = None           # set on failure, causes downstream short-circuit
 
