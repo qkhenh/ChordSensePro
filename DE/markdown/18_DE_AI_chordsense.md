@@ -489,7 +489,7 @@ CREATE TABLE song_analyses (
 
 CREATE TABLE chord_attempts (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    student_id      UUID,
+    user_id         UUID,
     session_id      UUID,
     target_chord    VARCHAR(10),
     detected_chord  VARCHAR(10),

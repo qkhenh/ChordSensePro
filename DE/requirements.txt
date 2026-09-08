@@ -1,0 +1,24 @@
+# ─── Base: audio + DB dependencies for Airflow workers ───
+# Pin versions for reproducibility during crawl phase
+
+# Audio processing
+librosa>=0.10.2,<0.11
+soundfile>=0.12.1,<0.13
+yt-dlp>=2024.11.18
+demucs>=4.0.0,<5
+numpy>=1.26,<2
+
+# Database
+asyncpg>=0.30.0,<0.31
+sqlalchemy[asyncio]>=2.0.0,<2.1
+alembic>=1.14.0,<1.15
+motor>=3.6.0,<4
+redis>=5.2.0,<6
+
+# Settings
+pydantic>=2.10.0,<3
+pydantic-settings>=2.6.0,<3
+python-dotenv>=1.0.1,<2
+
+# Observability
+structlog>=24.4.0,<25

@@ -1,27 +1,4 @@
-"""
-shared/infrastructure/settings/config.py
-
-TODO: Bạn sẽ viết Settings class đọc config từ .env
-
-Dùng pydantic-settings — tự động đọc biến môi trường + .env file.
-
-Bạn cần viết:
-1. class PostgresSettings(BaseSettings)
-   - host, port, db, user, password
-   - property url → trả về connection string
-
-2. class MongoSettings(BaseSettings)
-   - uri, db_name
-
-3. class RedisSettings(BaseSettings)
-   - url
-
-4. class Settings(BaseSettings)
-   - lồng 3 class trên vào
-   - model_config = SettingsConfigDict(env_file=".env", ...)
-
-5. Singleton pattern: get_settings() → cached Settings instance
-"""
+"""Application settings (Postgres, MongoDB, Redis) loaded from .env via pydantic-settings. Singleton via get_settings()."""
 from __future__ import annotations
 from functools import lru_cache
 from pydantic import Field

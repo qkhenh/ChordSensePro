@@ -1,0 +1,48 @@
+# ─── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# ─── Virtual env ──────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ─── IDE ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ─── OS ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Git ──────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ─── Data (mounted as volume, not baked into image) ───────
+data/
+*.wav
+*.mp3
+*.flac
+*.pt
+*.pth
+*.ckpt
+
+# ─── Docker ───────────────────────────────────────────────
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# ─── Tests & docs (not needed in prod image) ─────────────
+tests/
+markdown/
+*.md
+.env
+.env.*

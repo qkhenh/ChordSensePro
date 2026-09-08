@@ -1,3 +1,4 @@
+"""Generic async SQLAlchemy repository base class with save, get_by_id, delete, and list operations."""
 from __future__ import annotations
 from typing import Generic, TypeVar
 from sqlalchemy import select, delete
@@ -6,10 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 T = TypeVar("T")
 
 class BaseRepository(Generic[T]):
-    """Generic async repository — kế thừa để dùng cho từng Entity.
-    Ví dụ dùng:
-        class SongRepository(BaseRepository[SongORM]):
-            model = SongORM
+    """Generic async repository. Subclass and set `model` to the ORM class.
+
+    Example:
+        class SongRepository(BaseRepository[SongAnalysisORM]):
+            model = SongAnalysisORM
     """
     model: type[T]
     def __init__(self, session: AsyncSession) -> None:
@@ -21,7 +23,7 @@ class BaseRepository(Generic[T]):
     
     async def save(self, entity: T) -> T:
         self.session.add(entity)
-        await self.session.flush()  # flush để lấy generated fields, chưa commit
+        await self.session.flush()  # flush to get generated fields, not committed yet
         return entity
     
     async def delete_by_id(self, id: str) -> None:
