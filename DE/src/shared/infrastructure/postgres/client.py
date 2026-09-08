@@ -1,13 +1,4 @@
-"""
-shared/infrastructure/postgres/client.py
-
-TODO: Bạn sẽ viết async PostgreSQL client dùng SQLAlchemy 2.0
-
-Bạn cần viết:
-- Tạo async engine từ settings.postgres.url
-- Tạo AsyncSession factory
-- Async context manager get_session() để dùng trong các repository
-"""
+"""Async SQLAlchemy session factory for PostgreSQL with get_session() context manager (auto commit/rollback)."""
 
 from __future__ import annotations
 from contextlib import asynccontextmanager
@@ -16,26 +7,26 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # pyrefly: ignore [missing-import]
 from src.shared.infrastructure.settings.config import get_settings
 
-def _make_engine():
-    url = get_settings().postgres.url
-    return create_async_engine(
-        url,
-        pool_size=5,
-        max_overflow=10,
-        echo=False,   # True để debug SQL
-    )
-    
-_engine = _make_engine()
-_session_factory = async_sessionmaker(_engine, expire_on_commit=False)
+_engine = None
+_session_factory = None
+
+def _get_session_factory() -> async_sessionmaker:
+    """Lazy init — engine is only created on first call, not at import time."""
+    global _engine, _session_factory
+    if _session_factory is None:
+        url = get_settings().postgres.url
+        _engine = create_async_engine(url, pool_size=5, max_overflow=10, echo=False)
+        _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
+    return _session_factory
 
 @asynccontextmanager
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """Async context manager — dùng trong repository và API handlers.
-    Ví dụ:
+    """Async context manager — used in repositories and API handlers.
+    Example:
         async with get_session() as session:
             result = await session.execute(...)
     """
-    async with _session_factory() as session:
+    async with _get_session_factory()() as session:
         try:
             yield session
             await session.commit()

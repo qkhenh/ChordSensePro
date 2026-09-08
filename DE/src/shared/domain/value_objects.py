@@ -1,12 +1,7 @@
+"""Core music theory value objects: RootNote, ChordQuality, ChordExtension, ChromaVector, ChordLabel.
+
+Naming convention follows Chordie.com. All objects are immutable and compared by value.
 """
-shared/domain/value_objects.py
-
-Value Objects cốt lõi của ChordSense Pro.
-Immutable, so sánh bằng value, không phụ thuộc infrastructure.
-
-Naming convention: theo Chordie.com (chord notation phổ biến nhất với musician).
-"""
-
 from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
@@ -14,10 +9,10 @@ from typing import Sequence
 
 
 class RootNote(str, Enum):
-    """12 chromatic pitch classes — dùng sharp làm canonical form.
+    """12 chromatic pitch classes — sharps as canonical form.
 
-    Enharmonic disambiguation (Db vs C#) xử lý ở post-processing
-    layer sau khi biết Key của bài, không phải ở đây.
+    Enharmonic disambiguation (Db vs C#) is handled at the
+    post-processing layer after key detection, not here.
     """
     C  = "C"
     Cs = "C#"
@@ -39,21 +34,21 @@ class RootNote(str, Enum):
 
     @classmethod
     def from_semitone(cls, idx: int) -> RootNote:
-        """Dùng cho pitch shift: (index + n_steps) % 12 → RootNote"""
+        """Used for pitch shift: (index + n_steps) % 12 → RootNote"""
         return list(cls)[idx % 12]
 
 
 class ChordQuality(str, Enum):
-    """5 chord qualities — 'aug' bị loại vì quy về major + sharp5."""
+    """5 chord qualities — 'aug' excluded, mapped to major + sharp5."""
     major     = "major"
     minor     = "minor"
-    dominant  = "dominant"   # implies b7, dùng cho G7, G7#9, G7alt...
+    dominant  = "dominant"   # implies b7, used for G7, G7#9, G7alt...
     dim       = "diminished" # 1-b3-b5
-    sus       = "suspended"  # sus2 (1-2-5) hoặc sus4 (1-4-5)
+    sus       = "suspended"  # sus2 (1-2-5) or sus4 (1-4-5)
 
 
 class ChordExtension(str, Enum):
-    """15 extension classes — theo Chordie.com naming convention."""
+    """15 extension classes — following Chordie.com naming convention."""
     # 5th alterations
     none   = "none"   # plain triad (C, Am, Bdim...)
     flat5  = "b5"     # e.g. Cm7b5, C7b5
@@ -79,7 +74,7 @@ class ChordExtension(str, Enum):
     flat13 = "b13"    # e.g. G7b13
 
     # compound alteration
-    alt    = "alt"    # G7alt = b9+#9+#11+b13 cùng lúc
+    alt    = "alt"    # G7alt = b9+#9+#11+b13 combined
 
 
 @dataclass(frozen=True)
@@ -89,23 +84,23 @@ class ChromaVector:
 
     def __post_init__(self) -> None:
         if len(self.values) != 12:
-            raise ValueError(f"ChromaVector cần 12 dims, got {len(self.values)}")
+            raise ValueError(f"ChromaVector requires 12 dims, got {len(self.values)}")
         if not all(0.0 <= v <= 1.0 for v in self.values):
-            raise ValueError("ChromaVector values phải trong [0.0, 1.0]")
+            raise ValueError("ChromaVector values must be in [0.0, 1.0]")
 
     @classmethod
     def from_list(cls, values: Sequence[float]) -> ChromaVector:
         return cls(values=tuple(values))
 
     def dominant_pitch(self) -> RootNote:
-        """Pitch class có energy cao nhất — heuristic root detection."""
+        """Pitch class with highest energy — heuristic root detection."""
         idx = max(range(12), key=lambda i: self.values[i])
         return RootNote.from_semitone(idx)
 
 
 @dataclass(frozen=True)
 class ConfidenceScore:
-    """Per-head confidence từ 3 classification heads của model."""
+    """Per-head confidence from 3 classification heads of the model."""
     root: float       # Head 1 [0, 1]
     quality: float    # Head 2 [0, 1]
     extension: float  # Head 3 [0, 1]
@@ -113,27 +108,27 @@ class ConfidenceScore:
     def __post_init__(self) -> None:
         for name, val in [("root", self.root), ("quality", self.quality), ("extension", self.extension)]:
             if not 0.0 <= val <= 1.0:
-                raise ValueError(f"ConfidenceScore.{name} phải trong [0.0, 1.0]")
+                raise ValueError(f"ConfidenceScore.{name} must be in [0.0, 1.0]")
 
     @property
     def overall(self) -> float:
-        """Weighted overall — root quan trọng nhất, extension khó nhất nên weight thấp.
-        Tuneable sau khi có model thật và validation set."""
+        """Weighted overall — root is most important, extension hardest so lower weight.
+        Tuneable after model training with a real validation set."""
         return 0.4 * self.root + 0.35 * self.quality + 0.25 * self.extension
 
     @property
     def is_reliable(self) -> bool:
-        """True nếu đủ tự tin để hiển thị cho user.
-        Threshold empirical — sẽ tune sau khi train model."""
+        """True if confident enough to display to user.
+        Threshold is empirical — will be tuned after model training."""
         return self.root >= 0.6 and self.quality >= 0.55
 
 
 @dataclass(frozen=True)
 class ChordLabel:
-    """Full chord label — output cuối của model.
+    """Full chord label — final model output.
 
-    Naming theo Chordie.com convention.
-    Ví dụ:
+    Naming follows Chordie.com convention.
+    Examples:
         ChordLabel(A, minor, min7)   → "Am7"
         ChordLabel(C, major, sharp5) → "Caug"
         ChordLabel(G, dominant, sharp9) → "G7#9"
@@ -148,7 +143,7 @@ class ChordLabel:
     def display_name(self) -> str:
         root = self.root.value
 
-        # --- Xử lý đặc biệt: dim + extension (Chordie convention) ---
+        # --- Special case: dim + extension (Chordie convention) ---
         if self.quality == ChordQuality.dim:
             if self.extension == ChordExtension.min7:
                 return f"{root}m7b5"   # half-diminished
@@ -170,9 +165,9 @@ class ChordLabel:
         e = {
             ChordExtension.none:   "",
             ChordExtension.flat5:  "b5",
-            ChordExtension.sharp5: "aug",       # Caug quen hơn C#5 trên Chordie
+            ChordExtension.sharp5: "aug",       # Caug is more common than C#5 on Chordie
             ChordExtension.maj7:   "maj7",
-            ChordExtension.min7:   "7",         # "m" đã có trong q rồi → Am7
+            ChordExtension.min7:   "7",         # "m" already in quality suffix → Am7
             ChordExtension.dom7:   "7",
             ChordExtension.add9:   "add9",
             ChordExtension.flat9:  "7b9",
@@ -189,7 +184,7 @@ class ChordLabel:
         return f"{root}{q}{e}"
 
     def pitch_shift(self, semitones: int) -> ChordLabel:
-        """Augmentation: shift root n semitones, quality + extension không đổi."""
+        """Pitch shift root by n semitones, quality + extension unchanged."""
         new_idx = (RootNote.semitone_index(self.root) + semitones) % 12
         return ChordLabel(
             root=RootNote.from_semitone(new_idx),

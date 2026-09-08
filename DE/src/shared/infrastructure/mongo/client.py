@@ -1,13 +1,5 @@
-"""
-shared/infrastructure/mongo/client.py
+"""Motor async MongoDB client singleton with get_mongo_db() and close_mongo() for shutdown."""
 
-TODO: Bạn sẽ viết async MongoDB client dùng Motor
-
-Bạn cần viết:
-- Tạo AsyncIOMotorClient từ settings.mongo.uri
-- Lấy database theo settings.mongo.db_name
-- Singleton get_mongo_db() trả về database instance
-"""
 from __future__ import annotations
 # pyrefly: ignore [missing-import]
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -24,15 +16,15 @@ def get_mongo_client() -> AsyncIOMotorClient:
     return _client
 
 def get_mongo_db() -> AsyncIOMotorDatabase:
-    """Trả về database instance — dùng trong mọi MongoDB repository.
-    Ví dụ:
+    """Return the database instance — used by all MongoDB repositories.
+    Example:
         db = get_mongo_db()
         await db["raw_audio"].insert_one({...})
     """
     return get_mongo_client()[get_settings().mongo.db_name]
 
 async def close_mongo() -> None:
-    """Gọi khi app shutdown để đóng connection pool."""
+    """Call on app shutdown to close the connection pool."""
     global _client
     if _client is not None:
         _client.close()

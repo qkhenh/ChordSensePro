@@ -1,4 +1,22 @@
+# ─────────────────────────────────────────────────────────────
+# ChordSensePro DE — Docker Compose
+#
+# Services:
+#   postgres       → App database (song_analyses, chord_attempts, mastery)
+#   postgres_meta  → Airflow metadata database (separate for safety)
+#   mongo          → Raw audio blob storage
+#   redis          → Celery broker (future) + cache
+#   airflow        → Pipeline orchestrator (standalone = webserver + scheduler)
+#
+# Usage:
+#   docker compose up -d          # start all
+#   docker compose logs -f airflow  # watch DAG execution
+#   docker compose down -v        # tear down + delete volumes
+# ─────────────────────────────────────────────────────────────
+
 services:
+
+  # ── App PostgreSQL — song_analyses, chord_attempts, user_chord_mastery ──
   postgres:
     image: postgres:16-alpine
     container_name: chordsense_postgres
@@ -16,6 +34,23 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Airflow Metadata PostgreSQL — separate from app DB ──────────────────
+  postgres_meta:
+    image: postgres:16-alpine
+    container_name: chordsense_airflow_meta
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow_dev
+    volumes:
+      - postgres_meta_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── MongoDB — raw audio metadata & blob refs ────────────────────────────
   mongo:
     image: mongo:7.0
     container_name: chordsense_mongo
@@ -29,35 +64,71 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Redis — Celery broker (future) + caching ────────────────────────────
   redis:
     image: redis:7.2-alpine
     container_name: chordsense_redis
     ports:
       - "6379:6379"
     command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # ── Airflow (standalone = webserver + scheduler in one) ──────────────────
   airflow:
-    image: apache/airflow:2.10.3-python3.11
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: chordsense_airflow
     depends_on:
       postgres:
         condition: service_healthy
+      postgres_meta:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
+      # ── Airflow core ──
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://chordsense:chordsense_dev@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+
+      # ── Airflow metadata DB (separate from app DB) ──
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow_dev@postgres_meta:5432/airflow
+
+      # ── Airflow auto-setup ──
       _AIRFLOW_DB_MIGRATE: "true"
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: admin
       _AIRFLOW_WWW_USER_PASSWORD: admin
+
+      # ── App settings (read by src/shared/infrastructure/settings/config.py) ──
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: chordsense
+      POSTGRES_USER: chordsense
+      POSTGRES_PASSWORD: chordsense_dev
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB: chordsense_raw
+      REDIS_URL: redis://redis:6379/0
+      APP_ENV: production
+      LOG_LEVEL: INFO
+      DATA_DIR: /data
     ports:
       - "8080:8080"
     volumes:
-      - ./dags:/opt/airflow/dags
-      - ./src:/opt/airflow/src
-      - ./data:/data
+      - ./dags:/opt/airflow/dags        # hot-reload DAGs during dev
+      - ./src:/opt/airflow/src          # hot-reload source during dev
+      - chordsense_data:/data           # persistent audio data
     command: standalone
 
 volumes:
   postgres_data:
+  postgres_meta_data:
   mongo_data:
+  chordsense_data:
