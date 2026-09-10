@@ -28,6 +28,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d   # auto-create tables on first start
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U chordsense"]
       interval: 10s
@@ -122,9 +123,11 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./dags:/opt/airflow/dags        # hot-reload DAGs during dev
-      - ./src:/opt/airflow/src          # hot-reload source during dev
-      - chordsense_data:/data           # persistent audio data
+      - ./dags:/opt/airflow/dags           # hot-reload DAGs during dev
+      - ./src:/opt/airflow/src             # hot-reload source during dev
+      - ./scripts:/opt/airflow/scripts     # seed scripts
+      - ./data/datasets:/data/datasets     # local datasets (read-only)
+      - chordsense_data:/data              # persistent audio working dir
     command: standalone
 
 volumes:

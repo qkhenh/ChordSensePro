@@ -1,66 +1,65 @@
-"""Repository for ChordMastery — upsert by composite key (user_id, chord, date), user mastery queries."""
+"""Repository for user_chord_mastery table — raw SQL via psycopg2."""
 from __future__ import annotations
 from datetime import date
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
+import logging
 
+from src.shared.infrastructure.postgres.client import get_connection
 from src.user_analytics.domain.models.chord_mastery import ChordMastery
-from src.user_analytics.infrastructure.orm.chord_mastery_orm import ChordMasteryORM
+
+log = logging.getLogger(__name__)
 
 
 class ChordMasteryRepository:
-    """Persists and queries ChordMastery records.
+    """Sync repository — raw SQL, no ORM."""
 
-    Does NOT extend BaseRepository — composite PK (user_id, chord, date)
-    requires PostgreSQL upsert (ON CONFLICT DO UPDATE) instead of add/flush.
-    """
+    def upsert(self, entity: ChordMastery) -> None:
+        """Insert or update mastery record for (user_id, chord_label)."""
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO user_chord_mastery
+                        (user_id, chord_label, mastery_level, total_attempts,
+                         correct_count, last_practiced, is_mastered)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (user_id, chord_label) DO UPDATE SET
+                        mastery_level  = EXCLUDED.mastery_level,
+                        total_attempts = EXCLUDED.total_attempts,
+                        correct_count  = EXCLUDED.correct_count,
+                        last_practiced = EXCLUDED.last_practiced,
+                        is_mastered    = EXCLUDED.is_mastered
+                """, (
+                    entity.user_id,
+                    entity.chord,
+                    entity.rolling_accuracy_3d,
+                    0,  # total_attempts — computed at rollup
+                    0,  # correct_count — computed at rollup
+                    entity.date,
+                    entity.is_mastered,
+                ))
 
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+    def get_by_user(self, user_id: str) -> list[ChordMastery]:
+        """Fetch all mastery records for a user."""
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT user_id, chord_label, mastery_level, total_attempts,
+                           correct_count, last_practiced, is_mastered
+                    FROM user_chord_mastery
+                    WHERE user_id = %s
+                """, (user_id,))
+                return [self._row_to_domain(row) for row in cur.fetchall()]
 
-    async def upsert(self, entity: ChordMastery) -> None:
-        """Insert or update mastery record for (user_id, chord, date).
-
-        Uses PostgreSQL ON CONFLICT DO UPDATE for atomic upsert.
-        Called by dag_analytics_rollup after computing rolling accuracy.
-        """
-        stmt = pg_insert(ChordMasteryORM).values(
-            user_id=entity.user_id,
-            chord=entity.chord,
-            date=entity.date,
-            accuracy_today=entity.accuracy_today,
-            rolling_accuracy_3d=entity.rolling_accuracy_3d,
-            is_mastered=entity.is_mastered,
-        ).on_conflict_do_update(
-            index_elements=["user_id", "chord", "date"],
-            set_={
-                "accuracy_today":      entity.accuracy_today,
-                "rolling_accuracy_3d": entity.rolling_accuracy_3d,
-                "is_mastered":         entity.is_mastered,
-            },
-        )
-        await self._session.execute(stmt)
-        await self._session.flush()
-
-    async def get_by_user(self, user_id: str) -> list[ChordMastery]:
-        """Fetch all mastery records for a user (used to build learning_plan)."""
-        stmt = select(ChordMasteryORM).where(
-            ChordMasteryORM.user_id == user_id
-        )
-        result = await self._session.execute(stmt)
-        return [row.to_domain() for row in result.scalars().all()]
-
-    async def get_mastered_chords(self, user_id: str) -> set[str]:
-        """Return set of chord labels the user has mastered (accuracy_3d >= 80%)."""
-        records = await self.get_by_user(user_id)
+    def get_mastered_chords(self, user_id: str) -> set[str]:
+        """Return set of chord labels the user has mastered."""
+        records = self.get_by_user(user_id)
         return {r.chord for r in records if r.is_mastered}
 
-    async def get_by_date(self, user_id: str, target_date: date) -> list[ChordMastery]:
-        """Fetch mastery snapshot for a specific date (for progress history)."""
-        stmt = select(ChordMasteryORM).where(
-            ChordMasteryORM.user_id == user_id,
-            ChordMasteryORM.date == target_date,
+    @staticmethod
+    def _row_to_domain(row: tuple) -> ChordMastery:
+        return ChordMastery(
+            user_id=row[0],
+            chord=row[1],
+            date=row[5] or date.today(),
+            rolling_accuracy_3d=row[2] or 0.0,
+            is_mastered=row[6],
         )
-        result = await self._session.execute(stmt)
-        return [row.to_domain() for row in result.scalars().all()]

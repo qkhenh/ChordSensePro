@@ -1,16 +1,15 @@
-"""JaahDownloader — downloads JAAH jazz dataset tracks from Zenodo.
+"""JaahDownloader — downloads JAAH jazz dataset tracks via YouTube search.
 
 JAAH Dataset:
   - 113 jazz tracks with complete dim7/maj7/aug chord annotations
-  - License: CC BY 4.0 (Zenodo)
-  - URL: https://zenodo.org/record/1290737
-  - Format: MP3 + JSON annotations
-  - Purpose: Head 2+3 training (Quality + Extension)
+  - License: CC BY 4.0 (annotations) | Commercial recordings (audio)
+  - Annotations: https://github.com/MTG/JAAH (local after clone)
+  - Audio: NOT redistributed — downloads via YouTube search (artist + title)
+  - source_url format: "ytsearch1:{artist} {title} jazz"
 
 Reference: Yurchenko, K. et al. "JAAH: Audio-Aligned Jazz Harmony Dataset"
 """
 from __future__ import annotations
-import urllib.request
 from pathlib import Path
 
 from src.data_loader.domain.models.audio_file import AudioFile
@@ -18,30 +17,52 @@ from src.data_loader.domain.models.download_response import DownloadResponse
 
 
 class JaahDownloader:
-    """Downloader for JAAH dataset — direct HTTP download from Zenodo."""
+    """Downloader for JAAH dataset — finds audio via YouTube search + yt-dlp.
+
+    source_url is a yt-dlp search query: "ytsearch1:{artist} {title} jazz"
+    Falls back to direct URL if source_url starts with https://.
+    """
+
+    _YDL_OPTS = {
+        "format": "bestaudio/best",
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "wav",
+        }],
+        "postprocessor_args": {
+            "ffmpeg": ["-ar", "44100", "-ac", "1"]
+        },
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+    }
 
     def download(self, audio_file: AudioFile) -> DownloadResponse:
-        """Download JAAH track from Zenodo URL, convert to WAV 44100Hz."""
+        """Download JAAH track via YouTube search or direct URL."""
+        import yt_dlp
+
         out_dir = audio_file.dest_dir
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        # Derive filename from URL
-        filename = audio_file.source_url.split("/")[-1]
-        tmp_path  = out_dir / filename
+        opts = {
+            **self._YDL_OPTS,
+            "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
+        }
 
         try:
-            urllib.request.urlretrieve(audio_file.source_url, tmp_path)
-            wav_path = self._to_wav(tmp_path, out_dir)
-            tmp_path.unlink(missing_ok=True)   # remove intermediate MP3
-            return DownloadResponse.ok(audio_file, wav_path)
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                # source_url is either "ytsearch1:..." or a direct https:// URL
+                info = ydl.extract_info(audio_file.source_url, download=True)
+
+                # ytsearch returns a playlist wrapper — get first entry
+                if "entries" in info:
+                    info = info["entries"][0]
+
+                wav_path = out_dir / f"{info['id']}.wav"
+                if not wav_path.exists():
+                    return DownloadResponse.err(audio_file, f"WAV not found: {wav_path}")
+
+                return DownloadResponse.ok(audio_file, wav_path)
+
         except Exception as e:
             return DownloadResponse.err(audio_file, f"JAAH download failed: {e}")
-
-    def _to_wav(self, src: Path, out_dir: Path) -> Path:
-        """Convert MP3 → WAV 44100Hz mono via librosa + soundfile."""
-        import librosa
-        import soundfile as sf
-        audio, _ = librosa.load(str(src), sr=44100, mono=True)
-        out_path = out_dir / (src.stem + ".wav")
-        sf.write(str(out_path), audio, 44100)
-        return out_path

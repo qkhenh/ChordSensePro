@@ -22,11 +22,13 @@ class CrawlQueueItem(BaseEntity):
     Inserted manually via scripts/add_urls.py or via API.
     Picked up by dag_crawl_batch every N hours.
     """
-    source_url:    str = ""
-    status:        CrawlStatus = CrawlStatus.PENDING
-    priority:      int         = 0            # higher = picked first
-    error_message: str | None  = None
-    processed_at:  datetime | None = None
+    source_url:     str = ""
+    annotation_url: str = ""
+    source_type:    str = "local"   # jaah | kaggle | choco | local
+    status:         CrawlStatus = CrawlStatus.PENDING
+    priority:       int         = 0            # higher = picked first
+    error_message:  str | None  = None
+    processed_at:   datetime | None = None
 
     def mark_running(self) -> None:
         self.status = CrawlStatus.RUNNING
