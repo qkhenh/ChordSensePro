@@ -1,0 +1,2 @@
+# Airflow DAG scanner — ignore these folders/files (not DAG files)
+wrapper/

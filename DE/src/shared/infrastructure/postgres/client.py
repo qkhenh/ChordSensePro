@@ -1,37 +1,66 @@
-"""Async SQLAlchemy session factory for PostgreSQL with get_session() context manager (auto commit/rollback)."""
+"""PostgreSQL connection pool using psycopg2.
 
+Simple sync connection pool — no async, no ORM.
+Usage:
+    from src.shared.infrastructure.postgres.client import get_connection
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM crawl_queue WHERE status = %s", ("pending",))
+            rows = cur.fetchall()
+"""
 from __future__ import annotations
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-# pyrefly: ignore [missing-import]
-from src.shared.infrastructure.settings.config import get_settings
+import os
+import logging
+from contextlib import contextmanager
 
-_engine = None
-_session_factory = None
+import psycopg2
+from psycopg2 import pool
 
-def _get_session_factory() -> async_sessionmaker:
-    """Lazy init — engine is only created on first call, not at import time."""
-    global _engine, _session_factory
-    if _session_factory is None:
-        url = get_settings().postgres.url
-        _engine = create_async_engine(url, pool_size=5, max_overflow=10, echo=False)
-        _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
-    return _session_factory
+log = logging.getLogger(__name__)
 
-@asynccontextmanager
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """Async context manager — used in repositories and API handlers.
-    Example:
-        async with get_session() as session:
-            result = await session.execute(...)
+_pool: pool.SimpleConnectionPool | None = None
+
+
+def _get_pool() -> pool.SimpleConnectionPool:
+    """Lazy init — pool created on first call, not at import time."""
+    global _pool
+    if _pool is None:
+        host     = os.getenv("POSTGRES_HOST", "localhost")
+        port     = int(os.getenv("POSTGRES_PORT", "5432"))
+        db       = os.getenv("POSTGRES_DB", "chordsense")
+        user     = os.getenv("POSTGRES_USER", "chordsense")
+        password = os.getenv("POSTGRES_PASSWORD", "chordsense_dev")
+
+        _pool = pool.SimpleConnectionPool(
+            minconn=1,
+            maxconn=10,
+            host=host,
+            port=port,
+            dbname=db,
+            user=user,
+            password=password,
+        )
+        log.info(f"PostgreSQL pool created: {user}@{host}:{port}/{db}")
+    return _pool
+
+
+@contextmanager
+def get_connection():
+    """Get a connection from the pool. Auto-commits on success, rollbacks on error.
+
+    Usage:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(...)
     """
-    async with _get_session_factory()() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-
-
+    p = _get_pool()
+    conn = p.getconn()
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        p.putconn(conn)

@@ -3,7 +3,6 @@
 This is the only place that knows both data_loader and data_processing.
 """
 from __future__ import annotations
-import asyncio
 import os
 from pathlib import Path
 
@@ -13,7 +12,6 @@ from src.data_loader.application.entrypoints import run_data_loader
 from src.data_processing.application.entrypoints import run_data_processing
 from src.data_ingest.domain.models.ingest_record import IngestRecord, IngestStatus
 
-from src.shared.infrastructure.postgres.client import get_session
 from src.song_analysis.domain.models.song_analysis import SongAnalysis, AnalysisStatus
 from src.song_analysis.infrastructure.repositories.song_analysis_repository import SongAnalysisRepository
 
@@ -55,10 +53,10 @@ class IngestService:
             IngestRecord with final status and error_message if failed.
         """
         record = IngestRecord(analysis_id=analysis_id, status=IngestStatus.LOADING)
+        sa_repo = SongAnalysisRepository()
 
         # ── Check cache — skip if already analyzed ───────────────────────────
-        async with get_session() as session:
-            cached = await SongAnalysisRepository(session).get_by_url(source_url)
+        cached = sa_repo.get_by_url(source_url)
         if cached.is_ok:
             record.status = IngestStatus.DONE
             return record
@@ -99,8 +97,7 @@ class IngestService:
             plan=[],            # learning_plan:  Kỳ 2
         )
 
-        async with get_session() as session:
-            await SongAnalysisRepository(session).save_domain(analysis)
+        sa_repo.save_domain(analysis)
 
         record.status = IngestStatus.DONE
         return record

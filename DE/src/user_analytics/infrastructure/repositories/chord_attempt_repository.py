@@ -1,64 +1,59 @@
-"""Repository for ChordAttempt — extends BaseRepository, adds session and user-scoped queries."""
+"""Repository for chord_attempts table — raw SQL via psycopg2."""
 from __future__ import annotations
 from datetime import date, datetime, timezone
-from sqlalchemy import select
+import logging
 
-from src.shared.infrastructure.postgres.base_repo import BaseRepository
+from src.shared.infrastructure.postgres.client import get_connection
 from src.user_analytics.domain.models.chord_attempt import ChordAttempt
-from src.user_analytics.infrastructure.orm.chord_attempt_orm import ChordAttemptORM
+
+log = logging.getLogger(__name__)
 
 
-class ChordAttemptRepository(BaseRepository[ChordAttemptORM]):
-    """Persists ChordAttempt records from Practice Mode sessions.
+class ChordAttemptRepository:
+    """Sync repository — raw SQL, no ORM."""
 
-    Inherits save, get_by_id, delete_by_id, list_all from BaseRepository.
-    """
+    def save_domain(self, entity: ChordAttempt) -> None:
+        """Insert a new ChordAttempt record."""
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO chord_attempts
+                        (id, user_id, chord_label, is_correct, confidence,
+                         response_time, attempted_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    entity.id,
+                    entity.user_id,
+                    entity.target_chord,
+                    entity.is_correct,
+                    entity.avg_confidence,
+                    0,  # response_time — not tracked yet
+                    entity.created_at,
+                ))
 
-    model = ChordAttemptORM
-
-    async def save_domain(self, entity: ChordAttempt) -> None:
-        """Persist a new ChordAttempt (insert only — attempts are immutable)."""
-        await self.save(ChordAttemptORM.from_domain(entity))
-
-    async def get_by_session(self, session_id: str) -> list[ChordAttempt]:
-        """Fetch all attempts for a practice session (for session summary)."""
-        stmt = select(ChordAttemptORM).where(
-            ChordAttemptORM.session_id == session_id
-        )
-        result = await self.session.execute(stmt)
-        return [row.to_domain() for row in result.scalars().all()]
-
-    async def get_by_user_and_chord(
-        self, user_id: str, chord: str, limit: int = 100
-    ) -> list[ChordAttempt]:
-        """Fetch recent attempts for a specific (user, chord) pair.
-
-        Used by dag_analytics_rollup to compute daily accuracy.
-        """
-        stmt = (
-            select(ChordAttemptORM)
-            .where(
-                ChordAttemptORM.user_id == user_id,
-                ChordAttemptORM.target_chord == chord,
-            )
-            .order_by(ChordAttemptORM.created_at.desc())
-            .limit(limit)
-        )
-        result = await self.session.execute(stmt)
-        return [row.to_domain() for row in result.scalars().all()]
-
-    async def list_by_date(self, target_date: date) -> list[ChordAttempt]:
-        """Fetch all attempts for a given date using SQL WHERE — avoids full table scan.
-
-        Used by dag_analytics_rollup instead of list_all() + Python filter.
-        """
+    def list_by_date(self, target_date: date) -> list[ChordAttempt]:
+        """Fetch all attempts for a given date."""
         day_start = datetime(target_date.year, target_date.month, target_date.day,
                              tzinfo=timezone.utc)
         day_end   = datetime(target_date.year, target_date.month, target_date.day,
                              23, 59, 59, tzinfo=timezone.utc)
-        stmt = select(ChordAttemptORM).where(
-            ChordAttemptORM.created_at >= day_start,
-            ChordAttemptORM.created_at <= day_end,
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, user_id, chord_label, is_correct, confidence,
+                           response_time, attempted_at
+                    FROM chord_attempts
+                    WHERE attempted_at >= %s AND attempted_at <= %s
+                """, (day_start, day_end))
+                return [self._row_to_domain(row) for row in cur.fetchall()]
+
+    @staticmethod
+    def _row_to_domain(row: tuple) -> ChordAttempt:
+        return ChordAttempt(
+            id=row[0],
+            user_id=row[1],
+            target_chord=row[2],
+            is_correct=row[3],
+            root_conf=row[4] or 0.0,
+            created_at=row[6],
         )
-        result = await self.session.execute(stmt)
-        return [row.to_domain() for row in result.scalars().all()]
