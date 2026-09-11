@@ -46,3 +46,6 @@ Thumbs.db
 *.key
 
 latex_last_project
+
+#build diagram
+build_diagram/

@@ -1,0 +1,68 @@
+@startuml
+skinparam conditionStyle insideDiamond
+skinparam activity {
+    BackgroundColor #74C0FC
+    BorderColor #1C7ED6
+    FontColor #000000
+    FontSize 12
+    ArrowColor #2B2D42
+    DiamondBackgroundColor #E7F5FF
+    DiamondBorderColor #1C7ED6
+}
+skinparam partition {
+    BorderColor #495057
+    FontColor #212529
+    FontSize 13
+    BackgroundColor #FFFFFF
+}
+
+|Musician (User)|
+start
+:Upload audio file or enter YouTube URL;
+
+|Frontend Client|
+:Validate audio source format & duration;
+if (Is audio source valid?) then (Yes)
+
+|Backend Server|
+:Generate Job ID and enqueue processing task;
+
+|AI Pipeline Worker|
+:Separate instrument stems using Demucs;
+:Track tempo and downbeat positions using Madmom;
+:Recognize chord progression sequence using MERT;
+:Assemble event-based timeline JSON;
+
+|Frontend Client|
+:Fetch metadata and chord event timeline;
+:Harmonic Engine computes Roman numerals & scale modes;
+:Render interactive Smart Grid synced with Web Audio;
+
+|Musician (User)|
+:Listen and audit detected chord progression;
+if (Chord correction needed?) then (Yes)
+    :Open Edit Marker on target bar;
+    :Input modified root, bass, or chord quality;
+    |Frontend Client|
+    :Recalculate Roman degree and scale mode instantly;
+    :Flag chord event as user-edited;
+else (No)
+endif
+
+|Musician (User)|
+:Practice with A/B loop, dynamic metronome, and speed shift;
+:Save custom chart to personal playlist;
+
+|Backend Server|
+:Persist custom chart into PostgreSQL JSONB;
+
+|Frontend Client|
+:Display sync confirmation toast;
+stop
+
+|Frontend Client|
+else (No)
+    :Display invalid audio source error;
+    stop
+endif
+@enduml

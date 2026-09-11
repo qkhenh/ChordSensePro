@@ -1,0 +1,84 @@
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+skinparam actor {
+    BorderColor #E03131
+    BackgroundColor #FFE3E3
+    FontColor #212529
+    FontSize 13
+}
+skinparam usecase {
+    BackgroundColor #0CA678
+    BorderColor #087F5B
+    FontColor #FFFFFF
+    FontSize 12
+}
+skinparam rectangle {
+    BackgroundColor #F8F9FA
+    BorderColor #ADB5BD
+    FontColor #212529
+}
+skinparam package {
+    BackgroundColor #FFFFFF
+    BorderColor #CED4DA
+    FontColor #495057
+    FontSize 13
+}
+skinparam arrow {
+    Color #868E96
+    FontColor #495057
+}
+
+' Left Actors
+actor "Musician / Learner" as Musician
+actor "Music Content Manager\n(Business Admin)" as BizAdmin
+actor "System & AI Ops Admin\n(IT Admin)" as ITAdmin
+
+' Right Actors
+actor "AI Pipeline Worker\n(Demucs / MERT)" as AIWorker
+actor "PostgreSQL Database" as DB
+
+rectangle "ChordSense Pro System" {
+    rectangle " " as Col1 #transparent;line:transparent {
+        usecase "UC07: Verify Public Song Charts" as UC7
+        usecase "UC02: Practice Workspace (Smart Grid & Loop)" as UC2
+        usecase "UC06: Manage Chord Dictionary" as UC6
+        usecase "UC01: Ingest Audio Track" as UC1
+        usecase "UC04: Manage Charts & Playlists" as UC4
+        usecase "UC09: Manage Users, Roles & Limits" as UC9
+        usecase "UC08: Monitor GPU Queues & Workers" as UC8
+    }
+
+    rectangle "  " as Col2 #transparent;line:transparent {
+        usecase "UC05: Audit & Edit Marker (HITL)" as UC5
+        usecase "UC03: Inspect Roman Numerals & Scales" as UC3
+        usecase "Process AI Background Job" as UC1_Job
+        usecase "Persist Chart & User Data" as UC_DB
+    }
+
+    UC1 ..> UC1_Job : <<include>>
+    UC2 ..> UC3 : <<include>>
+    UC5 ..> UC2 : <<extend>>
+    UC7 ..> UC5 : <<include>>
+
+    UC4 ..> UC_DB : <<include>>
+    UC6 ..> UC_DB : <<include>>
+    UC9 ..> UC_DB : <<include>>
+}
+
+' Left Actor Connections (Zero crossing, strictly local)
+Musician --> UC1
+Musician --> UC2
+Musician --> UC4
+
+BizAdmin --> UC7
+BizAdmin --> UC6
+
+ITAdmin --> UC9
+ITAdmin --> UC8
+
+' Right Actor Connections
+UC1_Job --> AIWorker
+UC_DB --> DB
+
+@enduml
