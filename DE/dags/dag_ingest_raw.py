@@ -37,7 +37,7 @@ with DAG(
     dag_id="dag_ingest_raw",
     default_args=default_args,
     description="DAG 1: Download audio URLs → stage WAV + metadata to MongoDB, then trigger DAG 2",
-    schedule="0 */6 * * *",   # every 6 hours
+    schedule="0 */2 * * *",   # every 6 hours
     start_date=pendulum.datetime(2026, 9, 9, tz="UTC"),
     catchup=False,
     max_active_runs=1,
