@@ -128,7 +128,7 @@ services:
       - ./scripts:/opt/airflow/scripts     # seed scripts
       - ./data/datasets:/data/datasets     # local datasets (read-only)
       - chordsense_data:/data              # persistent audio working dir
-    command: standalone
+    command: bash -c "mkdir -p /data/tmp && chmod 777 /data/tmp && airflow standalone"
 
 volumes:
   postgres_data:

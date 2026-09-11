@@ -92,10 +92,10 @@ class ProcessAudioService:
             tempo_bpm=processed.tempo_bpm,
         )
         analysis.mark_done(
-            key=processed.detected_key or "",
+            key=getattr(processed, "detected_key", "") or "",
             bpm=processed.tempo_bpm or 0.0,
-            timeline=processed.chord_timeline or [],
-            sheet=processed.chord_sheet or {},
+            timeline=getattr(processed, "chord_timeline", []) or [],
+            sheet=getattr(processed, "chord_sheet", {}) or {},
             plan=[],
         )
         sa_repo.save_domain(analysis)
