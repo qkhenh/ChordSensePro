@@ -45,4 +45,4 @@ Thumbs.db
 .env.production
 *.key
 
-latex_last_project
+latex_last_project/

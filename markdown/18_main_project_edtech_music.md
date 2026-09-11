@@ -1,4 +1,4 @@
-﻿# ChordSense Pro: An AI-Powered Context-Aware System for Musician's Interactive Practice Workspace with Harmonic Analysis Support
+# ChordSense Pro: An AI-Powered Context-Aware System for Musician's Interactive Practice Workspace with Harmonic Analysis Support
 
 > **Mục tiêu:** Xây dựng hệ thống AI end-to-end dành cho nhạc công: Thu thập + xử lý dữ liệu âm nhạc → fine-tune MERT-v1-330M (Cascaded 3-Head + LoRA) để nhận diện extended chord → Sheet Generation (ChordPro cho nhạc có lời, Lead Sheet cho nhạc không lời) → Web App thực hành hòa âm tương tác. Đóng góp khoa học rõ ràng trong MIR (Music Information Retrieval) với dataset VN Piano Extended Chord.
 
@@ -970,11 +970,12 @@ ChordSense/
 │   └── curriculum.yml              ← Grade → chord progression mapping
 │
 ├── dags/                           ← Airflow DAGs (Kỳ 1)
-│   ├── dag_curriculum_ingest.py    ← DAG 1: Load curriculum data (1 lần)
-│   ├── dag_dataset_ingest.py       ← DAG 2: Download + process training datasets
-│   ├── dag_audio_feature_etl.py    ← DAG 3: Extract chroma + spectrogram
-│   ├── dag_ai_training.py          ← DAG 4: Trigger model training/fine-tuning
-│   └── dag_analytics_rollup.py     ← DAG 5: Aggregate student progress hàng ngày
+│   ├── dag_ingest_raw.py           ← DAG 1: Download audio → stage WAV + metadata vào MongoDB
+│   │                                          (schedule: mỗi 2h, tự trigger DAG 2 sau khi xong)
+│   ├── dag_process_audio.py        ← DAG 2: MongoDB jobs → Demucs → features → PostgreSQL
+│   │                                          (trigger bởi DAG 1, không schedule độc lập)
+│   └── dag_analytics_rollup.py     ← DAG 3: Daily aggregation — chord mastery per student
+│                                              (schedule: 23:30 mỗi ngày)
 │
 ├── src/
 │   ├── shared/                             ← Nền tảng chung (DDD base)
@@ -985,15 +986,11 @@ ChordSense/
 │   │   │
 │   │   ├── infrastructure/
 │   │   │   ├── settings/
-│   │   │   │   ├── base_setting.py
-│   │   │   │   ├── postgres_setting.py
-│   │   │   │   └── mongo_setting.py
+│   │   │   │   └── config.py               ← Settings từ env vars (POSTGRES_HOST, MONGO_URI,...)
 │   │   │   ├── postgres/
-│   │   │   │   ├── client.py
-│   │   │   │   └── base_repository.py
+│   │   │   │   └── client.py               ← psycopg2 connection pool (không ORM)
 │   │   │   └── mongo/
-│   │   │       ├── client.py
-│   │   │       └── base_repository.py
+│   │   │       └── client.py
 │   │   │
 │   │   └── utils/
 │   │       ├── logging.py
@@ -1101,10 +1098,12 @@ ChordSense/
 │           └── response.py
 │
 └── scripts/
-    ├── init_db.py
-    ├── seed_chords.py          ← Seed 12+ chord labels
-    ├── seed_curriculum.py      ← Seed THCS curriculum path
-    └── download_datasets.py    ← Auto-download McGill, Guitar datasets
+    ├── seed_local_datasets.py  ← Seed crawl_queue từ local datasets (JAAH, Kaggle, ChoCo)
+    └── seed_chords.py          ← Seed chord_dictionary
+
+└── init/
+    └── init.sql                ← Auto-create tất cả PostgreSQL tables khi container start
+                                   (mounted vào /docker-entrypoint-initdb.d/)
 ```
 
 ---
@@ -1552,8 +1551,13 @@ AI Framework        PyTorch 2.0+            Base framework
                     PEFT (LoRA)             Fine-tuning adapter
                     Focal Loss              Extended chord class imbalance
 Data Pipeline       Apache Airflow 2.8      DAG orchestration
+                      dag_ingest_raw        Download audio → stage vào MongoDB (mỗi 2h)
+                      dag_process_audio     Demucs → features → PostgreSQL (auto-trigger)
+                      dag_analytics_rollup  Daily mastery rollup (23:30 hàng ngày)
 Primary DB          PostgreSQL 16           Structured data
-Raw Storage         MongoDB 7.0             Audio, spectrograms
+  DB Client         psycopg2-binary         Raw SQL — không ORM (SQLAlchemy/Alembic đã bỏ)
+  DB Init           init/init.sql           Tables tự tạo lúc container start
+Raw Storage         MongoDB 7.0             raw_audio_jobs staging (DAG 1 → DAG 2)
 Cache               Redis 7.2               Session, inference cache
 API                 FastAPI                 Async, high performance
 Real-time Audio     WebRTC (browser)        Student audio capture
@@ -1570,20 +1574,24 @@ Sheet Render        VexFlow.js              Chord sheet web rendering
 
 ```
 Tháng 1:
-  Tuần 1-2: Setup môi trường: Docker, PostgreSQL, MongoDB, Airflow
-  Tuần 3:   Module 1 — Curriculum ingest: parse SGK, seed database
-  Tuần 4:   Module 2 — Audio processing pipeline (Librosa, chroma CQT)
+  Tuần 1-2: Setup môi trường: Docker Compose, PostgreSQL, MongoDB, Airflow, Redis
+             ✔ init/init.sql: auto-create tables khi container start
+             ✔ psycopg2 raw SQL (bỏ SQLAlchemy/Alembic cho đơn giản)
+  Tuần 3:   DDD src/ architecture: data_ingest, data_processing, song_analysis modules
+  Tuần 4:   Audio processing pipeline (Demucs, yt-dlp, Librosa chroma CQT)
 
 Tháng 2:
-  Tuần 1-2: DAG dataset_ingest: download McGill, JAAH, Guitar chord datasets
-  Tuần 3:   Module 3 — Song Analysis pipeline (yt-dlp + Demucs + beat track)
-  Tuần 4:   Module 5 — Student analytics + API cơ bản
+  Tuần 1:   Download datasets thủ công: JAAH (Zenodo), Kaggle piano triads, ChoCo (GitHub)
+  Tuần 1-2: seed_local_datasets.py: seed crawl_queue từ local folders (545 entries)
+  Tuần 3:   dag_ingest_raw: download audio (JAAH YouTube + Kaggle WAV) → MongoDB staging
+             dag_process_audio: Demucs → beat → features → PostgreSQL song_analyses
+  Tuần 4:   dag_analytics_rollup: daily mastery per student chord
 
 Tháng 3:
-  Tuần 1-2: DAG analytics_rollup: daily aggregation, mastery tracking
-  Tuần 3:   Tự thu âm VN dataset: setup mic, 2 tác giả tự thu guitar/piano
-  Tuần 4:   Integration test + Demo kỳ 1 cho GVHD
+  Tuần 1-2: Tự thu âm VN dataset: setup mic, 2 tác giả tự thu guitar/piano
+  Tuần 3:   Integration test + Demo kỳ 1 cho GVHD
              Demo: Import "Lạc Trôi" YouTube → Hiện chord sheet → Plan học
+  Tuần 4:   API cơ bản để BE tích hợp
 ```
 
 ### Kỳ 2 (3 tháng) — AI Focus: Chord Recognition Model

@@ -1,17 +1,11 @@
 % !TeX program = lualatex
-% FORMAT AND PACKAGES
-% {
 \documentclass[a4paper]{article}
 \usepackage{fontspec}
-% \setmainfont{Times New Roman} % Or another font with Vietnamese support
-% \usepackage[T1,T5]{fontenc} % Replaced by fontspec for LuaLaTeX
-\usepackage{lmodern}       % scalable Latin Modern fonts
-% Disable microtype expansion if non-scalable fonts might be used
-\usepackage[expansion=false]{microtype}     % micro-typography (load after fonts)
+\usepackage{lmodern}
+\usepackage[expansion=false]{microtype}
 \usepackage{lastpage}
-% \usepackage[utf8]{inputenc} % Not needed with LuaLaTeX
-\usepackage[vietnamese,english]{babel}  
-\usepackage{textcomp} 
+\usepackage[vietnamese,english]{babel}
+\usepackage{textcomp}
 \usepackage{ragged2e}
 \usepackage{parskip}
 \usepackage{float}
@@ -20,7 +14,7 @@
 \usepackage[lined,boxed,commentsnumbered]{algorithm2e}
 \usepackage{enumerate}
 \usepackage{xcolor}
-\usepackage{graphicx}							% Standard graphics package
+\usepackage{graphicx}
 \usepackage{array}
 \usepackage{tabularx, caption}
 \usepackage{wrapfig}
@@ -34,11 +28,9 @@
 \usepackage{tikz}
 \usepackage{xfrac}
 \usepackage{bm}
-\usepackage{multirow}
 \usepackage{longtable}
-\usepackage{listings} %for pasting code (python, c++, java,...)
-\usepackage{xcolor}
-\usepackage{placeins} %for keep picture sequen
+\usepackage{listings}
+\usepackage{placeins}
 \usepackage{algorithm}
 \usepackage{algpseudocode}
 \usepackage[colorlinks]{hyperref}
@@ -50,118 +42,48 @@
 \usepackage{subcaption}
 \usepackage{calc}
 \usepackage{enumitem}
-\usepackage{graphicx}
-\usepackage[
- sort=none,% no sorting or indexing required
- abbreviations,% create list of abbreviations
- symbols,% create list of symbols
- stylemods,style=list, % set the default glossary style
- nogroupskip, nonumberlist, nomain
-]{glossaries-extra}
-
-\usepackage[
-    backend=biber,
-    style=numeric, % Hoặc 'apa', 'ieee' tùy yêu cầu
-    sorting=none   % Sắp xếp theo thứ tự xuất hiện
-]{biblatex}
-\setlength{\bibitemsep}{1em} % Tăng khoảng cách giữa các tài liệu tham khảo
-\addbibresource{citations.bib} % Removed incorrect file name
-
-\newcommand{\cmark}{\ding{51}} % Dấu tick
-\newcommand{\xmark}{\ding{55}} % Dấu chéo
-%% Color
-
+\usepackage[sort=none,abbreviations,symbols,stylemods,style=list,nogroupskip,nonumberlist,nomain]{glossaries-extra}
+\usepackage[backend=biber,style=numeric,sorting=none]{biblatex}
+\setlength{\bibitemsep}{1em}
+\addbibresource{citations.bib}
+\newcommand{\cmark}{\ding{51}}
+\newcommand{\xmark}{\ding{55}}
 \graphicspath{{image/}}
 \newlength{\ucLeft}
-
-% FORMATTING
-% {
 \DeclareMathOperator{\arccot}{arccot}
 \captionsetup[table]{name=Table}
 \captionsetup[figure]{name=Figure}
-\newenvironment{Description}{\list{}{%
-    \let\makelabel\descriptionlabel    % this comes from the original description environment
-    \setlength{\rightmargin}{\leftmargin}% this comes from the original quote environment
-    \setlength{\labelwidth}{0pt}%          this is new
-    }}{\endlist}
-
-\addbibresource{citations.bib}
-    
-\hypersetup{urlcolor=blue,linkcolor=black,citecolor=black,colorlinks=true} 
+\newenvironment{Description}{\list{}{\let\makelabel\descriptionlabel\setlength{\rightmargin}{\leftmargin}\setlength{\labelwidth}{0pt}}}{\endlist}
+\hypersetup{urlcolor=blue,linkcolor=black,citecolor=black,colorlinks=true}
 \usetikzlibrary{arrows,snakes,backgrounds}
 \definecolor{mathblue}{RGB}{0,114,188}
-\newtheorem{theorem}{{\bf Theorem}}
-\newtheorem{property}{{\bf Property}}
-\newtheorem{proposition}{{\bf Proposition}}
-\newtheorem{corollary}[proposition]{{\bf Corollary}}
-\newtheorem{lemma}[proposition]{{\bf Lemma}}
-
 \AtBeginDocument{\renewcommand{\listfigurename}{List of Figures}}
 \AtBeginDocument{\renewcommand{\listtablename}{List of Tables}}
 \AtBeginDocument{\renewcommand*\contentsname{Contents}}
 \AtBeginDocument{\renewcommand*\refname{References}}
-
 \setlength{\headheight}{40pt}
 \pagestyle{fancy}
-\fancyhead{} % clear all header fields
-\fancyhead[L]{
- \begin{tabular}{rl}
-    \begin{picture}(25,15)(0,0)
-    \put(0,-8){\includegraphics[width=8mm, height=8mm]{hcmut.png}}
-   \end{picture}&
-	\begin{tabular}{l}
-		\textbf{\bf \ttfamily University of Technology, Ho Chi Minh City}\\
-		\textbf{\bf \ttfamily Faculty of Computer Science and Engineering}
-	\end{tabular} 	
- \end{tabular}
-}
-\fancyhead[R]{
-	\begin{tabular}{l}
-		\tiny \bf \\
-		\tiny \bf 
-	\end{tabular}  }
-\fancyfoot{} % clear all footer fields
-\fancyfoot[L]{\scriptsize \ttfamily IoT Multidisciplinary Project - Academic year 2025-2026}
+\fancyhead{}
+\fancyhead[L]{\begin{tabular}{rl}\begin{picture}(25,15)(0,0)\put(0,-8){\includegraphics[width=8mm, height=8mm]{hcmut.png}}\end{picture}&\begin{tabular}{l}\textbf{\bf \ttfamily University of Technology, Ho Chi Minh City}\\\textbf{\bf \ttfamily Faculty of Computer Science and Engineering}\end{tabular}\end{tabular}}
+\fancyhead[R]{\begin{tabular}{l}\tiny \bf \\\tiny \bf\end{tabular}}
+\fancyfoot{}
+\fancyfoot[L]{\scriptsize \ttfamily IoT Multidisciplinary Project -- Academic year 2025-2026}
 \fancyfoot[R]{\scriptsize \ttfamily Page {\thepage}/\pageref{LastPage}}
 \renewcommand{\headrulewidth}{0.3pt}
 \renewcommand{\footrulewidth}{0.3pt}
-
 \setcounter{secnumdepth}{4}
 \setcounter{tocdepth}{4}
-
 \makeatletter
-\newcounter {subsubsubsection}[subsubsection]
+\newcounter{subsubsubsection}[subsubsection]
 \renewcommand\thesubsubsubsection{\thesubsubsection .\@alph\c@subsubsubsection}
-\newcommand\subsubsubsection{\@startsection{subsubsubsection}{4}{\z@}%
-                                     {-3.25ex\@plus -1ex \@minus -.2ex}%
-                                     {1.5ex \@plus .2ex}%
-                                     {\normalfont\normalsize\bfseries}}
+\newcommand\subsubsubsection{\@startsection{subsubsubsection}{4}{\z@}{-3.25ex\@plus -1ex \@minus -.2ex}{1.5ex \@plus .2ex}{\normalfont\normalsize\bfseries}}
 \newcommand*\l@subsubsubsection{\@dottedtocline{3}{10.0em}{4.1em}}
 \newcommand*{\subsubsubsectionmark}[1]{}
 \makeatother
-% }
-
-% ACRONYMS & SYMBOLS
-% {
-\setabbreviationstyle{long-short}
-\newabbreviation{ode}{ODE}{(First-Order) Ordinary Differential Equation}
-\newabbreviation{ivp}{IVP}{Initial-Value Problem}
-\newabbreviation{lte}{LTE}{Local Truncation Error}
-\newabbreviation{ds}{DS}{Dynamical System}
-\newabbreviation{fig}{Fig.}{Figure}
-\newabbreviation{tab}{Tab.}{Table}
-\newabbreviation{sys}{Sys.}{System of Equations}
-\newabbreviation{eq}{Eq.}{Equation}
-\newabbreviation{eg}{e.g.}{For Example}
-\newabbreviation{ie}{i.e.}{That Is}
-\glsxtrnewsymbol[description = {Set of natural numbers}]{natural}{\ensuremath{\mathbb{N}}}
-\glsxtrnewsymbol[description = {Set of real numbers}]{real}{\ensuremath{\mathbb{R}}}
-\glsxtrnewsymbol[description = {Set of positive real numbers}]{real_positive}{\ensuremath{\mathbb{R}^+}}
-% }
-
-% DOCUMENT
 \begin{document}
 \justifying
+
+
 % TITLE PAGE
 \begin{titlepage}
 \begin{center}
@@ -169,17 +91,13 @@ VIETNAM NATIONAL UNIVERSITY, HO CHI MINH CITY \\
 UNIVERSITY OF TECHNOLOGY \\
 FACULTY OF COMPUTER SCIENCE AND ENGINEERING
 \end{center}
-
 \vspace{1cm}
-
 \begin{figure}[h!]
 \begin{center}
 \includegraphics[width=3cm]{hcmut.png}
 \end{center}
 \end{figure}
-
 \vspace{1cm}
-
 \begin{center}
 \begin{tabular}{c}
 \multicolumn{1}{l}{\textbf{{\Large IoT MULTIDISCIPLINARY PROJECT}}}\\
@@ -190,212 +108,1540 @@ FACULTY OF COMPUTER SCIENCE AND ENGINEERING
 \multicolumn{1}{l}{\textbf{{\Large Project}}}\\
 \\
 \textbf{\textit{{\LARGE ChordSense Pro}}}\\
-\textbf{\textit{{\normalsize An AI-Powered Context-Aware System for Musician's}}}\\
-\textbf{\textit{{\normalsize Interactive Practice Workspace with Harmonic Analysis Support}}}\\
+\textbf{\textit{{\normalsize An AI-Powered Interactive Practice Workspace}}}\\
+\textbf{\textit{{\normalsize with Automatic Chord Recognition and Harmonic Analysis}}}\\
 \\
 \hline
 \end{tabular}
 \end{center}
-
 \vspace{2cm}
-
 \begin{table}[h]
 \centering
     \begin{tabular}{rl}
-    \textbf{Instructor}: & Võ Thị Ngọc Châu\\
-
+    \hspace{3 cm}\textbf{Instructor}: & Vo Thi Ngoc Chau\\
     & \\[10pt]
-    \textbf{Students}: & Mai Chung Tiến - 2353177 \emph{(CC01 - Team 05)} \\
-    & Đặng Quốc Khánh - 2352515 \emph{(CC01 - Team 05, \textbf{Leader})}\\
+    \textbf{Students}: & Mai Chung Tien -- 2353177 \emph{(Group CC01 -- Team 05)} \\
+    & Dang Quoc Khanh -- 2352515 \emph{(Group CC01 -- Team 05, \textbf{Leader})}\\
     \end{tabular}
 \end{table}
-
 \begin{center}
 {\footnotesize HO CHI MINH CITY, SEPTEMBER 2026}
 \end{center}
 \end{titlepage}
-
-%list of content
 \pagebreak
 \tableofcontents
 \pagebreak
-
-% Member list
 \section*{Member list \& Workload}
 \addcontentsline{toc}{section}{Member list \& Workload}
 \begin{center}
 \begin{table}[h]
 \centering
 \renewcommand{\arraystretch}{1.5}
-\begin{tabular}{|c|p{5cm}|p{5cm}|c|}
+\begin{tabular}{|c|c|c|p{7cm}|c|}
 \hline
-\textbf{No.} & \textbf{Member} & \textbf{Role} & \textbf{\% done}\\
+\textbf{No.} & \textbf{Fullname} & \textbf{Student ID} & \textbf{Responsibilities} & \textbf{\% done}\\
 \hline
-%%%%%Student 1%%%%%%%%%%
-1 & Mai Chung Tien (2353177) & Full Stack Developer & 100\%\\
+1 & Mai Chung Tien & 2353177 & \makecell[l]{- Full Stack Development \\ - Interactive Practice Workspace \\ - Client-Side Harmonic Engine} & 100\%\\
 \hline
-%%%%%Student 2%%%%%%%%%%%
-2 & Dang Quoc Khanh (2352515) & Data Engineer \& AI Developer & 100\%\\
+2 & Dang Quoc Khanh & 2352515 & \makecell[l]{- Data Engineering \& AI Pipeline \\ - Chord Recognition Model (MERT + LoRA) \\ - Database Design \& Backend API} & 100\%\\
 \hline
 \end{tabular}
 \caption{\label{table1}Member list \& workload}
 \end{table}
 \end{center}
-
-%%%% noi dung
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \pagebreak
 \setlength{\parindent}{0pt}
 
-% =============================================
-% SECTION 1: PROJECT OVERVIEW
-% =============================================
-\section{Project Title \& Logo}
+%===========================================
+% SECTION 1: SYSTEM OVERVIEW
+%===========================================
+\section{System Overview}
+
+\subsection{System Description}
+\textbf{ChordSense Pro} is an AI-powered interactive music practice platform for instrumentalists ---
+pianists, guitarists, and songwriters. The system integrates a \textbf{Cascaded Hierarchical LoRA}
+fine-tuned \textbf{MERT-v1-330M} model for Automatic Chord Recognition (ACR), a \textbf{Client-Side
+Harmonic Engine} for real-time music theory analysis, and a \textbf{synchronized interactive workspace}
+built on the Web Audio API.
+
+The platform solves a concrete problem: musicians who practice with recordings have no tool that (1)
+detects chords automatically with extended-chord accuracy, (2) explains the harmonic function of each
+chord (Roman numerals, scale mapping), and (3) embeds all practice tools --- loop, metronome, speed
+shift, chord dictionary --- in a single synchronized interface.
+
+\noindent \textbf{Key capabilities:}
+\begin{itemize}
+    \item \textbf{AI Chord Recognition:} User imports a song via YouTube URL or audio upload. The AI
+    pipeline performs source separation (Demucs), beat tracking (madmom), and chord detection (MERT +
+    LoRA Hierarchical) to produce a full chord event timeline.
+    \item \textbf{Smart Bar-Based Grid:} A beat-aligned chord grid rendered with sub-100ms
+    synchronization. Clicking any bar seeks audio playback to that exact timestamp.
+    \item \textbf{Client-Side Harmonic Engine:} Each chord is automatically annotated with its Roman
+    numeral function (I, ii, V7\ldots) relative to the detected key, and mapped to a recommended scale
+    (Ionian, Dorian, Mixolydian\ldots) --- computed entirely in the browser with zero network latency.
+    \item \textbf{A/B Loop and Practice Tools:} Drag-select bars to create seamless A/B loops. A Web
+    Audio API metronome and pitch-preserving speed shift ($0.5\times$, $0.75\times$) support targeted
+    practice.
+    \item \textbf{Chord Dictionary with Synthesizer:} Interactive fingering diagrams (Guitar Fretboard /
+    Piano Keyboard) and an in-browser Soundfont Synthesizer render audible voicings on demand.
+    \item \textbf{Edit Marker and Cloud Sync:} Users correct AI-detected chords; the Harmonic Engine
+    recalculates annotations instantly. All analyses and edits are persisted in PostgreSQL and synced to
+    personal playlists.
+    \item \textbf{Real-Time Practice Mode:} Live microphone chord inference with visual/auditory feedback
+    against the target chord in the loaded piece ($<$200ms end-to-end latency).
+\end{itemize}
+
+\subsection{System Context Diagram}
+% \IfFileExists{image/system_context.png}{%
+%     \begin{figure}[H]
+%         \centering
+%         \includegraphics[width=0.95\textwidth]{system_context.png}
+%         \caption{System Context Diagram --- ChordSense Pro in Operational Environment}
+%         \label{fig:context-diagram}
+%     \end{figure}
+% }{%
+%     \begin{figure}[H]
+%         \centering
+%         \fbox{\parbox[c][6cm][c]{0.9\textwidth}{\centering \large \textbf{[System Context Diagram]}\\[0.5em] \normalsize \textit{Vui lòng lưu ảnh được sinh từ prompt vào: \texttt{image/system\_context.png}}}}
+%         \caption{System Context Diagram --- ChordSense Pro in Operational Environment}
+%         \label{fig:context-diagram}
+%     \end{figure}
+% }
+
+\noindent \textbf{External entities:}
+\begin{itemize}
+    \item \textbf{Musicians / Learners:} Primary end users who import songs, study harmonic progressions,
+    and practice using the interactive workspace.
+    \item \textbf{Music Producers \& Educators:} Advanced users who analyze chord progressions in
+    recordings and use the Smart Grid as a teaching aid.
+    \item \textbf{Music Platform Manager (Business Admin):} Oversees content governance, user accounts,
+    and AI quality KPIs on the Admin Dashboard.
+    \item \textbf{Platform System Administrator (IT Admin / CIO):} Manages infrastructure, AI model
+    deployment lifecycle, data pipelines, and system security.
+    \item \textbf{YouTube / External Audio Sources:} External audio for music import via URL.
+    \item \textbf{Microphone Input:} Hardware device for live audio in Real-Time Practice Mode.
+\end{itemize}
+
+\vspace{1em}
+\subsection{Overall Architecture}
+The system follows a \textbf{Three-Tier Web Architecture} with a dedicated AI Processing Service and a
+Client-Side Harmonic Engine layer operating independently in the browser.
+
+% \IfFileExists{image/overall_architecture.png}{%
+%     \begin{figure}[H]
+%         \centering
+%         \includegraphics[width=0.95\textwidth]{overall_architecture.png}
+%         \caption{Overall Multi-Tier System Architecture --- ChordSense Pro}
+%         \label{fig:architecture}
+%     \end{figure}
+% }{%
+%     \begin{figure}[H]
+%         \centering
+%         \fbox{\parbox[c][6cm][c]{0.9\textwidth}{\centering \large \textbf{[Overall Multi-Tier System Architecture Diagram]}\\[0.5em] \normalsize \textit{Vui lòng lưu ảnh được sinh từ prompt vào: \texttt{image/overall\_architecture.png}}}}
+%         \caption{Overall Multi-Tier System Architecture --- ChordSense Pro}
+%         \label{fig:architecture}
+%     \end{figure}
+% }
+
+\noindent \textbf{Architecture layers:}
+\begin{itemize}
+    \item \textbf{Presentation Layer:} React.js SPA (Vite-based) with a custom design system for the interactive
+    workspace (Smart Grid, synchronized audio player, A/B loop, Chord Dictionary with audio synthesizer, and VexFlow sheet visualization).
+    \item \textbf{Client-Side Harmonic Engine:} High-performance JavaScript module running entirely in the browser,
+    performing context-aware Roman numeral analysis, scale mapping, and chord simplification (Basic/Precise mode) with zero server round-trip latency.
+    \item \textbf{Application Layer:} Python FastAPI backend providing asynchronous RESTful endpoints (JWT authentication, song charts, playlist management, dictionary queries, student progress tracking) and WebSocket notifications.
+    \item \textbf{Data Pipeline Orchestration Layer:} Apache Airflow 2.8 managing scheduled and event-triggered ETL DAGs (\texttt{dag\_ingest\_raw}, \texttt{dag\_process\_audio}, \texttt{dag\_analytics\_rollup}) with Redis caching.
+    \item \textbf{AI Processing Service:} Python service integrating Meta AI's Demucs (harmonic stem isolation), madmom (beat tracking), Librosa (chroma CQT and spectrograms), and HuggingFace MERT-v1-330M with Cascaded 3-Head LoRA for extended chord recognition.
+    \item \textbf{Data \& Storage Layer:} Hybrid persistence architecture comprising PostgreSQL 16 (relational entities, JSONB chord timelines, auto-initialized via \texttt{init/init.sql}, connected via \texttt{psycopg2-binary} connection pooling without ORM overhead) and MongoDB 7.0 (staging queue for raw audio jobs, binary audio, mel-spectrogram matrices, and cached stems).
+\end{itemize}
+
+\newpage
+%===========================================
+% SECTION 2: OVERALL PROJECT REQUIREMENTS
+%===========================================
+\section{Overall Project Requirements}
+
+\subsection{Project Scope}
+The ChordSense Pro project encompasses:
+\begin{itemize}
+    \item Development of an end-to-end AI-powered music practice system targeting instrumentalists and
+    learners.
+    \item Construction and fine-tuning of a MERT + LoRA Hierarchical model for extended chord recognition
+    on piano audio.
+    \item Implementation of a Client-Side Harmonic Engine for zero-latency Roman numeral and scale mapping.
+    \item Development of a synchronized interactive practice workspace with A/B Loop, metronome, speed
+    shift, and Chord Dictionary.
+    \item Design and implementation of a relational database for persistent song analysis and user data.
+    \item Development of 6 functional modules as specified in Table~\ref{tab:system_modules}.
+\end{itemize}
+
+\subsection{System Modules}
+
+\begin{longtable}{@{}
+    >{\centering\arraybackslash}p{0.06\textwidth}
+    >{\raggedright\arraybackslash}p{0.26\textwidth}
+    p{0.56\textwidth} @{}}
+
+    \caption{System Modules}\label{tab:system_modules} \\
+    \toprule
+    \textbf{\#} & \textbf{Module Name} & \textbf{Description} \\
+    \midrule
+    \endfirsthead
+    \caption[]{... (continued)} \\
+    \toprule
+    \textbf{\#} & \textbf{Module Name} & \textbf{Description} \\
+    \midrule
+    \endhead
+    \bottomrule
+    \endlastfoot
+
+    1 & AI Chord Recognition & Fine-tuned MERT model predicting chord root, quality, and extension. \\
+    \addlinespace
+    2 & Audio Processing Pipeline & Performs audio ingestion, Demucs stem separation, and beat tracking. \\
+    \addlinespace
+    3 & Data Pipeline \& Backend API & Orchestrates Airflow DAG workflows and provides asynchronous FastAPI endpoints. \\
+    \addlinespace
+    4 & Interactive Workspace & React frontend for Smart Grid playback, A/B looping, and Chord Dictionary. \\
+    \addlinespace
+    5 & Client-Side Harmonic Engine & Computes Roman numerals, scale mapping, and chord simplification in browser. \\
+    \addlinespace
+    6 & Database \& Storage & PostgreSQL for relational and chord data; MongoDB for audio staging. \\
+\end{longtable}
+
+\subsection{Technology Stack}
+
+The technology choices of ChordSense Pro are structured around an end-to-end Python-centric ecosystem
+for data engineering, AI inference, and backend serving, combined with modern web technologies for zero-latency
+client-side music theory processing.
+
+\begin{longtable}{@{}
+    >{\raggedright\arraybackslash}p{0.22\textwidth}
+    >{\raggedright\arraybackslash}p{0.26\textwidth}
+    p{0.40\textwidth} @{}}
+
+    \caption{Technology Stack of ChordSense Pro}\label{tab:tech_stack} \\
+    \toprule
+    \textbf{Layer / Component} & \textbf{Selected Technology} & \textbf{Rationale \& Purpose} \\
+    \midrule
+    \endfirsthead
+    \bottomrule
+    \endlastfoot
+
+    Audio Processing & Demucs, madmom, Librosa, yt-dlp & Stem separation, beat tracking, and audio ingestion. \\
+    \addlinespace
+    AI Framework & PyTorch, MERT-v1-330M, LoRA & Deep learning backbone and parameter-efficient chord fine-tuning. \\
+    \addlinespace
+    Data Pipeline & Apache Airflow 2.8 & Scheduled batch orchestration for ingestion and analytics rollups. \\
+    \addlinespace
+    Primary Database & PostgreSQL 16 & Relational storage for users, playlists, and JSONB chord events. \\
+    \addlinespace
+    Staging Storage & MongoDB 7.0 & Temporary staging queue for audio files and feature matrices. \\
+    \addlinespace
+    Backend API & Python + FastAPI & Asynchronous RESTful API endpoints and WebSocket services. \\
+    \addlinespace
+    Frontend UI & React.js + Vite & Responsive single-page application for the practice workspace. \\
+    \addlinespace
+    Harmonic Engine & JavaScript (Web Audio API) & Zero-latency client-side music theory analysis and playback. \\
+    \addlinespace
+    Containerization & Docker + Docker Compose & Multi-service containerization and reproducible deployment. \\
+\end{longtable}
+
+\subsubsection{Architectural and Technology Decision Summary}
+
+To establish a resilient and high-performance system architecture, the team evaluated competing technologies across all key system layers. Table~\ref{tab:tech_decisions} synthesizes the technological selections, evaluated alternatives, and engineering rationales.
+
+\begin{longtable}{@{}
+    >{\raggedright\arraybackslash}p{0.18\textwidth}
+    >{\raggedright\arraybackslash}p{0.21\textwidth}
+    >{\raggedright\arraybackslash}p{0.21\textwidth}
+    p{0.28\textwidth} @{}}
+
+    \caption{Architectural and Technology Decision Summary}\label{tab:tech_decisions} \\
+    \toprule
+    \textbf{System Layer} & \textbf{Selected Tech} & \textbf{Alternatives Evaluated} & \textbf{Architectural Rationale} \\
+    \midrule
+    \endfirsthead
+    \caption[]{... (continued)} \\
+    \toprule
+    \textbf{System Layer} & \textbf{Selected Tech} & \textbf{Alternatives Evaluated} & \textbf{Architectural Rationale} \\
+    \midrule
+    \endhead
+    \bottomrule
+    \endlastfoot
+
+    Acoustic Backbone &
+    MERT-v1-330M &
+    Music2Vec, Jukebox &
+    Pre-trained on 160k hours of music; SOTA benchmark on MIR chord tasks. \\
+    \addlinespace
+    Fine-Tuning Method &
+    LoRA ($r=8, \alpha=16$) &
+    Full Fine-Tuning, Adapters &
+    Trains only 1.2\% parameters on a single GPU; zero inference latency overhead. \\
+    \addlinespace
+    Application Backend &
+    Python FastAPI (ASGI) &
+    Node.js Express, Django &
+    Native Python integration with AI models; high-throughput asynchronous routing. \\
+    \addlinespace
+    Persistence Layer &
+    PostgreSQL + MongoDB &
+    SQLAlchemy ORM, Prisma &
+    Direct SQL control over JSONB chord timelines; MongoDB for audio staging. \\
+    \addlinespace
+    Pipeline Orchestration &
+    Apache Airflow 2.8 &
+    Celery + Redis, OS Cron &
+    Automated DAG dependencies, failure retries, and monitoring for audio ETL. \\
+    \addlinespace
+    Interactive Client &
+    React.js + Web Audio API &
+    Next.js, HTML5 Audio &
+    Sub-100ms playback sync, A/B looping, and zero-latency client-side music theory. \\
+\end{longtable}
+
+\subsection{Role-Based Access Control (RBAC)}
+
+The system implements Role-Based Access Control with four roles. Two mandatory administrative roles
+are defined per project requirements: \textbf{Music Platform Manager} (Business Admin) and
+\textbf{Platform System Administrator} (IT Admin / CIO).
+
+\begin{longtable}{@{}
+    >{\raggedright\arraybackslash}p{0.30\textwidth}
+    >{\centering\arraybackslash}p{0.155\textwidth}
+    >{\centering\arraybackslash}p{0.155\textwidth}
+    >{\centering\arraybackslash}p{0.155\textwidth}
+    >{\centering\arraybackslash}p{0.10\textwidth} @{}}
+
+    \caption{Role-Based Access Control (RBAC) Matrix}\label{tab:rbac_matrix} \\
+    \toprule
+    \textbf{Feature / Permission} &
+    \textbf{Music Platform Manager} &
+    \textbf{Platform Sys.\ Admin} &
+    \textbf{Musician / Learner} &
+    \textbf{Guest} \\
+    \midrule
+    \endfirsthead
+    \caption[]{RBAC Matrix (continued)} \\
+    \toprule
+    \textbf{Feature / Permission} &
+    \textbf{Music Platform Manager} &
+    \textbf{Platform Sys.\ Admin} &
+    \textbf{Musician / Learner} &
+    \textbf{Guest} \\
+    \midrule
+    \endhead
+    \bottomrule
+    \endlastfoot
+
+    Import \& Analyze Music & \cmark & \xmark & \cmark & \cmark (limited) \\
+    \addlinespace
+    Smart Grid \& Harmonic Engine & \cmark & \xmark & \cmark & \cmark (limited) \\
+    \addlinespace
+    Edit Marker (Override AI) & \cmark & \xmark & \cmark & \xmark \\
+    \addlinespace
+    Cloud Playlist Sync & \cmark & \xmark & \cmark & \xmark \\
+    \addlinespace
+    Real-Time Practice Mode & \cmark & \xmark & \cmark & \xmark \\
+    \addlinespace
+    User Account Management & \cmark (Full) & \cmark (Technical) & \xmark & \xmark \\
+    \addlinespace
+    Content Moderation & \cmark (Full) & \xmark & \xmark & \xmark \\
+    \addlinespace
+    AI Quality KPI Dashboard & \cmark (View) & \cmark (Full) & \xmark & \xmark \\
+    \addlinespace
+    Model Deployment / Rollback & \xmark & \cmark (Full) & \xmark & \xmark \\
+    \addlinespace
+    Database Administration & \xmark & \cmark (Full) & \xmark & \xmark \\
+    \addlinespace
+    Infrastructure Configuration & \xmark & \cmark (Full) & \xmark & \xmark \\
+    \addlinespace
+    Usage Analytics & \cmark (Full) & \cmark (System) & \cmark (Own) & \xmark \\
+\end{longtable}
+
+\newpage
+%===========================================
+% SECTION 3: BUSINESS REQUIREMENTS
+%===========================================
+\section{Business Requirements}
+
+\subsection{Business Context}
+Musicians and learners who rely on digital recordings for practice face four key challenges:
+\begin{itemize}
+    \item \textbf{No Harmonic Context:} Existing chord detection tools (Chordify, ChordAI) output raw
+    chord labels without explaining harmonic function (Roman numerals, scale relationships), making it
+    impossible to understand progression logic or transpose confidently.
+    \item \textbf{Fragmented Practice Workflow:} Musicians juggle multiple disconnected tools: a media
+    player, a chord chart app, a standalone metronome, and a fingering reference.
+    \item \textbf{Rigid AI Output:} No existing tool allows overriding incorrect AI chord labels.
+    Switching between simplified and extended chord views requires a slow server round-trip.
+    \item \textbf{No Extended Chord Support for Vietnamese Music:} Extended chord recognition quality
+    (9th, 11th, 13th chords) is particularly poor for Vietnamese pop and ballad music, which has unique
+    harmonic characteristics underrepresented in international training datasets.
+\end{itemize}
+
+\subsection{Business Goals}
+
+\begin{longtable}{@{}
+    >{\raggedright\arraybackslash}p{0.10\textwidth}
+    p{0.52\textwidth}
+    >{\raggedright\arraybackslash}p{0.31\textwidth} @{}}
+
+    \caption{Business Goals}\label{tab:business_goals} \\
+    \toprule
+    \textbf{ID} & \textbf{Business Goal} & \textbf{Success Metric} \\
+    \midrule
+    \endfirsthead
+    \caption[]{... (continued)} \\
+    \toprule
+    \textbf{ID} & \textbf{Business Goal} & \textbf{Success Metric} \\
+    \midrule
+    \endhead
+    \bottomrule
+    \endlastfoot
+
+    BG-01 & Provide automated harmonic theory analysis (Roman numerals + scale) integrated with audio
+    playback. & Annotations rendered within 100ms of chord grid load. \\
+    \addlinespace
+    BG-02 & Reduce chord recognition errors for extended chords (9th, 11th, 13th) on Vietnamese piano
+    audio. & Weighted accuracy $\geq 85\%$ on VN Piano Extended Chord test set. \\
+    \addlinespace
+    BG-03 & Deliver a unified, all-in-one practice workspace, eliminating dependency on external tools. &
+    Eliminate need for external metronome, media player, and chord apps in user workflow. \\
+    \addlinespace
+    BG-04 & Support user correction of AI chord output with zero learning curve. & Edit Marker adoption $>$30\% of users within first practice session. \\
+    \addlinespace
+    BG-05 & Enable cloud-synced personal music libraries across devices. & Playlist sync latency $<$200ms. \\
+\end{longtable}
+
+\subsection{Business Scenarios}
+
+\subsubsection{AI Integration Mechanism: Human-on-the-Loop vs.\ Human-in-the-Loop}
+
+ChordSense Pro applies two distinct AI interaction models depending on the context:
+
+\begin{longtable}{@{}
+    >{\raggedright\arraybackslash}p{0.22\textwidth}
+    p{0.37\textwidth}
+    >{\raggedright\arraybackslash}p{0.34\textwidth} @{}}
+
+    \caption{AI Interaction Mechanism: HOTL vs.\ HITL in ChordSense Pro}\label{tab:hotl_hitl} \\
+    \toprule
+    \textbf{Dimension} & \textbf{Human-on-the-Loop (HOTL)} & \textbf{Human-in-the-Loop (HITL)} \\
+    \midrule
+    \endfirsthead
+    \bottomrule
+    \endlastfoot
+
+    Applied in & Learning Flow (song import, analysis, harmonic annotation) &
+    Real-Time Practice Mode (live microphone inference) \\
+    \addlinespace
+    AI behavior & Executes all pipeline steps autonomously: download $\rightarrow$ separate $\rightarrow$
+    detect beats $\rightarrow$ infer chords $\rightarrow$ annotate harmonics. &
+    Performs real-time chord inference on each captured audio frame and compares to target chord. \\
+    \addlinespace
+    Human role & Monitors the output after the fact; can override chords via Edit Marker. &
+    Actively plays and adjusts technique in direct response to AI feedback every second. \\
+    \addlinespace
+    Latency requirement & 30 seconds end-to-end for a 4-minute song (acceptable for batch). &
+    $< 200\,\text{ms}$ per inference frame (must feel instantaneous). \\
+    \addlinespace
+    Why this model? & Fully automating the analysis step eliminates friction --- user loads a song and
+    receives a complete harmonic view without any intermediate decisions. &
+    The user is the `agent'' in a tight feedback loop; AI is a real-time coach, not a batch processor. \\
+\end{longtable}
+
+\begin{tcolorbox}[colback=white!95!gray, colframe=black,
+    title={Scenario 1: Learning Flow -- Import, Analyze, and Study a Song (HOTL)}]
+\begin{itemize}
+    \item[\textbf{Step 1:}] \textbf{User imports music.} Pastes a YouTube URL or uploads an audio file.
+    The system dispatches an analysis job to the AI Processing Service queue.
+    \item[\textbf{Step 2:}] \textbf{AI pipeline runs autonomously (HOTL --- fully automated).}
+    \begin{itemize}
+        \item \textbf{[Auto]} yt-dlp downloads audio as WAV. Demucs isolates the harmonic instrument stem.
+        \item \textbf{[Auto]} madmom detects beat grid and time signature.
+        \item \textbf{[Auto]} MERT + LoRA Hierarchical predicts chord events containing root note, quality, extension, and confidence score.
+        \item \textbf{[Auto]} Key detection runs on the full chord sequence for Roman numeral disambiguation.
+        \item \textbf{[Auto]} Client-Side Harmonic Engine maps each chord to its Roman numeral and recommended scale.
+    \end{itemize}
+    \item[\textbf{Step 3:}] \textbf{Smart Grid rendered.} The frontend renders the chord grid synchronized
+    to the audio player. No user action was required during Steps 1--3.
+    \item[\textbf{Step 4:}] \textbf{Optional human intervention (HOTL monitor).} The user reviews the
+    output. If a chord is incorrectly detected, the \textbf{Edit Marker} allows override. The Harmonic Engine
+    recalculates annotations immediately, client-side.
+\end{itemize}
+\end{tcolorbox}
+
+\begin{tcolorbox}[colback=white!95!gray, colframe=black,
+    title={Scenario 2: A/B Loop Practice -- Targeting a Difficult Passage}]
+\begin{enumerate}
+    \item The user identifies a difficult chord transition in the Smart Grid.
+    \item The user drag-selects the target bars to activate A/B Loop mode.
+    \item The system loops that passage continuously with the Web Audio API metronome enabled.
+    \item The user adjusts playback speed to 0.5x (pitch preserved). After mastering, progresses to 1.0x.
+    \item For each chord in the loop, the user clicks to open the Chord Dictionary and views the fingering diagram and hears the voicing via the Soundfont Synthesizer.
+\end{enumerate}
+\end{tcolorbox}
+
+\begin{tcolorbox}[colback=white!95!gray, colframe=black,
+    title={Scenario 3: Real-Time Practice Mode (HITL)}]
+\begin{enumerate}
+    \item The user has loaded a song and opens the Real-Time Practice tab.
+    \item The system activates the microphone and begins real-time chord inference ($<$200ms latency).
+    \item The user plays along to the song. The system compares the AI-recognized live chord against the target chord in the Smart Grid at the current playback position.
+    \item Correct chords are highlighted \textbf{green}. Incorrect chords are highlighted \textbf{red} with the expected chord name displayed.
+    \item The user (Human-in-the-Loop) responds to the AI feedback by adjusting their playing technique in real time.
+    \item Practice session accuracy data is logged to the user's profile for progress tracking.
+\end{enumerate}
+\end{tcolorbox}
+
+\begin{tcolorbox}[colback=white!95!gray, colframe=black,
+    title={Scenario 4: Music Platform Manager -- AI Quality Oversight (HOTL)}]
+\begin{enumerate}
+    \item The \textbf{Music Platform Manager (Business Admin)} logs into the Admin Dashboard.
+    \item Reviews AI Quality KPI panel: accuracy by chord class, confidence score histogram, and user correction rate.
+    \item Identifies that extended chord accuracy for \texttt{maj9} and \texttt{min11} has dropped below the 75\% threshold.
+    \item Flags these chord classes for model re-evaluation and notifies the \textbf{Platform System Administrator (IT Admin)}.
+    \item The Platform System Administrator deploys a new fine-tuned LoRA adapter targeting the underperforming classes.
+\end{enumerate}
+\end{tcolorbox}
+
+\subsection{Key User Groups}
+
+ChordSense Pro defines four user groups, including two specialized administrative roles established to ensure operational integrity and platform governance:
+
+\begin{itemize}
+    \item \textbf{Musician / Learner (Primary End User):} Instrumentalists, music students, and hobbyists who import songs, study harmonic structures, practice with A/B Loop and Chord Dictionary, and improve technical performance in Real-Time Practice Mode.
+    \item \textbf{Music Producer / Educator (Advanced End User):} Instructors and arrangers who transcribe complex harmonic progressions and utilize the Smart Grid as an interactive pedagogical visual aid.
+    \item \textbf{Music Platform Manager (Business Admin):} Oversees educational content quality, monitors AI chord recognition accuracy metrics, manages learner accounts, curates official practice playlists, and moderates user-submitted chord revisions.
+    \item \textbf{Platform System Administrator (IT Admin / CIO):} Manages computational infrastructure, deploys and monitors fine-tuned LoRA model adapters, oversees automated Airflow data pipelines, enforces system security, and ensures high availability.
+\end{itemize}
+
+\section{System Requirements}
+
+\subsection{Functional Requirements}
+
+\begin{longtable}{@{}
+    >{\raggedright\arraybackslash}p{0.09\textwidth}
+    p{0.56\textwidth}
+    >{\centering\arraybackslash}p{0.09\textwidth}
+    >{\centering\arraybackslash}p{0.09\textwidth}
+    >{\raggedright\arraybackslash}p{0.11\textwidth} @{}}
+
+    \caption{Functional Requirements}\label{tab:functional_requirements} \\
+    \toprule
+    \textbf{ID} & \textbf{Requirement} & \textbf{Feasible} & \textbf{Testable} & \textbf{Priority} \\
+    \midrule
+    \endfirsthead
+    \caption[]{... (continued)} \\
+    \toprule
+    \textbf{ID} & \textbf{Requirement} & \textbf{Feasible} & \textbf{Testable} & \textbf{Priority} \\
+    \midrule
+    \endhead
+    \bottomrule
+    \endlastfoot
+
+    FR-01 & Accept music input via YouTube URL or MP3/WAV file upload and dispatch it to the AI analysis
+    pipeline. & \cmark & \cmark & High \\
+    \addlinespace
+    FR-02 & The AI pipeline shall perform source separation (Demucs), beat tracking (madmom), and chord
+    recognition (MERT + LoRA Hierarchical) to produce a chord event timeline. & \cmark & \cmark & High \\
+    \addlinespace
+    FR-03 & Render the chord event timeline as a beat-aligned Smart Grid synchronized to audio playback
+    with sub-100ms accuracy. & \cmark & \cmark & High \\
+    \addlinespace
+    FR-04 & The Client-Side Harmonic Engine shall annotate each chord with its Roman numeral function
+    and recommended scale, computed entirely in the browser. & \cmark & \cmark & High \\
+    \addlinespace
+    FR-05 & Allow users to set an A/B Loop by drag-selecting a range of bars in the Smart Grid. &
+    \cmark & \cmark & High \\
+    \addlinespace
+    FR-06 & Provide a Web Audio API metronome synchronized to the song's detected BPM. &
+    \cmark & \cmark & High \\
+    \addlinespace
+    FR-07 & Support pitch-preserving playback speed adjustment at 0.5x and 0.75x. &
+    \cmark & \cmark & High \\
+    \addlinespace
+    FR-08 & Provide a Chord Dictionary with interactive fingering diagrams (Guitar Fretboard and Piano
+    Keyboard) and Soundfont audio rendering for each chord. & \cmark & \cmark & High \\
+    \addlinespace
+    FR-09 & Allow users to override AI-detected chord labels via the Edit Marker. The Harmonic Engine
+    shall recalculate Roman numerals and scale suggestions immediately upon any edit. & \cmark & \cmark & High \\
+    \addlinespace
+    FR-10 & Persist all song analyses and user edits in the database with an Event-Based JSONB schema
+    and synchronize to the user's cloud playlist. & \cmark & \cmark & High \\
+    \addlinespace
+    FR-11 & Support a Real-Time Practice Mode: capture live microphone audio, perform real-time chord
+    inference ($<$200ms), and provide visual feedback against the target chord. & \cmark & \cmark & High \\
+    \addlinespace
+    FR-12 & The Music Platform Manager shall have an Admin Dashboard showing AI quality KPIs: accuracy
+    by chord class, confidence score distribution, and user correction rate. & \cmark & \cmark & Medium \\
+    \addlinespace
+    FR-13 & The Platform System Administrator shall deploy or roll back LoRA adapter versions without
+    system downtime. & \cmark & \cmark & Medium \\
+    \addlinespace
+    FR-14 & Support a Basic/Precise chord toggle that simplifies extended chord names client-side with
+    no server communication. & \cmark & \cmark & Medium \\
+    \addlinespace
+    FR-15 & Allow users to create, rename, and delete personal playlists and organize analyzed songs
+    within them. & \cmark & \cmark & Medium \\
+\end{longtable}
+
+\subsection{Non-Functional Requirements}
+
+\begin{longtable}{@{}
+    >{\raggedright\arraybackslash}p{0.09\textwidth}
+    p{0.56\textwidth}
+    >{\centering\arraybackslash}p{0.09\textwidth}
+    >{\centering\arraybackslash}p{0.09\textwidth}
+    >{\raggedright\arraybackslash}p{0.11\textwidth} @{}}
+
+    \caption{Non-Functional Requirements}\label{tab:nonfunctional_requirements} \\
+    \toprule
+    \textbf{ID} & \textbf{Requirement} & \textbf{Feasible} & \textbf{Testable} & \textbf{Priority} \\
+    \midrule
+    \endfirsthead
+    \bottomrule
+    \endlastfoot
+
+    NFR-01 & The Smart Grid shall synchronize to audio playback with sub-100ms accuracy. &
+    \cmark & \cmark & High \\
+    \addlinespace
+    NFR-02 & Real-Time Practice Mode chord inference shall complete within 200ms end-to-end. &
+    \cmark & \cmark & High \\
+    \addlinespace
+    NFR-03 & The AI analysis pipeline shall complete within 30 seconds for a typical 4-minute song. &
+    \cmark & \cmark & High \\
+    \addlinespace
+    NFR-04 & API response time shall be $< 200\,\text{ms}$ at the 95th percentile under normal load. &
+    \cmark & \cmark & High \\
+    \addlinespace
+    NFR-05 & The Client-Side Harmonic Engine shall complete Roman numeral recalculation within 50ms
+    of any user chord edit. & \cmark & \cmark & High \\
+    \addlinespace
+    NFR-06 & The system shall use JWT authentication with configurable token expiry for session security. &
+    \cmark & \cmark & High \\
+    \addlinespace
+    NFR-07 & RBAC shall enforce four roles: Guest, Musician/Learner, Music Platform Manager, and Platform
+    System Administrator. & \cmark & \cmark & High \\
+    \addlinespace
+    NFR-08 & The MERT + LoRA Hierarchical model shall achieve weighted chord accuracy $\geq 85\%$ on the
+    VN Piano Extended Chord test set. & \cmark & \cmark & High \\
+    \addlinespace
+    NFR-09 & The system shall support at least 100 concurrent users without performance degradation. &
+    \cmark & \cmark & Medium \\
+    \addlinespace
+    NFR-10 & Audio upload size shall not exceed 100MB per request. & \cmark & \cmark & Medium \\
+\end{longtable}
+
+\subsection{Data Requirements}
+\begin{itemize}
+    \item \textbf{User Data:} Credentials, profile information, and roles for authentication and
+    access control.
+    \item \textbf{Song Analysis Data:} Full chord event timeline per song containing timestamp, root, quality, extension, confidence, and user override status, along with musical key, tempo, and time signature.
+    \item \textbf{User Edit History:} All Edit Marker chord overrides per song per user --- enabling
+    diff comparison between AI output and user-curated versions.
+    \item \textbf{Playlist Data:} User-defined playlists with ordered song references and custom metadata.
+    \item \textbf{AI Model Metadata:} Version-controlled LoRA adapter registry with accuracy metrics per
+    chord class per model version, maintained by the Platform System Administrator.
+    \item \textbf{Training Dataset:} VN Piano Extended Chord Dataset --- labeled audio segments mapped
+    to chord labels (root, quality, extension) for model fine-tuning and evaluation.
+    \item \textbf{Practice Session Logs:} Per-session records: target chord sequence, recognized chord
+    sequence, timestamps, and per-chord correctness flags for progress analytics.
+\end{itemize}
+
+\newpage
+\subsection{Use Case Diagram \& Descriptions}
+
+The system defines six core use cases spanning end users (Musicians/Learners) and administrative roles
+(Music Platform Manager and Platform System Administrator), designed around the Human-on-the-Loop (HOTL)
+and Human-in-the-Loop (HITL) operational paradigms.
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=7cm]{draft_logo2.jpg}
-    \caption*{\textit{ChordSense Pro --- Project Logo}}
+    \includegraphics[width=0.92\textwidth]{usecase_diagram.png}
+    \caption{Use Case Diagram --- ChordSense Pro Platform}
+    \label{fig:usecase-diagram}
 \end{figure}
 
-\textbf{ChordSense Pro} --- An AI-Powered Context-Aware System for Musician's Interactive Practice Workspace with Harmonic Analysis Support
+\vspace{0.5em}
+\noindent \textbf{1/ UC-01: Import and Analyze Music}
+\setlength{\tabcolsep}{6pt}
+\renewcommand{\arraystretch}{1.1}
+\setlength{\ucLeft}{30mm}
 
-\medskip
-\noindent\textit{Tagline: ``Deep Analysis --- Precision Practice --- Complete Mastery''}
+\begin{longtable}{|>{\bfseries}p{\ucLeft}|
+    p{\dimexpr\textwidth-\ucLeft-4\tabcolsep-3\arrayrulewidth\relax}|}
+\hline
+Name & Import and Analyze Music \\ \hline
+ID & UC-01 \\ \hline
+Actor & Primary: Musician / Learner \\ \hline
+Description & User imports a song via YouTube URL or audio upload. The system dispatches the analysis
+job. Upon completion, the Smart Grid and harmonic annotations are displayed automatically
+(Human-on-the-Loop). \\ \hline
+Preconditions &
+\begin{itemize}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt]
+    \item User is logged in
+    \item YouTube URL is valid or audio file is $\leq 50\,\text{MB}$
+\end{itemize}
+\\ \hline
+Postconditions &
+\begin{itemize}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item \textbf{Success:} Smart Grid rendered with chord events, Roman numeral annotations, and
+    scale suggestions. Song saved to user library.
+    \item \textbf{Failure:} Error message displayed; no data saved.
+\end{itemize}
+\\ \hline
+Basic Flow &
+\begin{enumerate}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt]
+    \item User enters YouTube URL or uploads audio file
+    \item System validates input and dispatches analysis job to AI Processing Service queue
+    \item AI pipeline executes: yt-dlp $\rightarrow$ Demucs $\rightarrow$ madmom $\rightarrow$ MERT inference
+    \item Job completion triggers frontend update via WebSocket notification
+    \item Frontend renders Smart Grid with chord events and Harmonic Engine annotations
+    \item Song automatically saved to user's library
+\end{enumerate}
+\\ \hline
+Alternative Flow &
+\noindent \textbf{AF1: YouTube URL is unavailable}
+\begin{enumerate}
+    \item yt-dlp returns download error
+    \item System notifies user; suggests uploading audio file directly
+\end{enumerate}
+\\ \hline
+Exception Flow &
+\noindent \textbf{EF1: AI service timeout (at step 3)}
+\begin{enumerate}
+    \item Analysis job exceeds 60 seconds without completion
+    \item System returns timeout error; user may retry or contact support
+\end{enumerate}
+\\ \hline
+\caption{UC\_01: Import and Analyze Music}\label{tab:uc01}
+\end{longtable}
 
-% =============================================
-% SECTION 2: CONTEXT & BACKGROUND
-% =============================================
-\section{Context \& Background}
+\vspace{1em}
+\noindent \textbf{2/ UC-02: A/B Loop and Practice Tools}
+\setlength{\tabcolsep}{6pt}
+\renewcommand{\arraystretch}{1.1}
+\setlength{\ucLeft}{30mm}
+
+\begin{longtable}{|>{\bfseries}p{\ucLeft}|
+    p{\dimexpr\textwidth-\ucLeft-4\tabcolsep-3\arrayrulewidth\relax}|}
+\hline
+Name & A/B Loop and Practice Tools \\ \hline
+ID & UC-02 \\ \hline
+Actor & Primary: Musician / Learner \\ \hline
+Description & User selects a passage in the Smart Grid for A/B loop practice with metronome and speed
+shift control. \\ \hline
+Preconditions &
+\begin{itemize}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt]
+    \item User is logged in
+    \item A song with a chord analysis result is loaded in the workspace
+\end{itemize}
+\\ \hline
+Postconditions &
+\begin{itemize}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item \textbf{Success:} Selected passage loops continuously at the configured speed with metronome enabled.
+\end{itemize}
+\\ \hline
+Basic Flow &
+\begin{enumerate}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt]
+    \item User drag-selects a range of bars in the Smart Grid
+    \item System activates A/B Loop mode with the selected range highlighted
+    \item User optionally enables the metronome (synchronized to detected song BPM)
+    \item User optionally adjusts playback speed ($0.5\times$, $0.75\times$, $1.0\times$)
+    \item Web Audio API begins looping the selected passage at the configured speed with pitch preserved
+    \item User clicks any chord in the loop to open the Chord Dictionary
+\end{enumerate}
+\\ \hline
+\caption{UC\_02: A/B Loop and Practice Tools}\label{tab:uc02}
+\end{longtable}
+
+\vspace{1em}
+\noindent \textbf{3/ UC-03: Edit Marker --- Override AI Chord}
+\setlength{\tabcolsep}{6pt}
+\renewcommand{\arraystretch}{1.1}
+\setlength{\ucLeft}{30mm}
+
+\begin{longtable}{|>{\bfseries}p{\ucLeft}|
+    p{\dimexpr\textwidth-\ucLeft-4\tabcolsep-3\arrayrulewidth\relax}|}
+\hline
+Name & Edit Marker --- Override AI Chord \\ \hline
+ID & UC-03 \\ \hline
+Actor & Primary: Musician / Learner; Secondary: Music Platform Manager \\ \hline
+Description & User corrects an AI-detected chord label via the Edit Marker. The Harmonic Engine
+immediately recalculates Roman numeral and scale annotations for the updated chord. \\ \hline
+Preconditions &
+\begin{itemize}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt]
+    \item User is logged in
+    \item A song analysis is loaded in the workspace
+\end{itemize}
+\\ \hline
+Postconditions &
+\begin{itemize}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item \textbf{Success:} Chord label updated; \texttt{is\_user\_edited = true}; Harmonic Engine
+    recalculated; change persisted to database.
+\end{itemize}
+\\ \hline
+Basic Flow &
+\begin{enumerate}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt]
+    \item User clicks a chord cell in the Smart Grid
+    \item System opens Edit Marker modal showing current Root, Quality, Extension
+    \item User modifies values via dropdown selectors
+    \item System validates the chord combination
+    \item System updates chord event in local state and sets \texttt{is\_user\_edited = true}
+    \item Client-Side Harmonic Engine recalculates Roman numeral and scale for the updated chord
+    \item Updated annotations displayed instantly in the Smart Grid
+    \item System persists the edit to the database asynchronously
+\end{enumerate}
+\\ \hline
+Alternative Flow &
+\noindent \textbf{AF1: User resets to original AI output}
+\begin{enumerate}
+    \item User clicks `Reset to AI'' in the Edit Marker modal
+    \item System restores AI-detected chord; \texttt{is\_user\_edited} flag cleared
+    \item Harmonic Engine recalculates for the restored chord
+\end{enumerate}
+\\ \hline
+Exception Flow &
+\noindent \textbf{EF1: Database save failure}
+\begin{enumerate}
+    \item System cannot persist edit to database
+    \item Edit remains in local UI state; user notified to retry sync
+\end{enumerate}
+\\ \hline
+\caption{UC\_03: Edit Marker --- Override AI Chord}\label{tab:uc03}
+\end{longtable}
+
+\vspace{1em}
+\noindent \textbf{4/ UC-04: Real-Time Practice Mode}
+\setlength{\tabcolsep}{6pt}
+\renewcommand{\arraystretch}{1.1}
+\setlength{\ucLeft}{30mm}
+
+\begin{longtable}{|>{\bfseries}p{\ucLeft}|
+    p{\dimexpr\textwidth-\ucLeft-4\tabcolsep-3\arrayrulewidth\relax}|}
+\hline
+Name & Real-Time Practice Mode \\ \hline
+ID & UC-04 \\ \hline
+Actor & Primary: Musician / Learner \\ \hline
+Description & User plays an instrument in front of a microphone. The system performs real-time chord
+inference and provides visual feedback comparing the live chord to the target chord at the current
+playback position (Human-in-the-Loop). \\ \hline
+Preconditions &
+\begin{itemize}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt]
+    \item User is logged in
+    \item A song analysis is loaded in the workspace
+    \item Microphone access is granted by the browser
+    \item Real-time inference service is available
+\end{itemize}
+\\ \hline
+Postconditions &
+\begin{itemize}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item \textbf{Success:} Practice session logged with per-chord correctness data. User receives
+    accuracy summary at session end.
+    \item \textbf{Failure:} Microphone capture or inference error displayed; session not started.
+\end{itemize}
+\\ \hline
+Basic Flow &
+\begin{enumerate}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt]
+    \item User opens Real-Time Practice tab
+    \item System requests microphone access and initializes Web Audio API input stream
+    \item System begins real-time chord inference on live audio ($< 200\,\text{ms}$ latency per frame)
+    \item Smart Grid plays the song; at each beat, the target chord is highlighted
+    \item System compares recognized live chord to target chord
+    \item Correct match: cell highlighted green; incorrect: highlighted red with expected chord shown
+    \item User (HITL) adjusts playing technique in response to visual feedback
+    \item At session end, accuracy summary and chord correctness log saved to user profile
+\end{enumerate}
+\\ \hline
+Exception Flow &
+\noindent \textbf{EF1: Inference latency exceeds 200ms}
+\begin{enumerate}
+    \item System degrades to visual-only feedback (no audio comparison)
+    \item User notified of performance issue
+\end{enumerate}
+\\ \hline
+\caption{UC\_04: Real-Time Practice Mode}\label{tab:uc04}
+\end{longtable}
+
+\vspace{1em}
+\noindent \textbf{5/ UC-05: Music Platform Manager --- AI Quality Monitoring}
+\setlength{\tabcolsep}{6pt}
+\renewcommand{\arraystretch}{1.1}
+\setlength{\ucLeft}{30mm}
+
+\begin{longtable}{|>{\bfseries}p{\ucLeft}|
+    p{\dimexpr\textwidth-\ucLeft-4\tabcolsep-3\arrayrulewidth\relax}|}
+\hline
+Name & Music Platform Manager --- AI Quality Monitoring \\ \hline
+ID & UC-05 \\ \hline
+Actor & Primary: Music Platform Manager (Business Admin) \\ \hline
+Description & The Music Platform Manager monitors AI chord recognition quality KPIs on the Admin
+Dashboard and flags underperforming chord classes for model re-evaluation. \\ \hline
+Preconditions &
+\begin{itemize}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt]
+    \item Manager is logged in with Business Admin role
+\end{itemize}
+\\ \hline
+Postconditions &
+\begin{itemize}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item \textbf{Success:} KPI dashboard displays current model performance; Manager can submit
+    re-evaluation request to Platform System Administrator.
+\end{itemize}
+\\ \hline
+Basic Flow &
+\begin{enumerate}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt]
+    \item Manager navigates to Admin Dashboard $\rightarrow$ AI Quality tab
+    \item System displays: accuracy by chord class, confidence histogram, user correction rate, active
+    model version
+    \item Manager reviews chord classes below the 75\% accuracy threshold
+    \item Manager submits a re-evaluation request for flagged classes
+    \item System notifies the Platform System Administrator via dashboard alert
+\end{enumerate}
+\\ \hline
+\caption{UC\_05: Music Platform Manager --- AI Quality Monitoring}\label{tab:uc05}
+\end{longtable}
+
+\vspace{1em}
+\noindent \textbf{6/ UC-06: Platform System Administrator --- Model Deployment}
+\setlength{\tabcolsep}{6pt}
+\renewcommand{\arraystretch}{1.1}
+\setlength{\ucLeft}{30mm}
+
+\begin{longtable}{|>{\bfseries}p{\ucLeft}|
+    p{\dimexpr\textwidth-\ucLeft-4\tabcolsep-3\arrayrulewidth\relax}|}
+\hline
+Name & Platform System Administrator --- Model Deployment \\ \hline
+ID & UC-06 \\ \hline
+Actor & Primary: Platform System Administrator (IT Admin / CIO) \\ \hline
+Description & The Platform System Administrator deploys a new LoRA adapter version and monitors system
+health metrics during and after rollout. \\ \hline
+Preconditions &
+\begin{itemize}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt]
+    \item Admin is logged in with IT Admin role
+    \item A validated new LoRA adapter is registered in the model registry
+\end{itemize}
+\\ \hline
+Postconditions &
+\begin{itemize}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item \textbf{Success:} New model version active; previous version retained for rollback;
+    health metrics nominal.
+    \item \textbf{Failure:} Deployment rolled back; incident logged.
+\end{itemize}
+\\ \hline
+Basic Flow &
+\begin{enumerate}[leftmargin=*, nosep, topsep=0pt, partopsep=0pt, parsep=0pt]
+    \item Admin navigates to Model Registry in IT Admin Dashboard
+    \item Admin selects the new LoRA adapter version and reviews benchmark metrics
+    \item Admin initiates deployment; system performs blue-green switch
+    \item Admin monitors inference latency, error rate, and GPU utilization during rollout
+    \item If all metrics are within thresholds, deployment is confirmed as stable
+\end{enumerate}
+\\ \hline
+Alternative Flow &
+\noindent \textbf{AF1: Performance regression detected}
+\begin{enumerate}
+    \item Inference error rate exceeds threshold during rollout
+    \item Admin triggers rollback to previous adapter version
+    \item System logs deployment failure with full diagnostic report
+\end{enumerate}
+\\ \hline
+\caption{UC\_06: Platform System Administrator --- Model Deployment}\label{tab:uc06}
+\end{longtable}
+
+\newpage
+\subsection{Admin Dashboard KPIs}
+The Music Platform Manager Dashboard provides real-time operational overview through four core KPIs.
+
+\begin{longtable}{@{}
+    >{\centering\arraybackslash}p{0.05\textwidth}
+    >{\raggedright\arraybackslash}p{0.22\textwidth}
+    p{0.38\textwidth}
+    >{\raggedright\arraybackslash}p{0.28\textwidth} @{}}
+
+    \caption{Music Platform Manager Dashboard KPIs}\label{tab:manager_kpis} \\
+    \toprule
+    \textbf{\#} & \textbf{KPI} & \textbf{Description} & \textbf{Data Source (Logic)} \\
+    \midrule
+    \endfirsthead
+    \caption[]{... (continued)} \\
+    \toprule
+    \textbf{\#} & \textbf{KPI} & \textbf{Description} & \textbf{Data Source (Logic)} \\
+    \midrule
+    \endhead
+    \bottomrule
+    \endlastfoot
+
+    1 & Total Analyses Today & Total song analysis jobs completed since 00:00 today. &
+    Total count of completed song analysis records created today. \\
+    \addlinespace
+    2 & AI Chord Accuracy & Average weighted chord accuracy across all analyses in the past 7 days,
+    broken down by chord class. &
+    Aggregated from analysis metrics grouped by active model version. \\
+    \addlinespace
+    3 & User Correction Rate & Percentage of chord events overridden via Edit Marker out of all
+    chord events rendered. &
+    Ratio of user-modified chord events to total rendered chord events. \\
+    \addlinespace
+    4 & Active Users (7-Day) & Unique authenticated users who performed at least one analysis or
+    practice session in the past 7 days. &
+    Count of unique active user accounts recorded in session logs within the 7-day window. \\
+\end{longtable}
+
+\newpage
+\subsection{Activity Diagram}
+The Activity Diagram models the dynamic operational workflow across the ChordSense Pro platform.
+It illustrates the complete execution path from audio acquisition (YouTube URL ingestion or local file upload),
+automated stem separation via Demucs, beat-synchronous segmentation, MERT-v1-330M + LoRA inference,
+client-side harmonic calculation, synchronized playback navigation in the Smart Grid, and user chord override
+with real-time music theory recalculation.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{activity_diagram.png}
+    \caption{Activity Diagram --- ChordSense Pro Learning Flow and Practice Workspace}
+    \label{fig:activity-diagram}
+\end{figure}
+
+\newpage
+\subsection{Sequence Diagram}
+The Sequence Diagram delineates the chronological message exchanges between the core system actors and architectural
+components: the User (Musician/Learner), the Presentation Layer (React.js SPA), the API Gateway (Python FastAPI),
+the Data Engineering Pipeline (Apache Airflow 2.8 / MongoDB staging queue), the AI Inference Service (Demucs + MERT+LoRA),
+and the Persistent Storage Layer (PostgreSQL 16).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.95\textwidth]{sequence_diagram.png}
+    \caption{Sequence Diagram --- Audio Analysis and Real-Time Interactive Workspace Execution}
+    \label{fig:sequence-diagram}
+\end{figure}
+
+\newpage
+%===========================================
+% SECTION 5: AI PROCESSING PIPELINE
+%===========================================
+\section{AI Processing Pipeline Implementation}
+
+The AI Processing Service and Data Engineering Pipeline form the computational backbone of
+ChordSense Pro. The architecture couples an asynchronous backend service for interactive client
+requests with an automated data pipeline orchestrator for batch audio processing. Staging between
+pipeline phases is managed through document-based temporary storage, while final analytical outputs
+are persisted in the relational database.
+
+\begin{tcolorbox}[colback=white!95!gray, colframe=black, title=AI Processing Pipeline --- Step-by-Step Architecture]
+\begin{enumerate}
+    \item \textbf{Audio Acquisition and Normalization}:
+    \begin{itemize}
+        \item Ingestion via YouTube URL or direct user file upload (MP3, WAV, FLAC).
+        \item Audio is converted and normalized into standard mono 44.1\,kHz WAV format for consistent spectral fidelity.
+    \end{itemize}
+    \item \textbf{Harmonic Source Separation (Demucs)}:
+    \begin{itemize}
+        \item Demucs separates the composite audio mix into four distinct stems: drums, bass, vocals, and harmonic accompaniment (piano/guitar).
+        \item Isolating the harmonic stem eliminates percussive transients and vocal formants that frequently obscure subtle extended chord partials.
+    \end{itemize}
+    \item \textbf{Beat and Downbeat Tracking (madmom)}:
+    \begin{itemize}
+        \item A recurrent neural network beat tracker identifies musical tempo (BPM), beat locations, and measure downbeats.
+        \item Beat timestamps establish musically meaningful segmentation boundaries rather than arbitrary fixed time windows.
+    \end{itemize}
+    \item \textbf{Audio Segmentation and Spectral Representation}:
+    \begin{itemize}
+        \item Audio is divided into 2-second overlapping windows centered around detected beat boundaries.
+        \item Each segment is transformed into multi-resolution spectral features (Mel-spectrogram and Constant-Q Transform).
+    \end{itemize}
+    \item \textbf{Hierarchical Neural Chord Inference (MERT + LoRA)}:
+    \begin{itemize}
+        \item Pre-trained MERT acoustic encoder extracts high-level musical embeddings for each segment.
+        \item Fine-tuned Low-Rank Adaptation (LoRA) heads predict chord components in a cascaded hierarchy: Root note $\rightarrow$ Chord Quality $\rightarrow$ Chord Extension.
+    \end{itemize}
+    \item \textbf{Post-Processing and Harmonic Analysis}:
+    \begin{itemize}
+        \item Viterbi sequence smoothing eliminates momentary chord flickering across adjacent beats.
+        \item Global key detection determines the song's musical scale and maps each chord to its Roman numeral harmonic degree (e.g., I, IV, V).
+    \end{itemize}
+    \item \textbf{Workspace Synchronization}:
+    \begin{itemize}
+        \item The verified chord timeline and structural metadata are stored in the database.
+        \item Aligned event streams are transmitted to the web application for synchronized playback in the Smart Grid.
+    \end{itemize}
+\end{enumerate}
+\end{tcolorbox}
+
+\subsection{Data Pipeline Orchestration}
+
+The automated data engineering pipeline manages scheduled batch processing and asynchronous analytics through three dedicated workflows:
 
 \begin{itemize}
-    \item \textbf{Digital Music Learning Trends.}
-    Modern instrumentalists --- guitarists, pianists, bassists, and songwriters --- increasingly rely on digital media (YouTube videos, streaming tracks, local audio files) for self-study, transcribing, and practice routines.
+    \item \textbf{Raw Audio Ingestion Pipeline}:
+    \begin{itemize}
+        \item \textit{Execution Schedule:} Runs periodically every two hours.
+        \item \textit{Responsibilities:} Ingests pending audio requests from submitted URLs or local training datasets, extracts standardized audio tracks and associated metadata, and queues jobs for processing.
+        \item \textit{Downstream Trigger:} Automatically signals the Audio Processing Pipeline upon batch ingestion completion.
+    \end{itemize}
 
-    \item \textbf{Rise of Automatic Chord Recognition (ACR).}
-    Advances in Machine Learning and Digital Signal Processing (DSP) have enabled automatic chord transcription platforms such as ChordAI, Chordify, and Song Master Pro, making chord detection accessible to a wide audience.
+    \item \textbf{Audio Processing Pipeline}:
+    \begin{itemize}
+        \item \textit{Execution Schedule:} Event-driven workflow triggered immediately upon new ingestion jobs.
+        \item \textit{Responsibilities:} Executes Demucs stem separation to isolate the harmonic accompaniment, runs beat tracking, extracts spectral features, performs hierarchical MERT and LoRA chord inference, and writes finalized chord timelines to the database.
+    \end{itemize}
 
-    \item \textbf{The Industry Gap.}
-    Traditional ACR solutions treat chord label detection as the final deliverable. However, for a practicing musician, raw chord symbols are simply \textbf{unprocessed data}. True musicianship requires understanding the \textbf{harmonic function} of each chord (Roman numerals, scale relationships) and having access to a \textbf{structured, interactive practice environment} --- neither of which existing tools provide.
+    \item \textbf{Student Analytics Rollup Pipeline}:
+    \begin{itemize}
+        \item \textit{Execution Schedule:} Runs nightly at 23:30.
+        \item \textit{Responsibilities:} Aggregates individual practice attempt records from student sessions, computes daily and rolling three-day accuracy scores per chord, and updates learner chord mastery profiles.
+    \end{itemize}
 \end{itemize}
 
-% =============================================
-% SECTION 3: PROBLEM STATEMENT
-% =============================================
-\section{Problem Statement}
+\subsection{Processing Pipeline Service Modules}
 
-Current ACR solutions create significant friction for musicians across three key dimensions:
+The backend architecture is structured into modular service components, each handling a dedicated functional role within the end-to-end processing pipeline:
+
+\begin{longtable}{@{}
+    >{\raggedright\arraybackslash}p{0.36\textwidth}
+    p{0.57\textwidth} @{}}
+
+    \caption{Processing Pipeline Service Modules}\label{tab:service_modules} \\
+    \toprule
+    \textbf{Service Module} & \textbf{Operational Role / Functionality} \\
+    \midrule
+    \endfirsthead
+    \caption[]{... (continued)} \\
+    \toprule
+    \textbf{Service Module} & \textbf{Operational Role / Functionality} \\
+    \midrule
+    \endhead
+    \bottomrule
+    \endlastfoot
+
+    Audio Ingestion Service & Handles audio acquisition from user uploads or remote streaming URLs, standardizes audio channels and sample rates, and validates audio file integrity. \\
+    \addlinespace
+    Harmonic Separation Service & Isolates harmonic and accompaniment stems using Demucs to eliminate percussive and vocal acoustic interference prior to chord analysis. \\
+    \addlinespace
+    Beat Tracking Service & Detects musical tempo, meter, and downbeat timestamps to construct beat-synchronous segmentation boundaries for analysis windows. \\
+    \addlinespace
+    Deep Chord Inference Service & Evaluates segmented audio features through the MERT foundation model and fine-tuned LoRA adapters to predict chord root, quality, and extension. \\
+    \addlinespace
+    Music Theory Engine & Performs Viterbi smoothing to eliminate transient chord flickering, identifies the song's global musical key, and computes Roman numeral harmonic degrees and modal scales. \\
+    \addlinespace
+    Synchronized Workspace Streamer & Delivers aligned chord timeline events to the frontend client and coordinates low-latency seeking, playback tracking, and A/B looping in the Smart Grid. \\
+    \addlinespace
+    Interactive Practice Evaluator & Captures live microphone audio input during student practice sessions, performs low-latency chord matching against reference targets, and provides immediate visual feedback. \\
+    \addlinespace
+    Student Analytics Engine & Aggregates daily student practice attempts, evaluates chord accuracy trends, and updates individual skill progression profiles. \\
+\end{longtable}
+
+\subsection{Analysis of Problems \& Solutions}
+
+\noindent \textbf{1/ Extended Chord Ambiguity (Core Project Challenge)}
+\begin{itemize}
+    \item \textbf{Problem:} Extended chords share substantial pitch-class content with basic triads (e.g., A minor 7th and C major 6th contain identical notes), causing flat classification models to misclassify complex chords as simpler variants.
+    \item \textbf{Solution:} Cascaded Hierarchical Conditioning --- The prediction is decomposed into three sequential stages where the extension classifier receives the predicted root note and chord quality as structural context, effectively resolving pitch ambiguity.
+\end{itemize}
+
+\noindent \textbf{2/ Imbalance in Musical Datasets}
+\begin{itemize}
+    \item \textbf{Problem:} Common diatonic triads occur hundreds of times more frequently than rare extended chords (such as 9th, 11th, and 13th chords), biasing standard classifiers toward basic chords.
+    \item \textbf{Solution:} Focal loss down-weights easily classified common triads, directing model optimization toward difficult extended chords. Pitch-shifting data augmentation across semitones further expands rare chord instances.
+\end{itemize}
+
+\noindent \textbf{3/ Multi-Instrument Polyphonic Interference}
+\begin{itemize}
+    \item \textbf{Problem:} Commercial audio mixes contain loud drums, bass lines, and vocal tracks that obscure subtle harmonic overtones of piano and guitar chords.
+    \item \textbf{Solution:} Demucs source separation filters out percussive and vocal stems prior to inference, ensuring that only harmonic accompaniment signals are processed.
+\end{itemize}
+
+\noindent \textbf{4/ Chord Flickering Across Time Frames}
+\begin{itemize}
+    \item \textbf{Problem:} Frame-level audio inference produces noisy predictions with erratic, single-frame chord fluctuations.
+    \item \textbf{Solution:} Beat-synchronous segmentation aligns analysis windows to musical beats, followed by Viterbi sequence smoothing to enforce musically consistent transitions.
+\end{itemize}
+
+\noindent \textbf{5/ Real-Time Feedback Latency}
+\begin{itemize}
+    \item \textbf{Problem:} Running large Transformer models during live instrument practice can introduce perceptible delays, degrading the interactive learning experience.
+    \item \textbf{Solution:} Exporting the merged model into an optimized inference format reduces execution time to under 100\,ms, while music theory calculations are executed client-side in the browser.
+\end{itemize}
+
+\newpage
+\section{Database}
+
+% \IfFileExists{image/database_schema.png}{%
+%     \begin{figure}[H]
+%         \centering
+%         \includegraphics[width=0.95\textwidth]{database_schema.png}
+%         \caption{Database Schema Diagram --- Hybrid Relational and Document Architecture}
+%         \label{fig:database-schema}
+%     \end{figure}
+% }{%
+%     \begin{figure}[H]
+%         \centering
+%         \fbox{\parbox[c][6cm][c]{0.9\textwidth}{\centering \large \textbf{[Database Schema Diagram]}\\[0.5em] \normalsize \textit{Vui lòng lưu ảnh được sinh từ prompt vào: \texttt{image/database\_schema.png}}}}
+%         \caption{Database Schema Diagram --- Hybrid Relational and Document Architecture}
+%         \label{fig:database-schema}
+%     \end{figure}
+% }
+
+\subsection{Relational Architecture \& PostgreSQL Tables}
+
+ChordSense Pro adopts a \textbf{Raw SQL with \texttt{psycopg2-binary} connection pool} architecture,
+deliberately avoiding heavy ORM layers (such as SQLAlchemy or Prisma) to ensure optimal query performance
+on JSONB arrays, predictable connection pooling, and transparent schema migrations. The relational database
+is automatically created and initialized via database startup scripts during container initialization.
+
+\begin{itemize}
+    \item \textbf{USERS} (user\_id, username, password\_hash, full\_name, email, role, avatar\_url, created\_at)
+    \begin{itemize}
+        \item Primary key: user\_id (UUID)
+        \item Role classification: learner, platform\_manager, sys\_admin
+    \end{itemize}
+
+    \item \textbf{SONGS} (song\_id, owner\_user\_id, title, artist, source\_type, source\_url, duration\_ms, status, created\_at)
+    \begin{itemize}
+        \item Primary key: song\_id (UUID)
+        \item Foreign key: owner\_user\_id references USERS(user\_id)
+        \item Source types: youtube or upload; Status: queued, processing, done, failed
+    \end{itemize}
+
+    \item \textbf{SONG\_ANALYSES} (analysis\_id, song\_id, model\_version, key, tempo, time\_signature, chord\_events, created\_at)
+    \begin{itemize}
+        \item Primary key: analysis\_id (UUID)
+        \item Foreign key: song\_id references SONGS(song\_id)
+        \item Timeline storage: structured array of timestamp, root, quality, extension, confidence, and user override flag
+    \end{itemize}
+
+    \item \textbf{USER\_EDITS} (edit\_id, analysis\_id, user\_id, timestamp\_ms, original\_chord, edited\_chord, edited\_at)
+    \begin{itemize}
+        \item Primary key: edit\_id (UUID)
+        \item Foreign keys: analysis\_id references SONG\_ANALYSES, user\_id references USERS
+    \end{itemize}
+
+    \item \textbf{PLAYLISTS} (playlist\_id, owner\_user\_id, name, description, created\_at)
+    \begin{itemize}
+        \item Primary key: playlist\_id (UUID)
+        \item Foreign key: owner\_user\_id references USERS(user\_id)
+    \end{itemize}
+
+    \item \textbf{PLAYLIST\_SONGS} (playlist\_id, song\_id, position, added\_at)
+    \begin{itemize}
+        \item Composite primary key: (playlist\_id, song\_id)
+        \item Foreign keys: playlist\_id references PLAYLISTS, song\_id references SONGS
+    \end{itemize}
+
+    \item \textbf{PRACTICE\_SESSIONS} (session\_id, user\_id, song\_id, started\_at, ended\_at, accuracy\_pct, session\_log)
+    \begin{itemize}
+        \item Primary key: session\_id (UUID)
+        \item Foreign keys: user\_id references USERS, song\_id references SONGS
+        \item Practice log: sequence of target chords, live recognized chords, and correctness flags
+    \end{itemize}
+
+    \item \textbf{STUDENT\_CHORD\_MASTERY} (student\_id, chord, date, accuracy\_today, rolling\_accuracy\_3d, is\_mastered, mastered\_date)
+    \begin{itemize}
+        \item Composite primary key: (student\_id, chord, date)
+        \item Populated nightly by the Student Analytics Rollup Pipeline for tracking student learning progression
+    \end{itemize}
+
+    \item \textbf{MODEL\_REGISTRY} (model\_id, adapter\_name, base\_model, lora\_rank, accuracy\_overall, accuracy\_by\_class, deployed\_at, is\_active)
+    \begin{itemize}
+        \item Primary key: model\_id (UUID)
+        \item Maintained by Platform System Administrator for model versioning
+    \end{itemize}
+
+    \item \textbf{ANALYSIS\_METRICS} (metric\_id, analysis\_id, model\_id, accuracy\_overall, created\_at)
+    \begin{itemize}
+        \item Primary key: metric\_id (UUID)
+        \item Foreign keys: analysis\_id references SONG\_ANALYSES, model\_id references MODEL\_REGISTRY
+        \item Powers the AI Quality KPI dashboard for platform management
+    \end{itemize}
+\end{itemize}
+
+\subsection{Raw Storage \& Staging --- MongoDB Collections}
+
+For large, semi-structured, and temporary binary artifacts that would degrade relational database performance,
+ChordSense Pro integrates \textbf{MongoDB 7.0}:
+
+\begin{itemize}
+    \item \textbf{\texttt{raw\_audio\_jobs}:} Staging queue holding job metadata, source URLs, and downloaded WAV file paths.
+    Acts as the decoupled communication bridge between the Audio Ingestion Pipeline and the Audio Processing Pipeline.
+
+    \item \textbf{\texttt{raw\_audio}:} GridFS/binary store for raw audio clips captured from student practice sessions (configured with a TTL index of 30 days).
+
+    \item \textbf{\texttt{mel\_spectrograms}:} High-dimensional $128 \times T$ float matrices extracted during audio preprocessing, cached with a 90-day TTL for rapid model retraining and evaluation.
+
+    \item \textbf{\texttt{training\_samples}:} Curated preprocessed training segments seeded from academic datasets (JAAH, Kaggle piano triads, ChoCo) via automated dataset seeding scripts.
+
+    \item \textbf{\texttt{song\_audio\_cache}:} Post-Demucs isolated harmonic/piano stems, cached for 7 days to eliminate redundant stem separation when re-analyzing or sharing songs.
+\end{itemize}
+
+\newpage
+%===========================================
+% SECTION 7: AI MODEL -- CHORD RECOGNITION
+%===========================================
+\section{AI Model --- Automatic Chord Recognition}
+
+The artificial intelligence component of ChordSense Pro is responsible for Automatic Chord
+Recognition (ACR) on piano music: transcribing acoustic audio into a synchronized sequence of
+symbolic chord annotations comprising root pitch, chord quality, and harmonic extension. This section
+describes the problem overview, literature review and comparative analysis, dataset curation, model
+selection, training configuration, evaluation benchmarks, the end-to-end recognition pipeline, and
+practical engineering challenges encountered.
+
+\subsection{Problem Overview}
+
+In modern popular music and Vietnamese contemporary ballads (V-Pop), song arrangements frequently
+incorporate extended and altered chords (such as 7th, 9th, 11th, and suspended chords) that define the
+emotional character of the music. Standard off-the-shelf recognition tools often collapse these rich
+harmonies into basic major or minor triads, failing to capture the nuance required for music education
+and accompaniment practice.
+
+To establish a solid technical and pedagogical foundation, the project adopts a \textbf{Piano-First}
+development scope:
+\begin{itemize}
+    \item \textbf{Full Harmonic Range:} The piano encompasses 88 keys spanning over seven octaves, providing a comprehensive acoustic testbed for chord recognition across bass, middle, and treble registers.
+    \item \textbf{Complex Chord Voicings:} Pianists regularly employ rootless voicings, drop voicings, and extended voice leading that distribute chord tones across octaves, creating challenging acoustic patterns.
+    \item \textbf{Pedagogical Standard:} The piano is the universal reference instrument in music theory education. Establishing accurate extended chord recognition on piano creates the core foundation for subsequent expansion to other instruments.
+\end{itemize}
+
+\subsection{Literature Review \& Comparative Analysis}
+
+Automatic Chord Recognition has evolved across three major technological phases:
+\begin{itemize}
+    \item \textbf{Template-Based Methods and Hidden Markov Models (2005--2014):} Early systems computed 12-dimensional chromagrams and matched them against hand-crafted chord templates, using HMMs to model chord transition rules. While computationally light, these methods proved rigid and inaccurate for complex chords.
+    \item \textbf{Deep Convolutional and Recurrent Networks (2016--2020):} Convolutional neural networks (CNNs) trained on log-frequency spectrograms significantly improved triad detection accuracy. However, performance on extended chords remained limited due to small training datasets and spectral interference from accompaniment instruments.
+    \item \textbf{Pre-Trained Foundation Transformers (2023--Present):} Large-scale self-supervised audio models, such as MERT pre-trained on 160,000 hours of music audio, capture rich acoustic representations of pitch, timbre, and harmony, enabling high-accuracy downstream MIR tasks via parameter-efficient fine-tuning.
+\end{itemize}
+
+Table~\ref{tab:sota_comparison} compares ChordSense Pro with existing commercial and academic tools across key functional criteria.
+
+\begin{longtable}{@{}
+    >{\raggedright\arraybackslash}p{0.25\textwidth}
+    >{\centering\arraybackslash}p{0.10\textwidth}
+    >{\centering\arraybackslash}p{0.10\textwidth}
+    >{\centering\arraybackslash}p{0.13\textwidth}
+    >{\centering\arraybackslash}p{0.13\textwidth}
+    >{\centering\arraybackslash}p{0.13\textwidth} @{}}
+
+    \caption{Feature Comparison: Existing Tools vs.\ ChordSense Pro}\label{tab:sota_comparison} \\
+    \toprule
+    \textbf{Evaluation Criterion} & \textbf{Chordify} & \textbf{ChordAI} & \textbf{Song Master} & \textbf{Transcribe!} & \textbf{ChordSense Pro} \\
+    \midrule
+    \endfirsthead
+    \caption[]{... (continued)} \\
+    \toprule
+    \textbf{Evaluation Criterion} & \textbf{Chordify} & \textbf{ChordAI} & \textbf{Song Master} & \textbf{Transcribe!} & \textbf{ChordSense Pro} \\
+    \midrule
+    \endhead
+    \bottomrule
+    \endlastfoot
+
+    Automatic Chord Recognition & \cmark & \cmark & \cmark & Manual & \cmark \\
+    \addlinespace
+    Extended Chords (9, 11, 13) & \xmark & Partial & \xmark & Manual & \cmark \\
+    \addlinespace
+    Vietnamese V-Pop Support & Weak & Weak & Weak & N/A & \cmark \\
+    \addlinespace
+    Roman Numeral Analysis & \xmark & \xmark & \xmark & \xmark & \cmark \\
+    \addlinespace
+    Scale / Mode Suggestion & \xmark & \xmark & \xmark & \xmark & \cmark \\
+    \addlinespace
+    Interactive Smart Grid & Basic & Basic & Advanced & Waveform & \cmark \\
+    \addlinespace
+    A/B Loop \& Speed Shift & \xmark & \xmark & \cmark & \cmark & \cmark \\
+    \addlinespace
+    User Chord Edit Marker & \xmark & \xmark & \xmark & \cmark & \cmark \\
+    \addlinespace
+    Real-Time Practice Mode & \xmark & \cmark & \xmark & \xmark & \cmark \\
+    \addlinespace
+    Licensing Tier & Freemium & Freemium & Paid (\$49) & Paid (\$39) & Academic Open \\
+\end{longtable}
+
+\subsection{Dataset}
+
+To provide robust training and evaluation coverage across standard and extended chord vocabularies, the team combined established international corpora with a specialized local dataset:
+
+\begin{itemize}
+    \item \textbf{McGill Billboard Dataset}: Standard academic benchmark containing 1,000 pop/rock songs with expert chord transcriptions.
+    \item \textbf{JAAH (Jazz Audio-Aligned Harmony)}: 300 jazz recordings containing extensive extended, altered, and inverted chord annotations.
+    \item \textbf{ChoCo Corpus}: Large-scale integrated music corpus providing diverse chord progression annotations.
+    \item \textbf{VN Piano Extended Chord Dataset}: A dedicated collection of 100 Vietnamese pop and ballad piano recordings featuring rich 7th, 9th, and 11th chord progressions, manually transcribed and augmented via pitch-shifting across semitones.
+\end{itemize}
+
+The combined dataset is divided into three subsets following standard machine learning practice:
+\begin{itemize}
+    \item \textbf{Training set}: $\approx$ 70\% of total audio segments
+    \item \textbf{Validation set}: $\approx$ 20\% of total audio segments
+    \item \textbf{Test set}: $\approx$ 10\% of total audio segments
+\end{itemize}
+
+\subsection{Model Selection and Training Environment}
+
+The team selected \textbf{MERT-v1-330M} as the acoustic foundation backbone combined with \textbf{Low-Rank Adaptation (LoRA)} for parameter-efficient fine-tuning:
+
+\begin{itemize}
+    \item \textbf{Rich Musical Representations:} MERT was pre-trained on 160,000 hours of music audio using self-supervised learning conditioned on acoustic codebook and spectral teachers, yielding strong representations of timbre, pitch, and harmony.
+    \item \textbf{Parameter-Efficient Fine-Tuning (LoRA):} Rather than updating all 330 million parameters, LoRA freezes the pre-trained weights and attaches lightweight trainable adapter matrices to the attention layers. This adapts only approximately 1.2\% of the model parameters, drastically reducing memory usage, preventing catastrophic forgetting, and enabling reproducible training within student compute resources.
+    \item \textbf{Cascaded 3-Head Classification:} Rather than performing flat classification across hundreds of combined chord names, the prediction is structured into three consecutive heads:
+    \begin{enumerate}
+        \item \textbf{Root Head}: Predicts the fundamental note (12 pitch classes: C, C$\sharp$, D, \ldots, B).
+        \item \textbf{Quality Head}: Predicts the core triad type (major, minor, diminished, augmented, suspended).
+        \item \textbf{Extension Head}: Conditioned on the predicted root and quality, predicts harmonic extensions (none, 7th, maj7, 9th, 11th, 13th).
+    \end{enumerate}
+\end{itemize}
+
+Training was conducted on \textbf{Google Colab} using an NVIDIA GPU.
+
+\subsection{Training Configuration}
+
+\begin{longtable}{@{}
+    >{\raggedright\arraybackslash}p{0.38\textwidth}
+    >{\raggedright\arraybackslash}p{0.52\textwidth} @{}}
+
+    \caption{AI Model Training Hyperparameters}\label{tab:training_config} \\
+    \toprule
+    \textbf{Hyperparameter} & \textbf{Value / Description} \\
+    \midrule
+    \endfirsthead
+    \bottomrule
+    \endlastfoot
+
+    Base Model & MERT-v1-330M (pre-trained on 160,000 hours of music) \\
+    \addlinespace
+    Fine-Tuning Method & Low-Rank Adaptation (LoRA, rank = 8, scaling factor = 16) \\
+    \addlinespace
+    Trainable Parameters & Approximately 3.96 million (1.2\% of total backbone) \\
+    \addlinespace
+    Audio Segment Duration & 2.0 seconds (aligned to musical beat boundaries) \\
+    \addlinespace
+    Training Epochs & 30 epochs (with validation early stopping) \\
+    \addlinespace
+    Batch Size & 32 segments per batch \\
+    \addlinespace
+    Optimizer & AdamW with linear warmup and cosine decay \\
+    \addlinespace
+    Initial Learning Rate & 0.0002 \\
+    \addlinespace
+    Data Augmentation & Pitch shifting ($\pm 6$ semitones) and mild noise injection \\
+    \addlinespace
+    Loss Function & Focal Loss (focusing learning on rare extended chord classes) \\
+    \addlinespace
+    Training Platform & Google Colab --- NVIDIA GPU \\
+\end{longtable}
+
+\subsection{Training Results and Target Benchmarks}
+
+The model performance is evaluated using Weighted Chord Accuracy (WCA) and family-specific accuracy metrics against the commercial baseline ChordAI:
+
+\begin{longtable}{@{}
+    >{\raggedright\arraybackslash}p{0.38\textwidth}
+    >{\centering\arraybackslash}p{0.25\textwidth}
+    >{\centering\arraybackslash}p{0.27\textwidth} @{}}
+
+    \caption{Performance Benchmarks: ChordSense Pro vs.\ ChordAI}\label{tab:target_metrics} \\
+    \toprule
+    \textbf{Evaluation Metric} & \textbf{ChordAI Baseline} & \textbf{ChordSense Pro Target} \\
+    \midrule
+    \endfirsthead
+    \bottomrule
+    \endlastfoot
+
+    Basic Triads (Major, Minor) & 88.0\% & $\geq$\textbf{90.0\%} \\
+    \addlinespace
+    7th Chords (maj7, min7, dom7) & 78.0\% & $\geq$\textbf{85.0\%} \\
+    \addlinespace
+    Extended Chords (9th, 11th, 13th) & 55.0\% & $\geq$\textbf{75.0\%} \\
+    \addlinespace
+    Chord Inversions (Slash Chords) & 60.0\% & $\geq$\textbf{70.0\%} \\
+    \addlinespace
+    Overall Weighted Chord Accuracy & 81.0\% & $\geq$\textbf{85.0\%} \\
+    \addlinespace
+    Inference Latency per Segment & $\approx$150\,ms & $<$\textbf{100\,ms} \\
+\end{longtable}
+
+The target results demonstrate that while commercial tools perform reasonably on basic triads, the cascaded 3-head architecture and specialized extended chord dataset yield a substantial improvement (+20\%) on complex extended harmonies common in Vietnamese pop songs.
+
+\subsection{End-to-End Recognition Pipeline}
+
+The complete audio-to-chord transcription pipeline operates in five consecutive phases:
 
 \begin{enumerate}
-
-    \item \textbf{Lack of Harmonic and Contextual Insight.}
-    Most platforms only output isolated chord labels (e.g., \texttt{C}, \texttt{G}, \texttt{Am}, \texttt{Em}) with no analysis of their function within the song's key.
-    \begin{itemize}
-        \item They lack \textbf{Roman Numeral Analysis} (e.g., I -- V -- vi -- IV), making it impossible for players to grasp progression logic, understand chord relationships, or transpose across keys with confidence.
-        \item No \textbf{Scale Mapping} is provided, leaving musicians without guidance when attempting to improvise solos, construct vocal harmonies, or compose fills.
-    \end{itemize}
-
-    \item \textbf{Fragmented Practice Workflow.}
-    Musicians are forced to juggle multiple disconnected applications simultaneously: a media player for audio playback, a separate app for chord charts, a standalone metronome for timing, and a fingering reference tool.
-    \begin{itemize}
-        \item Crucial practice capabilities --- such as millisecond-precision click-to-seek, A/B looping for difficult passages, and pitch-preserving tempo shifting --- are either absent or poorly implemented.
-    \end{itemize}
-
-    \item \textbf{Rigidity and High Latency.}
-    AI chord detection is inherently imperfect, yet most web-based tools offer no mechanism for users to override erroneous detections or substitute alternative voicings.
-    \begin{itemize}
-        \item Switching between simplified (\emph{Basic}) and extended (\emph{Precise}) chord representations typically requires a server round-trip, introducing sluggish response times and disrupting the user's practice flow.
-    \end{itemize}
-
+    \item \textbf{Audio Preprocessing:} The input audio file or streamed URL is normalized to standard mono 44.1\,kHz WAV format to ensure consistent acoustic characteristics.
+    \item \textbf{Harmonic Source Separation:} Demucs isolates the harmonic accompaniment stem from the full mix, filtering out drum transients and vocal formants.
+    \item \textbf{Beat Tracking and Segmentation:} madmom detects musical tempo and downbeat timestamps, segmenting the audio into beat-aligned 2-second analysis windows.
+    \item \textbf{Hierarchical Chord Classification:} The MERT encoder and fine-tuned LoRA heads predict the root note, chord quality, and harmonic extension for each segment.
+    \item \textbf{Music Theory Post-Processing:} Viterbi sequence smoothing removes spurious transitions, detects the song's key, and calculates Roman numeral harmonic functions and modal scale recommendations.
 \end{enumerate}
 
-% =============================================
-% SECTION 4: THE SOLUTION — CHORDSENSE PRO
-% =============================================
-\section{The Solution: ChordSense Pro}
-
-\textbf{ChordSense Pro} transforms raw AI chord detection into actionable musical intelligence within an \textbf{all-in-one, end-to-end interactive workspace}. The system is composed of four tightly integrated subsystems:
-
-\subsection{Client-Side Harmonic Engine}
-
-Implemented entirely in the browser to eliminate network latency:
+\subsection{Challenges Encountered}
 
 \begin{itemize}
-    \item \textbf{Roman Numeral Analysis:} Each detected chord is automatically labeled with its harmonic function relative to the song's detected key. For example, in C Major, \texttt{Dm} is dynamically annotated as \emph{ii} and \texttt{G7} as \emph{V7}.
-    \item \textbf{Context-Aware Scale Mapping:} Each chord is mapped to its recommended improvisation scale (e.g., Ionian, Dorian, Mixolydian), providing instant, actionable guidance for soloing and lead playing.
-    \item \textbf{Zero-Latency Mode Switching:} Toggling between \emph{Basic} (simplified) and \emph{Precise} (extended) chord representations is handled entirely client-side via a down-mapping algorithm --- no server communication required.
+    \item \textbf{Extended Chord Ambiguity:} Extended chords share most of their pitch classes with simpler triads (e.g., Cmaj9 contains all notes of Cmaj7 and Em). The team addressed this by cascading the extension prediction after root and quality classification, constraining predictions to valid chord families.
+    \item \textbf{Class Imbalance in Training Data:} Common major and minor triads outnumber 9th, 11th, and 13th chords by more than a hundred-fold in standard pop music. The team resolved this by employing Focal Loss and semitone pitch-shift augmentation to enrich rare chord samples.
+    \item \textbf{Multi-Instrument Polyphony:} Drums and vocals frequently mask higher piano overtones required to detect 9th and 11th chord extensions. Demucs source separation was integrated to isolate the harmonic stem prior to feature extraction.
+    \item \textbf{Real-Time Inference Latency:} Live student practice requires fast feedback without noticeable lag. Model quantization and moving music theory calculations to the client browser successfully reduced turnaround time to under 100\,ms.
 \end{itemize}
 
-\subsection{Interactive Practice Workspace and Synchronized Player}
+\newpage
+\section*{Conclusion}
+\addcontentsline{toc}{section}{Conclusion}
 
+\subsection*{Summary of Achievements}
+This project designs and implements \textbf{ChordSense Pro} --- an AI-powered, end-to-end interactive
+music practice platform that transforms raw chord detection into actionable musical intelligence within
+a unified practice workspace.
+
+The system covers all four user roles end-to-end:
 \begin{itemize}
-    \item \textbf{Smart Bar-Based Grid View:} A beat-aligned chord grid rendered with sub-100ms synchronization accuracy using \texttt{requestAnimationFrame}, bypassing Virtual DOM overhead for real-time performance.
-    \item \textbf{Click-to-Seek and A/B Looping:} Clicking any bar on the grid seeks audio playback to that bar's exact timestamp. Users drag-select a range of bars to create seamless A/B loops for targeted finger-technique drilling.
-    \item \textbf{Dynamic Metronome and Pitch-Preserving Speed Shift:} A Web Audio API metronome generates accurate click pulses synchronized to the track's BPM. Playback speed can be scaled to $0.5\times$ or $0.75\times$ without pitch distortion.
+    \item \textbf{Musicians / Learners} import any song, receive fully annotated harmonic analysis within
+    30 seconds, and practice with A/B Loop, metronome, speed shift, and Chord Dictionary.
+    \item \textbf{Music Producers \& Educators} analyze complex harmonic progressions and use the Smart
+    Grid as a teaching aid.
+    \item \textbf{Music Platform Manager (Business Admin)} monitors AI quality KPIs and curates learning
+    playlists from the Admin Dashboard.
+    \item \textbf{Platform System Administrator (IT Admin / CIO)} manages model deployment lifecycle,
+    infrastructure health, and data pipeline integrity.
 \end{itemize}
 
-\subsection{Ultimate Chord Dictionary with Built-In Synthesizer}
+The AI integration model is \textbf{Human-on-the-Loop (HOTL)} for the Learning Flow and
+\textbf{Human-in-the-Loop (HITL)} for the Real-Time Practice Mode.
 
+\subsection*{Key Technical Contributions}
 \begin{itemize}
-    \item Interactive visual fingering diagrams for both \textbf{Guitar Fretboards} and \textbf{Piano Keyboards} are displayed for every chord on the grid.
-    \item An in-browser \textbf{Soundfont Synthesizer} audibly renders voicing structures upon user click, enabling immediate ear training without any external tools.
+    \item \textbf{Cascaded 3-Head LoRA Architecture:} Resolves extended chord overlap via cross-head conditioning.
+    \item \textbf{VN Piano Extended Chord Dataset:} First labeled benchmark for Vietnamese piano extended chords.
+    \item \textbf{Client-Side Harmonic Engine:} Zero-latency browser-side Roman numeral and scale mapping.
+    \item \textbf{Focal Loss + Pitch-Shift Augmentation:} Addresses class imbalance across the chord vocabulary.
 \end{itemize}
 
-\subsection{User Customization and Cloud Storage (UGC)}
-
+\subsection*{Limitations}
 \begin{itemize}
-    \item An \textbf{Edit Marker} modal allows users to correct AI-detected chords, modify bass note voicings, or insert new chord events at any timestamp.
-    \item The Harmonic Engine \textbf{automatically recalculates} Roman numerals and scale suggestions in real time whenever a user edit is made.
-    \item All original AI analyses and user-customized charts are persisted in an \textbf{Event-Based Timeline schema} (PostgreSQL JSONB), enabling cloud-synced personal playlists with full edit history.
+    \item \textbf{Piano-Only Scope:} Guitar and other instruments are planned as future extensions.
+    \item \textbf{CPU Inference Latency:} ONNX optimization required for the 200\,ms Real-Time Practice Mode target.
+    \item \textbf{Dataset Size:} Smaller than international benchmarks; extended chord accuracy may be limited.
 \end{itemize}
 
-% =============================================
-% SECTION 5: TARGET AUDIENCE
-% =============================================
-\section{Target Audience}
+\subsection*{Future Work}
+\begin{itemize}
+    \item \textbf{Multi-Instrument Extension:} Fine-tune on guitar and ukulele datasets.
+    \item \textbf{Mobile Application:} Extend the workspace to a mobile app.
+    \item \textbf{Sheet Music Generation:} Integrate VexFlow-based chord sheet export.
+    \item \textbf{Adaptive Learning:} Spaced repetition for A/B Loop based on practice accuracy data.
+\end{itemize}
 
-\begin{enumerate}
+%===========================================
+% REFERENCES
+%===========================================
+\newpage
+\nocite{*}
+\printbibliography[title={References}, heading=bibintoc]
 
-    \item \textbf{Gigging Musicians and Band Members.}
-    Performing musicians who need to rapidly transcribe, internalize, and rehearse setlists directly from YouTube recordings or audio demos. The Roman Numeral Analysis layer enables immediate transposition to match a vocalist's key during live rehearsals or on stage.
+\section*{Project Repository}
+\addcontentsline{toc}{section}{Project Repository}
+The source code for this project is hosted on GitHub:
 
-    \item \textbf{Music Students and Self-Taught Learners.}
-    Beginners and intermediate players seeking to progress beyond mechanical chord memorization toward genuine music theory comprehension. The A/B Loop and pitch-preserving speed-shift tools are particularly valuable for mastering fast chord transitions at a controlled tempo.
-
-    \item \textbf{Music Producers, Songwriters, and Educators.}
-    Music creators who analyze harmonic progressions in hit records to extract inspiration for new compositions. Educators can leverage the interactive Smart Grid and Scale Mapping as a dynamic visual teaching aid for music theory instruction.
-
-\end{enumerate}
-
-% =============================================
-% SECTION 6: COMPETITIVE POSITIONING
-% =============================================
-\section{Competitive Positioning}
-
-Table~\ref{table:comparison} summarizes the key differentiators between ChordSense Pro and existing market solutions.
-
-\begin{table}[H]
-\centering
-\renewcommand{\arraystretch}{1.6}
-\begin{tabularx}{\textwidth}{|p{3.5cm}|X|X|}
-\hline
-\textbf{Feature / Criterion} & \textbf{Traditional Tools} \newline \textit{(Chordify)} & \textbf{ChordSense Pro} \\
-\hline
-\textbf{Output Data} &
-Raw chord labels only (\texttt{C}, \texttt{G}, \texttt{Am}) &
-Contextual harmonic intelligence: Roman Numeral Analysis + Scale Mapping + voicing diagrams \\
-\hline
-\textbf{Practice Environment} &
-Disconnected external tools (separate metronome, media player, chord app) &
-All-in-one integrated workspace: Synchronized Player + Smart Grid + A/B Loop + Audio Synth \\
-\hline
-\textbf{Customization \& Sync} &
-Fixed AI labels; no override; no cloud sync &
-Live user overrides + real-time theory recalculation + cloud playlist synchronization \\
-\hline
-\end{tabularx}
-\caption{Competitive comparison: ChordSense Pro vs.\ existing tools}
-\label{table:comparison}
-\end{table}
+\begin{center}
+    \url{https://github.com/qkhenh/ChordSensePro}
+\end{center}
 
 \end{document}
