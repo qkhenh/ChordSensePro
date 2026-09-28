@@ -1,0 +1,638 @@
+% $ biblatex auxiliary file $
+% $ biblatex bbl format version 3.3 $
+% Do not modify the above lines!
+%
+% This is an auxiliary file used by the 'biblatex' package.
+% This file may safely be deleted. It will be recreated by
+% biber as required.
+%
+\begingroup
+\makeatletter
+\@ifundefined{ver@biblatex.sty}
+  {\@latex@error
+     {Missing 'biblatex' package}
+     {The bibliography requires the 'biblatex' package.}
+      \aftergroup\endinput}
+  {}
+\endgroup
+
+
+\refsection{0}
+  \datalist[entry]{none/global//global/global/global}
+    \entry{hu2022lora}{article}{}{}
+      \name{author}{8}{}{%
+        {{hash=e6a95d07b8ae7f14e4eb777c6980a059}{%
+           family={Hu},
+           familyi={H\bibinitperiod},
+           given={Edward\bibnamedelima J.},
+           giveni={E\bibinitperiod\bibinitdelim J\bibinitperiod}}}%
+        {{hash=1701c0f05662e92cf52cfc8c16437496}{%
+           family={Shen},
+           familyi={S\bibinitperiod},
+           given={Yelong},
+           giveni={Y\bibinitperiod}}}%
+        {{hash=ab0fdbc1586103dda7ac5e0852e5b2c3}{%
+           family={Wallis},
+           familyi={W\bibinitperiod},
+           given={Phillip},
+           giveni={P\bibinitperiod}}}%
+        {{hash=eaa5cc98b7f19b4ce07c832213a13b9d}{%
+           family={Allen-Zhu},
+           familyi={A\bibinithyphendelim Z\bibinitperiod},
+           given={Zeyuan},
+           giveni={Z\bibinitperiod}}}%
+        {{hash=0d2c91b24f885b22d373a892a768abc8}{%
+           family={Li},
+           familyi={L\bibinitperiod},
+           given={Yuanzhi},
+           giveni={Y\bibinitperiod}}}%
+        {{hash=b654b88ecd4c3ff1ea29da275bce701c}{%
+           family={Wang},
+           familyi={W\bibinitperiod},
+           given={Shean},
+           giveni={S\bibinitperiod}}}%
+        {{hash=55f210233ac686af68eba11a97bd84e2}{%
+           family={Wang},
+           familyi={W\bibinitperiod},
+           given={Lu},
+           giveni={L\bibinitperiod}}}%
+        {{hash=05d71a9c5e7ac79222e01a55af0ccb93}{%
+           family={Chen},
+           familyi={C\bibinitperiod},
+           given={Weizhu},
+           giveni={W\bibinitperiod}}}%
+      }
+      \strng{namehash}{d775178c34083951ab1e07df578582c3}
+      \strng{fullhash}{08f4b49735d5d145be00bc9c07f38975}
+      \strng{fullhashraw}{08f4b49735d5d145be00bc9c07f38975}
+      \strng{bibnamehash}{d775178c34083951ab1e07df578582c3}
+      \strng{authorbibnamehash}{d775178c34083951ab1e07df578582c3}
+      \strng{authornamehash}{d775178c34083951ab1e07df578582c3}
+      \strng{authorfullhash}{08f4b49735d5d145be00bc9c07f38975}
+      \strng{authorfullhashraw}{08f4b49735d5d145be00bc9c07f38975}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{International Conference on Learning Representations (ICLR)}
+      \field{title}{{LoRA}: Low-Rank Adaptation of Large Language Models}
+      \field{year}{2022}
+      \verb{urlraw}
+      \verb https://arxiv.org/abs/2106.09685
+      \endverb
+      \verb{url}
+      \verb https://arxiv.org/abs/2106.09685
+      \endverb
+    \endentry
+    \entry{cho2014}{inproceedings}{}{}
+      \name{author}{2}{}{%
+        {{hash=0d239f1f1b031c4f62e6615b917b0b86}{%
+           family={Cho},
+           familyi={C\bibinitperiod},
+           given={Taemin},
+           giveni={T\bibinitperiod}}}%
+        {{hash=dc1dca849ac4954f3a5b35d55cd40631}{%
+           family={Bello},
+           familyi={B\bibinitperiod},
+           given={Juan\bibnamedelima Pablo},
+           giveni={J\bibinitperiod\bibinitdelim P\bibinitperiod}}}%
+      }
+      \strng{namehash}{067db74f562225e4b91823839146a606}
+      \strng{fullhash}{067db74f562225e4b91823839146a606}
+      \strng{fullhashraw}{067db74f562225e4b91823839146a606}
+      \strng{bibnamehash}{067db74f562225e4b91823839146a606}
+      \strng{authorbibnamehash}{067db74f562225e4b91823839146a606}
+      \strng{authornamehash}{067db74f562225e4b91823839146a606}
+      \strng{authorfullhash}{067db74f562225e4b91823839146a606}
+      \strng{authorfullhashraw}{067db74f562225e4b91823839146a606}
+      \field{sortinit}{2}
+      \field{sortinithash}{8b555b3791beccb63322c22f3320aa9a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{booktitle}{IEEE/ACM Transactions on Audio, Speech, and Language Processing}
+      \field{number}{2}
+      \field{title}{On the Relative Importance of Individual Components of Chord Recognition Systems}
+      \field{volume}{22}
+      \field{year}{2014}
+      \field{pages}{477\bibrangedash 492}
+      \range{pages}{16}
+    \endentry
+    \entry{harte2005}{inproceedings}{}{}
+      \name{author}{4}{}{%
+        {{hash=a716f4e8873fe96be53752e1de79d43d}{%
+           family={Harte},
+           familyi={H\bibinitperiod},
+           given={Christopher},
+           giveni={C\bibinitperiod}}}%
+        {{hash=8f90fd131c2bbfde4d0e9fdd7ed4ea8b}{%
+           family={Sandler},
+           familyi={S\bibinitperiod},
+           given={Mark},
+           giveni={M\bibinitperiod}}}%
+        {{hash=c8d0f5015f21874d5589d8f74e50c869}{%
+           family={Abdallah},
+           familyi={A\bibinitperiod},
+           given={Samer},
+           giveni={S\bibinitperiod}}}%
+        {{hash=70cb99cfff644459de390ae9ea11069b}{%
+           family={Gomez},
+           familyi={G\bibinitperiod},
+           given={Emilia},
+           giveni={E\bibinitperiod}}}%
+      }
+      \strng{namehash}{14c160f7870650f53526866c74704f60}
+      \strng{fullhash}{875ac431443d45e4a960e8a9d82895b6}
+      \strng{fullhashraw}{875ac431443d45e4a960e8a9d82895b6}
+      \strng{bibnamehash}{14c160f7870650f53526866c74704f60}
+      \strng{authorbibnamehash}{14c160f7870650f53526866c74704f60}
+      \strng{authornamehash}{14c160f7870650f53526866c74704f60}
+      \strng{authorfullhash}{875ac431443d45e4a960e8a9d82895b6}
+      \strng{authorfullhashraw}{875ac431443d45e4a960e8a9d82895b6}
+      \field{sortinit}{3}
+      \field{sortinithash}{ad6fe7482ffbd7b9f99c9e8b5dccd3d7}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{booktitle}{International Society for Music Information Retrieval Conference (ISMIR)}
+      \field{title}{Symbolic Representation of Musical Chords: A Proposed Syntax for Text Annotations}
+      \field{year}{2005}
+      \field{pages}{66\bibrangedash 71}
+      \range{pages}{6}
+    \endentry
+    \entry{korzeniowski2016}{inproceedings}{}{}
+      \name{author}{2}{}{%
+        {{hash=2fb00644c5d3f204a508213e17ed9339}{%
+           family={Korzeniowski},
+           familyi={K\bibinitperiod},
+           given={Filip},
+           giveni={F\bibinitperiod}}}%
+        {{hash=8296a6d278bcf9dc9f972c25929ae2d0}{%
+           family={Widmer},
+           familyi={W\bibinitperiod},
+           given={Gerhard},
+           giveni={G\bibinitperiod}}}%
+      }
+      \strng{namehash}{39770ec169af322773aa7825eedbef72}
+      \strng{fullhash}{39770ec169af322773aa7825eedbef72}
+      \strng{fullhashraw}{39770ec169af322773aa7825eedbef72}
+      \strng{bibnamehash}{39770ec169af322773aa7825eedbef72}
+      \strng{authorbibnamehash}{39770ec169af322773aa7825eedbef72}
+      \strng{authornamehash}{39770ec169af322773aa7825eedbef72}
+      \strng{authorfullhash}{39770ec169af322773aa7825eedbef72}
+      \strng{authorfullhashraw}{39770ec169af322773aa7825eedbef72}
+      \field{sortinit}{4}
+      \field{sortinithash}{9381316451d1b9788675a07e972a12a7}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{booktitle}{International Society for Music Information Retrieval Conference (ISMIR)}
+      \field{title}{Feature Learning for Chord Recognition: The Deep Chroma Extractor}
+      \field{year}{2016}
+      \field{pages}{37\bibrangedash 43}
+      \range{pages}{7}
+    \endentry
+    \entry{mcvicar2014}{article}{}{}
+      \name{author}{4}{}{%
+        {{hash=e55bc012e5c63807a917f4d802948858}{%
+           family={McVicar},
+           familyi={M\bibinitperiod},
+           given={Matt},
+           giveni={M\bibinitperiod}}}%
+        {{hash=485994faf5b42ff97455af505887dff4}{%
+           family={Santos-Rodríguez},
+           familyi={S\bibinithyphendelim R\bibinitperiod},
+           given={Raúl},
+           giveni={R\bibinitperiod}}}%
+        {{hash=d453745d644e4e0c939326fbd3edfc01}{%
+           family={Ni},
+           familyi={N\bibinitperiod},
+           given={Yizhao},
+           giveni={Y\bibinitperiod}}}%
+        {{hash=c0da3cbd10c1e5cf6d9fac513267fe8e}{%
+           family={De\bibnamedelima Bie},
+           familyi={D\bibinitperiod\bibinitdelim B\bibinitperiod},
+           given={Tijl},
+           giveni={T\bibinitperiod}}}%
+      }
+      \strng{namehash}{7eb5e6367b3e6e7e2899bb45eeb061b8}
+      \strng{fullhash}{732d794fde972c88baca089c21524221}
+      \strng{fullhashraw}{732d794fde972c88baca089c21524221}
+      \strng{bibnamehash}{7eb5e6367b3e6e7e2899bb45eeb061b8}
+      \strng{authorbibnamehash}{7eb5e6367b3e6e7e2899bb45eeb061b8}
+      \strng{authornamehash}{7eb5e6367b3e6e7e2899bb45eeb061b8}
+      \strng{authorfullhash}{732d794fde972c88baca089c21524221}
+      \strng{authorfullhashraw}{732d794fde972c88baca089c21524221}
+      \field{sortinit}{5}
+      \field{sortinithash}{20e9b4b0b173788c5dace24730f47d8c}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{IEEE/ACM Transactions on Audio, Speech, and Language Processing}
+      \field{number}{2}
+      \field{title}{Automatic Chord Estimation from Audio: A Review of the State of the Art}
+      \field{volume}{22}
+      \field{year}{2014}
+      \field{pages}{556\bibrangedash 575}
+      \range{pages}{20}
+    \endentry
+    \entry{li2023mert}{inproceedings}{}{}
+      \true{moreauthor}
+      \true{morelabelname}
+      \name{author}{10}{}{%
+        {{hash=4f8018e05c00723a4e99a7d87403cd86}{%
+           family={Li},
+           familyi={L\bibinitperiod},
+           given={Yizhi},
+           giveni={Y\bibinitperiod}}}%
+        {{hash=4a837f68f7630bdbb835cb70ac36f3e7}{%
+           family={Yuan},
+           familyi={Y\bibinitperiod},
+           given={Ruibin},
+           giveni={R\bibinitperiod}}}%
+        {{hash=4243cd9c741636a90c4e8954517e0bcb}{%
+           family={Zhang},
+           familyi={Z\bibinitperiod},
+           given={Ge},
+           giveni={G\bibinitperiod}}}%
+        {{hash=277fa841b49bb9066b3c1987b77e59a2}{%
+           family={Ma},
+           familyi={M\bibinitperiod},
+           given={Yinghao},
+           giveni={Y\bibinitperiod}}}%
+        {{hash=0b40b40eea798694195a0b8bb24b3315}{%
+           family={Chen},
+           familyi={C\bibinitperiod},
+           given={Xingran},
+           giveni={X\bibinitperiod}}}%
+        {{hash=b5d41e558f920503a30efdb4436690e3}{%
+           family={Yin},
+           familyi={Y\bibinitperiod},
+           given={Hanzhi},
+           giveni={H\bibinitperiod}}}%
+        {{hash=b68c06a610b612b2e0850cd4fb6cc553}{%
+           family={Lin},
+           familyi={L\bibinitperiod},
+           given={Chenghua},
+           giveni={C\bibinitperiod}}}%
+        {{hash=be54909e51cb80be2cbbf0f98272f90f}{%
+           family={Ragni},
+           familyi={R\bibinitperiod},
+           given={Anton},
+           giveni={A\bibinitperiod}}}%
+        {{hash=b068724f00d17295882e712edcc6315c}{%
+           family={Benetos},
+           familyi={B\bibinitperiod},
+           given={Emmanouil},
+           giveni={E\bibinitperiod}}}%
+        {{hash=65ff90c9c929fd1b2e27d6610ecd6397}{%
+           family={Gyenge},
+           familyi={G\bibinitperiod},
+           given={Norbert},
+           giveni={N\bibinitperiod}}}%
+      }
+      \strng{namehash}{764229204197adec5ca1282981058ca3}
+      \strng{fullhash}{af8f1149d6fdb9bf2ff0482c82fe362f}
+      \strng{fullhashraw}{af8f1149d6fdb9bf2ff0482c82fe362f}
+      \strng{bibnamehash}{764229204197adec5ca1282981058ca3}
+      \strng{authorbibnamehash}{764229204197adec5ca1282981058ca3}
+      \strng{authornamehash}{764229204197adec5ca1282981058ca3}
+      \strng{authorfullhash}{af8f1149d6fdb9bf2ff0482c82fe362f}
+      \strng{authorfullhashraw}{af8f1149d6fdb9bf2ff0482c82fe362f}
+      \field{sortinit}{6}
+      \field{sortinithash}{b33bc299efb3c36abec520a4c896a66d}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{booktitle}{International Conference on Learning Representations (ICLR)}
+      \field{title}{{MERT}: Acoustic Music Understanding Model with Large-Scale Self-supervised Training}
+      \field{year}{2024}
+      \verb{urlraw}
+      \verb https://arxiv.org/abs/2306.00107
+      \endverb
+      \verb{url}
+      \verb https://arxiv.org/abs/2306.00107
+      \endverb
+    \endentry
+    \entry{chordformer2024}{inproceedings}{}{}
+      \name{author}{2}{}{%
+        {{hash=13694aa97833f820ae415119df069295}{%
+           family={Chen},
+           familyi={C\bibinitperiod},
+           given={Wei-Tsung},
+           giveni={W\bibinithyphendelim T\bibinitperiod}}}%
+        {{hash=edd64bac34a6b49cc3c21a7ab031c893}{%
+           family={Su},
+           familyi={S\bibinitperiod},
+           given={Li},
+           giveni={L\bibinitperiod}}}%
+      }
+      \strng{namehash}{679066a008ac67e330bbb4aec355c1fe}
+      \strng{fullhash}{679066a008ac67e330bbb4aec355c1fe}
+      \strng{fullhashraw}{679066a008ac67e330bbb4aec355c1fe}
+      \strng{bibnamehash}{679066a008ac67e330bbb4aec355c1fe}
+      \strng{authorbibnamehash}{679066a008ac67e330bbb4aec355c1fe}
+      \strng{authornamehash}{679066a008ac67e330bbb4aec355c1fe}
+      \strng{authorfullhash}{679066a008ac67e330bbb4aec355c1fe}
+      \strng{authorfullhashraw}{679066a008ac67e330bbb4aec355c1fe}
+      \field{sortinit}{7}
+      \field{sortinithash}{108d0be1b1bee9773a1173443802c0a3}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{booktitle}{International Society for Music Information Retrieval Conference (ISMIR)}
+      \field{title}{Chordformer: Real-Time Chord Recognition with Conformer and Contextual Block Processing}
+      \field{year}{2024}
+    \endentry
+    \entry{bachi2024}{inproceedings}{}{}
+      \name{author}{3}{}{%
+        {{hash=a3f9d4073095f56ae17fc29eb26f2f90}{%
+           family={Noto},
+           familyi={N\bibinitperiod},
+           given={Antonio},
+           giveni={A\bibinitperiod}}}%
+        {{hash=fe1cce7a348327c06c814574cbd6d5ec}{%
+           family={Lostanlen},
+           familyi={L\bibinitperiod},
+           given={Vincent},
+           giveni={V\bibinitperiod}}}%
+        {{hash=5dea843ed9987dc57faf9074fd18a924}{%
+           family={Bitteur},
+           familyi={B\bibinitperiod},
+           given={Hervé},
+           giveni={H\bibinitperiod}}}%
+      }
+      \strng{namehash}{dbc04a86d3ca8f06e2f978e5143bc7c7}
+      \strng{fullhash}{dbc04a86d3ca8f06e2f978e5143bc7c7}
+      \strng{fullhashraw}{dbc04a86d3ca8f06e2f978e5143bc7c7}
+      \strng{bibnamehash}{dbc04a86d3ca8f06e2f978e5143bc7c7}
+      \strng{authorbibnamehash}{dbc04a86d3ca8f06e2f978e5143bc7c7}
+      \strng{authornamehash}{dbc04a86d3ca8f06e2f978e5143bc7c7}
+      \strng{authorfullhash}{dbc04a86d3ca8f06e2f978e5143bc7c7}
+      \strng{authorfullhashraw}{dbc04a86d3ca8f06e2f978e5143bc7c7}
+      \field{sortinit}{8}
+      \field{sortinithash}{a231b008ebf0ecbe0b4d96dcc159445f}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{booktitle}{International Society for Music Information Retrieval Conference (ISMIR)}
+      \field{title}{{BACHI}: Boundary-Aware Symbolic Chord Identification}
+      \field{year}{2024}
+    \endentry
+    \entry{llm_acr2025}{article}{}{}
+      \true{moreauthor}
+      \true{morelabelname}
+      \name{author}{1}{}{%
+        {{hash=634a2c3897ebb8f07de43b1f9688db59}{%
+           family={Zhang},
+           familyi={Z\bibinitperiod},
+           given={Mingwei},
+           giveni={M\bibinitperiod}}}%
+      }
+      \strng{namehash}{476362b33ed010a43e4970bdbe8f9b80}
+      \strng{fullhash}{476362b33ed010a43e4970bdbe8f9b80}
+      \strng{fullhashraw}{476362b33ed010a43e4970bdbe8f9b80}
+      \strng{bibnamehash}{476362b33ed010a43e4970bdbe8f9b80}
+      \strng{authorbibnamehash}{476362b33ed010a43e4970bdbe8f9b80}
+      \strng{authornamehash}{476362b33ed010a43e4970bdbe8f9b80}
+      \strng{authorfullhash}{476362b33ed010a43e4970bdbe8f9b80}
+      \strng{authorfullhashraw}{476362b33ed010a43e4970bdbe8f9b80}
+      \field{sortinit}{9}
+      \field{sortinithash}{0a5ebc79d83c96b6579069544c73c7d4}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{arXiv preprint}
+      \field{title}{{LLM-ACR}: Chain-of-Thought Augmented Chord Recognition via Large Language Models}
+      \field{year}{2025}
+      \verb{urlraw}
+      \verb https://arxiv.org/abs/2502.00000
+      \endverb
+      \verb{url}
+      \verb https://arxiv.org/abs/2502.00000
+      \endverb
+    \endentry
+    \entry{ultralytics2024train}{online}{}{}
+      \name{author}{1}{}{%
+        {{hash=88f069848482a556e416f713d2819905}{%
+           family={{Ultralytics}},
+           familyi={U\bibinitperiod}}}%
+      }
+      \strng{namehash}{88f069848482a556e416f713d2819905}
+      \strng{fullhash}{88f069848482a556e416f713d2819905}
+      \strng{fullhashraw}{88f069848482a556e416f713d2819905}
+      \strng{bibnamehash}{88f069848482a556e416f713d2819905}
+      \strng{authorbibnamehash}{88f069848482a556e416f713d2819905}
+      \strng{authornamehash}{88f069848482a556e416f713d2819905}
+      \strng{authorfullhash}{88f069848482a556e416f713d2819905}
+      \strng{authorfullhashraw}{88f069848482a556e416f713d2819905}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{note}{Ultralytics Documentation}
+      \field{title}{Model Training with Ultralytics YOLO}
+      \field{urlday}{16}
+      \field{urlmonth}{5}
+      \field{urlyear}{2026}
+      \field{year}{2024}
+      \field{urldateera}{ce}
+      \true{nocite}
+      \verb{urlraw}
+      \verb https://docs.ultralytics.com/modes/train
+      \endverb
+      \verb{url}
+      \verb https://docs.ultralytics.com/modes/train
+      \endverb
+    \endentry
+    \entry{medium2024yolov8custom}{online}{}{}
+      \name{author}{1}{}{%
+        {{hash=f42b2fd77137527c2bcb13221fa731a1}{%
+           family={Valentini},
+           familyi={V\bibinitperiod},
+           given={Piero},
+           giveni={P\bibinitperiod}}}%
+      }
+      \list{publisher}{1}{%
+        {Medium -- Towards Data Science}%
+      }
+      \strng{namehash}{f42b2fd77137527c2bcb13221fa731a1}
+      \strng{fullhash}{f42b2fd77137527c2bcb13221fa731a1}
+      \strng{fullhashraw}{f42b2fd77137527c2bcb13221fa731a1}
+      \strng{bibnamehash}{f42b2fd77137527c2bcb13221fa731a1}
+      \strng{authorbibnamehash}{f42b2fd77137527c2bcb13221fa731a1}
+      \strng{authornamehash}{f42b2fd77137527c2bcb13221fa731a1}
+      \strng{authorfullhash}{f42b2fd77137527c2bcb13221fa731a1}
+      \strng{authorfullhashraw}{f42b2fd77137527c2bcb13221fa731a1}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{The Comprehensive Guide to Training and Running YOLOv8 Models on Custom Datasets}
+      \field{urlday}{16}
+      \field{urlmonth}{5}
+      \field{urlyear}{2026}
+      \field{year}{2024}
+      \field{urldateera}{ce}
+      \true{nocite}
+      \verb{urlraw}
+      \verb https://medium.com/data-science/the-comprehensive-guide-to-training-and-running-yolov8-models-on-custom-datasets-22946da259c3
+      \endverb
+      \verb{url}
+      \verb https://medium.com/data-science/the-comprehensive-guide-to-training-and-running-yolov8-models-on-custom-datasets-22946da259c3
+      \endverb
+    \endentry
+    \entry{bitteur2017}{inproceedings}{}{}
+      \name{author}{2}{}{%
+        {{hash=5dea843ed9987dc57faf9074fd18a924}{%
+           family={Bitteur},
+           familyi={B\bibinitperiod},
+           given={Hervé},
+           giveni={H\bibinitperiod}}}%
+        {{hash=5d79b2c1c58f54540fd7dce441be6a83}{%
+           family={Klapuri},
+           familyi={K\bibinitperiod},
+           given={Anssi},
+           giveni={A\bibinitperiod}}}%
+      }
+      \strng{namehash}{f271a62a355e1384a7ae8941b418db59}
+      \strng{fullhash}{f271a62a355e1384a7ae8941b418db59}
+      \strng{fullhashraw}{f271a62a355e1384a7ae8941b418db59}
+      \strng{bibnamehash}{f271a62a355e1384a7ae8941b418db59}
+      \strng{authorbibnamehash}{f271a62a355e1384a7ae8941b418db59}
+      \strng{authornamehash}{f271a62a355e1384a7ae8941b418db59}
+      \strng{authorfullhash}{f271a62a355e1384a7ae8941b418db59}
+      \strng{authorfullhashraw}{f271a62a355e1384a7ae8941b418db59}
+      \field{sortinit}{2}
+      \field{sortinithash}{8b555b3791beccb63322c22f3320aa9a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{booktitle}{Sound and Music Computing Conference (SMC)}
+      \field{title}{Chord Recognition with Recurrent Neural Networks}
+      \field{year}{2017}
+      \true{nocite}
+    \endentry
+    \entry{chordify}{online}{}{}
+      \name{author}{1}{}{%
+        {{hash=b2d2fb74d217e420babf94eec266dae0}{%
+           family={{Chordify B.V.}},
+           familyi={C\bibinitperiod}}}%
+      }
+      \strng{namehash}{b2d2fb74d217e420babf94eec266dae0}
+      \strng{fullhash}{b2d2fb74d217e420babf94eec266dae0}
+      \strng{fullhashraw}{b2d2fb74d217e420babf94eec266dae0}
+      \strng{bibnamehash}{b2d2fb74d217e420babf94eec266dae0}
+      \strng{authorbibnamehash}{b2d2fb74d217e420babf94eec266dae0}
+      \strng{authornamehash}{b2d2fb74d217e420babf94eec266dae0}
+      \strng{authorfullhash}{b2d2fb74d217e420babf94eec266dae0}
+      \strng{authorfullhashraw}{b2d2fb74d217e420babf94eec266dae0}
+      \field{sortinit}{2}
+      \field{sortinithash}{8b555b3791beccb63322c22f3320aa9a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Chordify --- Chord Recognition for Everyone}
+      \field{urlday}{1}
+      \field{urlmonth}{9}
+      \field{urlyear}{2026}
+      \field{year}{2024}
+      \field{urldateera}{ce}
+      \true{nocite}
+      \verb{urlraw}
+      \verb https://chordify.net
+      \endverb
+      \verb{url}
+      \verb https://chordify.net
+      \endverb
+    \endentry
+    \entry{chordai}{online}{}{}
+      \name{author}{1}{}{%
+        {{hash=66eff683aa221b461be4bfd8f3af8bc9}{%
+           family={{ChordAI}},
+           familyi={C\bibinitperiod}}}%
+      }
+      \strng{namehash}{66eff683aa221b461be4bfd8f3af8bc9}
+      \strng{fullhash}{66eff683aa221b461be4bfd8f3af8bc9}
+      \strng{fullhashraw}{66eff683aa221b461be4bfd8f3af8bc9}
+      \strng{bibnamehash}{66eff683aa221b461be4bfd8f3af8bc9}
+      \strng{authorbibnamehash}{66eff683aa221b461be4bfd8f3af8bc9}
+      \strng{authornamehash}{66eff683aa221b461be4bfd8f3af8bc9}
+      \strng{authorfullhash}{66eff683aa221b461be4bfd8f3af8bc9}
+      \strng{authorfullhashraw}{66eff683aa221b461be4bfd8f3af8bc9}
+      \field{sortinit}{2}
+      \field{sortinithash}{8b555b3791beccb63322c22f3320aa9a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{ChordAI --- Real-Time Chord Recognition}
+      \field{urlday}{1}
+      \field{urlmonth}{9}
+      \field{urlyear}{2026}
+      \field{year}{2024}
+      \field{urldateera}{ce}
+      \true{nocite}
+      \verb{urlraw}
+      \verb https://www.chordai.net
+      \endverb
+      \verb{url}
+      \verb https://www.chordai.net
+      \endverb
+    \endentry
+    \entry{songmaster}{online}{}{}
+      \name{author}{1}{}{%
+        {{hash=bb2b76ba68fe7bc3dd71ff399ae3b99d}{%
+           family={{Lunaverus Inc.}},
+           familyi={L\bibinitperiod}}}%
+      }
+      \strng{namehash}{bb2b76ba68fe7bc3dd71ff399ae3b99d}
+      \strng{fullhash}{bb2b76ba68fe7bc3dd71ff399ae3b99d}
+      \strng{fullhashraw}{bb2b76ba68fe7bc3dd71ff399ae3b99d}
+      \strng{bibnamehash}{bb2b76ba68fe7bc3dd71ff399ae3b99d}
+      \strng{authorbibnamehash}{bb2b76ba68fe7bc3dd71ff399ae3b99d}
+      \strng{authornamehash}{bb2b76ba68fe7bc3dd71ff399ae3b99d}
+      \strng{authorfullhash}{bb2b76ba68fe7bc3dd71ff399ae3b99d}
+      \strng{authorfullhashraw}{bb2b76ba68fe7bc3dd71ff399ae3b99d}
+      \field{sortinit}{2}
+      \field{sortinithash}{8b555b3791beccb63322c22f3320aa9a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Song Master Pro --- Practice and Transcription Tool}
+      \field{urlday}{1}
+      \field{urlmonth}{9}
+      \field{urlyear}{2026}
+      \field{year}{2024}
+      \field{urldateera}{ce}
+      \true{nocite}
+      \verb{urlraw}
+      \verb https://www.lunaverus.com
+      \endverb
+      \verb{url}
+      \verb https://www.lunaverus.com
+      \endverb
+    \endentry
+    \entry{transcribe}{online}{}{}
+      \name{author}{1}{}{%
+        {{hash=dbcd5b20e52de1d7b5e61d2a9fd52600}{%
+           family={{Seventh String Software}},
+           familyi={S\bibinitperiod}}}%
+      }
+      \strng{namehash}{dbcd5b20e52de1d7b5e61d2a9fd52600}
+      \strng{fullhash}{dbcd5b20e52de1d7b5e61d2a9fd52600}
+      \strng{fullhashraw}{dbcd5b20e52de1d7b5e61d2a9fd52600}
+      \strng{bibnamehash}{dbcd5b20e52de1d7b5e61d2a9fd52600}
+      \strng{authorbibnamehash}{dbcd5b20e52de1d7b5e61d2a9fd52600}
+      \strng{authornamehash}{dbcd5b20e52de1d7b5e61d2a9fd52600}
+      \strng{authorfullhash}{dbcd5b20e52de1d7b5e61d2a9fd52600}
+      \strng{authorfullhashraw}{dbcd5b20e52de1d7b5e61d2a9fd52600}
+      \field{sortinit}{2}
+      \field{sortinithash}{8b555b3791beccb63322c22f3320aa9a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{title}{Transcribe! --- Audio Transcription Software}
+      \field{urlday}{1}
+      \field{urlmonth}{9}
+      \field{urlyear}{2026}
+      \field{year}{2024}
+      \field{urldateera}{ce}
+      \true{nocite}
+      \verb{urlraw}
+      \verb https://www.seventhstring.com/xscribe/overview.html
+      \endverb
+      \verb{url}
+      \verb https://www.seventhstring.com/xscribe/overview.html
+      \endverb
+    \endentry
+  \enddatalist
+\endrefsection
+\endinput
+

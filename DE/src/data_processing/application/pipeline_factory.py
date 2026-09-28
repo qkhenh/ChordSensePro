@@ -7,6 +7,7 @@ from src.data_processing.application.pipeline_handlers.segment_handler import Se
 from src.data_processing.application.pipeline_handlers.feature_handler import FeatureHandler
 from src.data_processing.application.pipeline_handlers.annotation_handler import AnnotationHandler
 from src.data_processing.application.pipeline_handlers.augment_handler import AugmentHandler
+from src.data_processing.application.pipeline_handlers.summary_handler import SummaryHandler
 from src.data_processing.domain.models.base_handler import BaseProcessingHandler
 
 
@@ -22,9 +23,10 @@ def build_pipeline() -> BaseProcessingHandler:
     separate = SeparateHandler()
     beat     = BeatHandler()
     segment  = SegmentHandler()
+    summary  = SummaryHandler()
     feature  = FeatureHandler()
 
-    separate.set_next(beat).set_next(segment).set_next(feature)
+    separate.set_next(beat).set_next(segment).set_next(summary).set_next(feature)
     return separate
 
 
@@ -46,8 +48,9 @@ def build_training_pipeline() -> BaseProcessingHandler:
     beat       = BeatHandler()
     segment    = SegmentHandler()
     annotation = AnnotationHandler()
+    summary    = SummaryHandler()
     augment    = AugmentHandler()
     feature    = FeatureHandler()
 
-    separate.set_next(beat).set_next(segment).set_next(annotation).set_next(augment).set_next(feature)
+    separate.set_next(beat).set_next(segment).set_next(annotation).set_next(summary).set_next(augment).set_next(feature)
     return separate

@@ -957,154 +957,179 @@ Feature 6: User UGC — Cá nhân hóa & Thư viện
 
 ---
 
-## 6. Kiến Trúc Tổng Thể
+## 6. Kiến Trúc Tổng Thể — DE Pipeline (Actual Implementation)
+
+> **Cập nhật 2026-09-16:** Phản ánh đúng source code thực tế đã triển khai. Áp dụng Domain-Driven Design (DDD) với tách biệt domain/application/infrastructure cho từng Bounded Context.
+
+### 6.1 DDD Architecture — Bounded Contexts
+
+> **Lý thuyết:** Kiến trúc DDD Onion (vòng tròn đồng tâm) — Dependencies luôn hướng vào trong. Domain Layer ở trung tâm chứa business logic thuần, không phụ thuộc framework. Application Layer điều phối use cases. Infrastructure Layer ở ngoài cùng chứa các adapter cụ thể (PostgreSQL, MongoDB, yt-dlp...) có thể thay thế được.
+
+![DDD Onion Architecture — Concentric Circles](images/ddd_onion_architecture.jpg)
 
 ```
-ChordSense/
-├── .env
-├── pyproject.toml
-├── docker-compose.yml              ← PostgreSQL + MongoDB + Airflow + Redis
+DE/
+├── docker-compose.yml              ← 5 services: PostgreSQL ×2, MongoDB, Redis, Airflow
+├── Dockerfile                      ← Custom Airflow image + ffmpeg + libsndfile
 │
-├── config/
-│   ├── chord_mapping.yml           ← Danh sách hợp âm, chord IDs
-│   └── curriculum.yml              ← Grade → chord progression mapping
-│
-├── dags/                           ← Airflow DAGs (Kỳ 1)
-│   ├── dag_ingest_raw.py           ← DAG 1: Download audio → stage WAV + metadata vào MongoDB
-│   │                                          (schedule: mỗi 2h, tự trigger DAG 2 sau khi xong)
-│   ├── dag_process_audio.py        ← DAG 2: MongoDB jobs → Demucs → features → PostgreSQL
-│   │                                          (trigger bởi DAG 1, không schedule độc lập)
-│   └── dag_analytics_rollup.py     ← DAG 3: Daily aggregation — chord mastery per student
-│                                              (schedule: 23:30 mỗi ngày)
+├── dags/                           ← Airflow DAG definitions
+│   ├── dag_ingest_raw.py           ← DAG 1: crawl_queue → download → MongoDB (*/2h, batch=10)
+│   ├── dag_process_audio.py        ← DAG 2: MongoDB → handler chain → PostgreSQL (trigger)
+│   ├── dag_analytics_rollup.py     ← DAG 3: daily mastery rollup (23:30)
+│   └── wrapper/                    ← Thin wrappers calling Application Services
 │
 ├── src/
-│   ├── shared/                             ← Nền tảng chung (DDD base)
-│   │   ├── domain/
-│   │   │   ├── base_model.py
-│   │   │   ├── processing_result.py
-│   │   │   └── value_objects.py            ← ChromaVector, ChordLabel, ConfidenceScore
-│   │   │
-│   │   ├── infrastructure/
-│   │   │   ├── settings/
-│   │   │   │   └── config.py               ← Settings từ env vars (POSTGRES_HOST, MONGO_URI,...)
-│   │   │   ├── postgres/
-│   │   │   │   └── client.py               ← psycopg2 connection pool (không ORM)
-│   │   │   └── mongo/
-│   │   │       └── client.py
-│   │   │
-│   │   └── utils/
-│   │       ├── logging.py
-│   │       └── audio_utils.py              ← Helper: load, resample, segment audio
+│   ├── shared/                     ← SHARED KERNEL
+│   │   ├── domain/                 ← BaseEntity, ValueObjects
+│   │   └── infrastructure/         ← Config, PostgreSQL pool, MongoDB client
 │   │
-│   ├── curriculum/                         ← MODULE 1: Quản lý chương trình học
-│   │   ├── domain/
-│   │   │   ├── models/
-│   │   │   │   ├── lesson.py               ← Lesson domain model
-│   │   │   │   ├── chord.py                ← Chord (Am, C, G,...) model
-│   │   │   │   └── curriculum_path.py      ← Grade → Lesson → Chord mapping
-│   │   │   └── ports/
-│   │   │       └── curriculum_source.py
-│   │   │
-│   │   └── application/
-│   │       ├── entrypoints.py
-│   │       └── sources/
-│   │           ├── moet_curriculum_source.py   ← Load từ PDF/JSON SGK
-│   │           └── manual_curriculum_source.py ← Seed data thủ công
+│   ├── data_ingest/                ← BC 1: Orchestration & Coordination
+│   │   ├── domain/models/
+│   │   │   ├── crawl_queue_item.py ← CrawlQueueItem (pending→running→done/failed)
+│   │   │   ├── raw_audio_job.py    ← RawAudioJob (MongoDB staging)
+│   │   │   └── ingest_record.py
+│   │   ├── application/
+│   │   │   ├── ingest_raw_service.py     ← DAG 1: crawl → download → MongoDB
+│   │   │   └── process_audio_service.py  ← DAG 2: MongoDB → chain → PostgreSQL
+│   │   └── infrastructure/
+│   │       ├── repositories/crawl_queue_repository.py  ← PostgreSQL
+│   │       └── mongo/raw_audio_job_repository.py       ← MongoDB
 │   │
-│   ├── audio_processing/                   ← MODULE 2: Xử lý audio
+│   ├── data_loader/                ← BC 2: Audio Acquisition (Extract)
 │   │   ├── domain/
-│   │   │   ├── models/
-│   │   │   │   ├── audio_segment.py        ← 2-3s audio clip
-│   │   │   │   ├── chroma_feature.py       ← 12-dim chroma vector
-│   │   │   │   └── mel_spectrogram.py      ← 128×T spectrogram matrix
-│   │   │   └── ports/
-│   │   │       └── feature_extractor.py
-│   │   │
+│   │   │   ├── models/audio_file.py       ← AudioFile + AudioSource enum
+│   │   │   ├── models/download_response.py
+│   │   │   ├── ports/downloader.py        ← Downloader Protocol (port)
+│   │   │   └── services/audio_dispatcher.py ← Registry: source → downloader
+│   │   └── application/downloaders/
+│   │       ├── jaah_downloader.py         ← yt-dlp search → WAV
+│   │       ├── local_file_downloader.py   ← Copy + resample
+│   │       ├── choco_downloader.py        ← yt-dlp YouTube URL
+│   │       ├── mcgill_downloader.py       ← yt-dlp YouTube URL
+│   │       ├── rwc_downloader.py          ← Copy + resample
+│   │       ├── kaggle_downloader.py       ← Kaggle CLI (stub)
+│   │       └── pianoteq_downloader.py     ← MIDI render (stub)
+│   │
+│   ├── data_processing/            ← BC 3: Audio Transform (Transform)
+│   │   ├── domain/models/
+│   │   │   ├── base_handler.py            ← BaseProcessingHandler (CoR pattern)
+│   │   │   ├── processed_audio.py         ← ProcessedAudio (data bag)
+│   │   │   └── audio_segment.py           ← AudioSegment (2s clip + features)
 │   │   └── application/
-│   │       ├── entrypoints.py
+│   │       ├── pipeline_factory.py
 │   │       ├── pipeline_handlers/
-│   │       │   ├── load_handler.py         ← Load audio từ file/stream
-│   │       │   ├── segment_handler.py      ← Chia thành 2s segments
-│   │       │   ├── extract_handler.py      ← Librosa chroma + spectrogram
-│   │       │   ├── normalize_handler.py    ← Chuẩn hóa features
-│   │       │   └── save_handler.py         ← Lưu MongoDB + PostgreSQL
-│   │       └── extractors/
-│   │           ├── chroma_extractor.py     ← Chroma CQT (tốt hơn STFT cho chord)
-│   │           └── spectrogram_extractor.py
+│   │       │   ├── separate_handler.py    ← Demucs → stem WAV
+│   │       │   ├── beat_handler.py        ← madmom → tempo + beats
+│   │       │   ├── segment_handler.py     ← 2s segments
+│   │       │   ├── annotation_handler.py  ← JAMS/JAAH/Kaggle chord labels
+│   │       │   ├── summary_handler.py     ← chord_timeline + key detection
+│   │       │   ├── augment_handler.py     ← Pitch-shift ×12 + noise + reverb
+│   │       │   └── feature_handler.py     ← chroma/mel/HPSS features
+│   │       └── annotation_parsers/parsers.py ← JamsParser, JaahParser, HarteParser, RwcParser
 │   │
-│   ├── song_analysis/                      ← MODULE 3: Learning Flow (NEW)
-│   │   ├── domain/
-│   │   │   ├── models/
-│   │   │   │   ├── song_analysis.py        ← Kết quả phân tích 1 bài
-│   │   │   │   ├── chord_timeline.py       ← [(time, chord)] list
-│   │   │   │   ├── chord_sheet.py          ← Chord chart theo sections
-│   │   │   │   └── learning_plan.py        ← AI-generated learning plan
-│   │   │   └── ports/
-│   │   │       └── song_source.py
-│   │   │
-│   │   └── application/
-│   │       ├── entrypoints.py
-│   │       ├── pipeline_handlers/
-│   │       │   ├── download_handler.py     ← yt-dlp download
-│   │       │   ├── separate_handler.py     ← Demucs source separation
-│   │       │   ├── beat_track_handler.py   ← Beat detection (madmom)
-│   │       │   ├── chord_detect_handler.py ← Full-song chord detection
-│   │       │   ├── section_detect_handler.py ← intro/verse/chorus detection
-│   │       │   ├── sheet_generate_handler.py ← Generate chord sheet
-│   │       │   └── plan_generate_handler.py  ← AI learning plan creation
-│   │       └── sources/
-│   │           ├── youtube_source.py
-│   │           └── file_upload_source.py
+│   ├── song_analysis/              ← BC 4: Analysis Output (Load)
+│   │   ├── domain/models/song_analysis.py
+│   │   └── infrastructure/repositories/song_analysis_repository.py
 │   │
-│   ├── ai_engine/                          ← MODULE 4: AI (Kỳ 2)
-│   │   ├── domain/
-│   │   │   ├── models/
-│   │   │   │   ├── chord_prediction.py     ← ChordPrediction value object
-│   │   │   │   └── chord_sequence.py       ← Sequence of ChordPredictions
-│   │   │   └── ports/
-│   │   │       └── chord_recognizer.py     ← Protocol interface
-│   │   │
-│   │   └── application/
-│   │       ├── entrypoints.py
-│   │       └── chord_recognizer/
-│   │           ├── trainer.py              ← LoRA fine-tuning script
-│   │           ├── predictor.py            ← Real-time inference
-│   │           ├── lora_config.py          ← LoRA hyperparameters
-│   │           └── evaluator.py            ← Metrics: accuracy, F1, WCS
-│   │
-│   ├── student_analytics/                  ← MODULE 5: Student Progress (DE role)
-│   │   ├── domain/
-│   │   │   ├── models/
-│   │   │   │   ├── practice_session.py     ← 1 lần luyện tập
-│   │   │   │   ├── chord_attempt.py        ← 1 lần gảy chord
-│   │   │   │   └── student_progress.py     ← Aggregate progress
-│   │   │   └── ports/
-│   │   │       └── analytics_repository.py
-│   │   │
-│   │   └── application/
-│   │       ├── entrypoints.py
-│   │       ├── session_tracker.py          ← Record attempt realtime
-│   │       └── progress_aggregator.py      ← Daily rollup DAG task
-│   │
-│   └── api/                                ← MODULE 6: REST API (BE làm chính)
-│       ├── routes/
-│       │   ├── recognize.py                ← POST /recognize (audio → chord)
-│       │   ├── song.py                     ← POST /song/analyze (NEW: full song)
-│       │   ├── lesson.py                   ← GET /lessons, GET /lesson/{id}
-│       │   ├── progress.py                 ← GET /student/{id}/progress
-│       │   └── dashboard.py                ← GET /teacher/dashboard
-│       └── schemas/
-│           ├── request.py
-│           └── response.py
+│   └── user_analytics/             ← BC 5: Student Progress
+│       ├── domain/models/
+│       │   ├── chord_attempt.py
+│       │   └── chord_mastery.py
+│       └── infrastructure/repositories/
 │
-└── scripts/
-    ├── seed_local_datasets.py  ← Seed crawl_queue từ local datasets (JAAH, Kaggle, ChoCo)
-    └── seed_chords.py          ← Seed chord_dictionary
-
+├── scripts/
+│   ├── seed_local_datasets.py      ← Seed crawl_queue (545 entries)
+│   └── seed_chords.py
+│
 └── init/
-    └── init.sql                ← Auto-create tất cả PostgreSQL tables khi container start
-                                   (mounted vào /docker-entrypoint-initdb.d/)
+    └── init.sql                    ← Auto-create tables on container start
 ```
+
+### 6.2 ETL Pipeline — Data Flow
+
+```
+═══════════════════════════════════════════════════════════════════════
+ DAG 1: dag_ingest_raw (Extract)                        Schedule: */2h
+═══════════════════════════════════════════════════════════════════════
+
+  PostgreSQL                                         MongoDB
+ ┌──────────────┐                                ┌──────────────────┐
+ │ crawl_queue  │  pick batch(10)                │ raw_audio_jobs   │
+ │ (545 entries)│ ──────────────┐                │                  │
+ │              │               ▼                │ wav_path:        │
+ │ status:      │     ┌──────────────────┐       │ annotation_path: │
+ │  pending ──► │     │ AudioDispatcher  │       │ status:          │
+ │  running     │     │ (Registry)       │       │  pending_proc    │
+ │  done        │     │                  │       └──────────────────┘
+ │  failed      │     │ jaah → JaahDL    │                ▲
+ └──────────────┘     │ local → LocalDL  │       write job + WAV
+                      │ choco → ChocoDL  │                │
+                      └────────┬─────────┘       ─────────┘
+                               │
+                         download → WAV (mono, 22050Hz)
+                         save /data/tmp/{id}.wav
+
+═══════════════════════════════════════════════════════════════════════
+ DAG 2: dag_process_audio (Transform + Load)         Triggered by DAG 1
+═══════════════════════════════════════════════════════════════════════
+
+  MongoDB              Handler Chain (Chain of Responsibility)
+ ┌────────────┐  ┌───────────────────────────────────────────────────┐
+ │ raw_audio  │  │            ProcessedAudio (data bag)              │
+ │ _jobs      │  │                                                   │
+ │ pick next  │──│  Separate ─► Beat ─► Segment ─► Annotation       │
+ │ pending    │  │  (Demucs)   (madmom)  (2s win)   (JAMS/JAAH/     │
+ └────────────┘  │                                   Kaggle fname)   │
+                 │  ─► Summary ─► Augment ─► Feature                │
+                 │  (timeline,   (×12 pitch   (chroma_cqt,          │
+                 │   key detect)  +noise/rev)  mel, HPSS)           │
+                 └───────────────────┬───────────────────────────────┘
+                                     ▼
+                            ┌─────────────────┐
+                            │ PostgreSQL       │
+                            │ song_analyses    │
+                            │ (detected_key,   │
+                            │  chord_timeline, │
+                            │  chord_sheet)    │
+                            └─────────────────┘
+
+═══════════════════════════════════════════════════════════════════════
+ DAG 3: dag_analytics_rollup                          Schedule: 23:30
+═══════════════════════════════════════════════════════════════════════
+  chord_attempts → aggregate → student_chord_mastery (rolling 3-day)
+```
+
+### 6.3 Design Patterns
+
+| Pattern | Where | Purpose |
+|---------|-------|---------|
+| Chain of Responsibility | `BaseProcessingHandler` → 7 handlers | Pipeline extensibility: add/remove handlers without touching others |
+| Registry / Strategy | `AudioDispatcher` → 7 downloaders | Polymorphic audio download: new dataset = new downloader + register |
+| Data Bag / DTO | `ProcessedAudio` dataclass | Single mutable object flows through entire chain |
+| Ports & Adapters | `Downloader` Protocol + concrete impls | Domain doesn't know about yt-dlp, ffmpeg, etc. |
+| Factory Method | `pipeline_factory.py` | `build_pipeline()` vs `build_training_pipeline()` |
+
+### 6.4 Infrastructure Services
+
+| Service | Container | Port | Role |
+|---------|-----------|------|------|
+| PostgreSQL 16 | `chordsense_postgres` | 5432 | App DB: crawl_queue, song_analyses, chord_attempts |
+| PostgreSQL 16 | `chordsense_airflow_meta` | — | Airflow metadata (isolated) |
+| MongoDB 7.0 | `chordsense_mongo` | 27017 | WAV staging: raw_audio_jobs |
+| Redis 7.2 | `chordsense_redis` | 6379 | Cache + future Celery broker |
+| Airflow 2.10 | `chordsense_airflow` | 8080 | DAG orchestration (standalone) |
+
+### 6.5 Annotation Parser Support
+
+| Dataset | Format | Parser | Notes |
+|---------|--------|--------|-------|
+| JAAH | Custom JSON (`parts[].beats[] + chords[]`) | `JaahParser` | 113 jazz tracks |
+| ChoCo | JAMS (`chord` or `chord_harte` namespace) | `JamsParser` | 20k tracks |
+| McGill | JAMS (`chord` namespace) | `JamsParser` | 1300 pop/rock |
+| Kaggle | Filename (`A_dim_2_0.wav → A:dim`) | `_label_from_filename()` | 432 piano triads |
+| RWC | CSV | `RwcParser` | 100 J-pop |
+| Harte | `.lab/.txt` tab-separated | `HarteParser` | Standard ACR format |
+
 
 ---
 

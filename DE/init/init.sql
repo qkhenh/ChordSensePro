@@ -1,4 +1,4 @@
--- =============================================================
+﻿-- =============================================================
 -- ChordSensePro DE — PostgreSQL init script
 -- Auto-executed by Docker on first start (empty volume).
 -- =============================================================
@@ -60,3 +60,4 @@ CREATE TABLE IF NOT EXISTS user_chord_mastery (
     is_mastered     BOOLEAN DEFAULT FALSE,
     PRIMARY KEY (user_id, chord_label)
 );
+

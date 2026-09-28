@@ -26,8 +26,12 @@ class AnnotationHandler(BaseProcessingHandler):
         if data.is_failed:
             return data
 
-        # No annotation file → inference pipeline, skip silently
+        # No annotation file → try to infer chord from filename (Kaggle piano_triads)
         if data.annotation_path is None:
+            label = self._label_from_filename(data.audio_file.source_url)
+            if label:
+                for segment in data.segments:
+                    segment.chord_label = label
             return self._call_next(data)
 
         if not data.annotation_path.exists():
@@ -55,3 +59,32 @@ class AnnotationHandler(BaseProcessingHandler):
             if start <= mid_sec < end:
                 return label
         return "N"
+
+    @staticmethod
+    def _label_from_filename(source_url: str) -> str | None:
+        """Try to parse chord label from Kaggle-style filename.
+
+        Kaggle piano_triads: A_dim_2_0.wav → A:dim
+        Format: {note}_{quality}_{octave}_{variant}.wav
+        Note can be: A, Bb, C, Cs, D, Eb, E, F, Fs, G, Gs, Ab
+        Quality: maj, min, dim
+
+        Returns Harte notation string or None if not parseable.
+        """
+        from pathlib import Path
+        name = Path(source_url).stem  # e.g. "A_dim_2_0"
+        parts = name.split("_")
+        if len(parts) < 3:
+            return None
+
+        # Find quality index
+        qual_map = {"maj": "maj", "min": "min", "dim": "dim"}
+        for i, p in enumerate(parts):
+            if p in qual_map:
+                note = "_".join(parts[:i])
+                if not note:
+                    return None
+                # Normalize: Cs → C#, Fs → F#, etc.
+                note = note.replace("s", "#").replace("b", "b")
+                return f"{note}:{qual_map[p]}"
+        return None
