@@ -11,7 +11,7 @@
 \usepackage{float}
 \usepackage{a4wide,amssymb,epsfig,latexsym,multicol,array,hhline,fancyhdr}
 \usepackage{amsmath}
-\usepackage[lined,boxed,commentsnumbered]{algorithm2e}
+%\usepackage[lined,boxed,commentsnumbered]{algorithm2e}
 \usepackage{enumerate}
 \usepackage{xcolor}
 \usepackage{graphicx}
@@ -468,18 +468,124 @@ Musicians and learners who practice with digital recordings face four recurring 
 
 \textbf{Problem 4 --- Poor Extended Chord Support for Vietnamese Music.} Extended chord recognition (9th, 11th, 13th) is particularly weak for Vietnamese pop and ballad music. International training datasets do not reflect the harmonic patterns common in V-Pop arrangements, and no existing tool has published a Vietnamese chord recognition dataset.
 
+\subsubsection{User Stories}
+
+The user stories below show what each type of user wants from ChordSense Pro and why.
+
+\begin{itemize}
+    \item \textbf{US-01 (Free User --- Beginner):} ``I want to paste a YouTube link and see the basic chords of the song right away, so I do not have to spend hours working them out by ear.''
+    \item \textbf{US-02 (Free User --- Casual Player):} ``I want to look up fingering diagrams for any chord in the grid, so I can learn new chord shapes without opening another app.''
+    \item \textbf{US-03 (Paid User --- Intermediate Musician):} ``I want to see the Roman numeral for each chord and get a suggested scale, so I can understand how the song is built and start playing my own solos.''
+    \item \textbf{US-04 (Paid User --- Advanced Learner):} ``I want to set a loop on a hard section, slow it down to 50\%, and use the metronome, so I can practice that part until I get it right.''
+    \item \textbf{US-05 (Paid User --- Jazz Musician):} ``I want the system to identify extended chords such as Cmaj9, G13, and D7\#11 correctly, not simplify them to basic chords, so I get the right harmonic information for jazz playing.''
+    \item \textbf{US-06 (Paid User --- MIDI User):} ``I want to plug my keyboard into the computer and have the system show the chords I play in real time, without recording audio.''
+    \item \textbf{US-07 (Paid User --- Chord Editor):} ``When the AI gives the wrong chord, I want to click on it and fix it myself, and see the analysis update straight away, so my chart stays correct.''
+    \item \textbf{US-08 (Expert --- Music Theory Advisor):} ``I want to add my music knowledge to the system's chord database, so the platform gives users correct and useful theory advice.''
+    \item \textbf{US-09 (Music Platform Manager):} ``I want to see which chord types the AI gets wrong most often, so I can ask the team to retrain the model and keep the product quality high.''
+    \item \textbf{US-10 (IT Admin):} ``I want to upload a new model version and switch to it safely, and roll back quickly if something goes wrong, so the system stays stable.''
+\end{itemize}
+
+\subsubsection{Business Requirements}
+
+\paragraph{Operational Cost Analysis}
+
+Before setting prices for users, the team studied the real cost of running the ChordSense Pro platform. The table below shows the estimated monthly cost for each part of the system.
+
+\begin{longtable}{@{}
+    >{\raggedright\arraybackslash}p{0.30\linewidth}
+    >{\raggedright\arraybackslash}p{0.22\linewidth}
+    >{\raggedright\arraybackslash}p{0.42\linewidth}@{}}
+
+    \caption{Estimated Monthly Operational Costs}\label{tab:op_costs} \\
+    \toprule
+    \textbf{Cost Item} & \textbf{Est.\ Monthly Cost} & \textbf{Notes} \\
+    \midrule
+    \endfirsthead
+    \bottomrule
+    \endlastfoot
+
+    Web Server (Backend API + Frontend) & \$50--\$120 & DigitalOcean or AWS Lightsail: 4\,vCPU, 8\,GB RAM VPS. Includes FastAPI, React build, Redis, and PostgreSQL. \\
+    \addlinespace
+    GPU Inference Server & \$150--\$400 & NVIDIA T4 on RunPod or Lambda Labs (\$0.15--\$0.35/hr). Used for Demucs stem separation and MERT chord inference. Serverless mode reduces cost during low traffic. \\
+    \addlinespace
+    Managed Database (PostgreSQL) & \$15--\$30 & DigitalOcean Managed Database or AWS RDS (1\,vCPU, 1\,GB RAM, 10\,GB storage). \\
+    \addlinespace
+    Object Storage (Audio files) & \$5--\$10 & Temporary storage for uploaded audio. Files are deleted after processing. \\
+    \addlinespace
+    Domain Name & \$1--\$2 & \texttt{.com} domain: \$10--\$20/year (\$1--\$2/month). \\
+    \addlinespace
+    SSL Certificate & \$0 & Free via Let's Encrypt (auto-renewed). \\
+    \addlinespace
+    CDN and Bandwidth & \$0--\$20 & Cloudflare free plan covers most traffic. Paid tier needed only at scale. \\
+    \addlinespace
+    Monitoring and Logging & \$0--\$10 & Free tier of Grafana Cloud or UptimeRobot. \\
+    \addlinespace
+    \textbf{Total (estimated)} & \textbf{\$220--\$590} & Early stage with moderate traffic (100--500 active users). \\
+\end{longtable}
+
+The biggest cost is the \textbf{GPU inference server}. Using a serverless GPU provider (such as RunPod Serverless) helps reduce this cost because the system only pays when users send songs for analysis, not for idle time.
+
+\paragraph{Market Pricing Research}
+
+To set fair prices, the team studied similar music tools on the market:
+
+\begin{itemize}
+    \item \textbf{Chordify Premium:} \$4.99--\$7.99/month (yearly discount available). Offers chord charts, transpose, and loop features for guitar, ukulele, and piano.
+    \item \textbf{ChordAI Pro:} \$9/month or \$69/year. Offers real-time chord detection, stem separation, and complex chord voicing recognition.
+    \item \textbf{Moises.ai:} \$3.99--\$9.99/month. Focuses on stem separation with basic chord detection.
+    \item \textbf{Song Master:} \$49.95 one-time purchase. Desktop app with loop and slow-down features.
+\end{itemize}
+
+ChordSense Pro offers features from all of these tools in one platform (AI chord recognition + harmonic analysis + practice workspace + MIDI input). This makes the Pro plan competitive at \$6.99/month.
+
+\paragraph{Subscription-Based Pricing}
+
+Based on the cost analysis and market research above, ChordSense Pro uses a \textbf{subscription} pricing model with three tiers:
+
+\begin{itemize}
+    \item \textbf{Free Plan (\$0/month):} Users can use basic chord recognition (triads and 7th chords), up to 10 songs per month. Features such as harmonic analysis, A/B Loop, Real-Time Practice, and MIDI input are not available on this plan.
+    \item \textbf{Pro Plan (\$6.99/month or \$59.99/year):} Users get full access to all features. This includes advanced extended chord recognition (9th, 11th, 13th), precise chord voicing, Real-Time Practice Mode, MIDI input, unlimited song analyses, and faster processing.
+    \item \textbf{Educator Plan (\$14.99/month):} All Pro features, plus tools for teachers: multiple student accounts, shared playlists for student groups, and progress tracking.
+\end{itemize}
+
+\textbf{Break-even estimate:} With a monthly operating cost of about \$400, the platform needs approximately 60 Pro subscribers (60 $\times$ \$6.99 = \$419) to cover basic costs. The free plan helps attract new users who can upgrade later.
+
+\paragraph{Expert Advisory Program}
+
+In the early stage of development, ChordSense Pro will work with \textbf{music experts}. These are people who know jazz harmony, music theory, and chord voicing well. They will check and improve the system's harmonic analysis, chord dictionary, and AI training data. The ChordSense Pro team will pay them a consulting fee (estimated \$200--\$500 per expert per month) for their work.
+
+These experts help the system go beyond what AI alone can do, especially for complex chord cases that are not well covered in public datasets.
+
+\paragraph{Legal and Copyright Policy}
+
+ChordSense Pro follows a \textbf{user-responsibility} copyright policy. This is the same approach used by platforms like Songsterr, ChordAI, and Chordify. The key rules are:
+
+\begin{itemize}
+    \item Users must make sure they have the right to submit audio content to the system. This includes following copyright law and the rules of the original platform (such as YouTube).
+    \item ChordSense Pro does not save or share the original audio. The audio is only used during analysis and is deleted after the process is done.
+    \item The chord data that the system creates (timestamps, chord names, Roman numerals) is a musical analysis result. It is not a copy of the original song. This data belongs to the user.
+    \item The platform's Terms of Service do not allow users to upload content that breaks copyright rules. Users who do this may have their account suspended.
+\end{itemize}
+
 \subsection{System Description}
 
 \subsubsection{System Overview}
 
 \textbf{ChordSense Pro} is an AI-powered interactive music practice platform. Its core purpose is to convert a raw audio recording into actionable musical knowledge, then provide a complete environment for the musician to study and practice that recording.
 
-The system serves four user groups:
+The system has the following types of users and roles:
+
+\paragraph{User Tiers}
 \begin{itemize}
-    \item \textbf{Musician / Learner (Primary):} Imports songs, studies harmonic progressions, and practices with A/B Loop, Chord Dictionary, and Real-Time Practice Mode.
-    \item \textbf{Music Producer / Educator (Advanced):} Analyzes complex harmonic progressions and uses the Smart Grid as a teaching aid.
-    \item \textbf{Music Platform Manager (Business Admin):} Monitors AI quality KPIs, manages user accounts, and curates official practice playlists from the Admin Dashboard.
-    \item \textbf{Platform System Administrator (IT Admin):} Manages infrastructure, deploys and rolls back LoRA model adapters, and oversees Airflow data pipelines.
+    \item \textbf{Free User:} A user with a free account. They can use basic chord recognition (triads and 7th chords) for up to 10 songs per month. Features such as extended chord recognition, Real-Time Practice Mode, MIDI input, and harmonic analysis are locked. The system will show an upgrade message for these features.
+    \item \textbf{Paid User (Pro):} A user with a paid Pro or Educator subscription. They can use all features, including advanced extended chord recognition with precise voicing, full harmonic analysis (Roman numerals and scale suggestions), Real-Time Practice Mode, MIDI input, A/B Loop, speed control, unlimited song analyses, and faster processing.
+    \item \textbf{Expert (Music Theory Advisor):} A music specialist (such as a jazz harmony teacher or chord voicing expert) who works with the team during development. Experts add knowledge to the chord database, check the chord dictionary, and review the AI's analysis output. The ChordSense Pro team pays them a consulting fee. They use a special review interface to contribute.
+\end{itemize}
+
+\paragraph{Admin Roles}
+\begin{itemize}
+    \item \textbf{Music Platform Manager (Business Admin):} Checks AI quality reports, manages user accounts, creates official practice playlists, and reviews expert content from the Admin Dashboard.
+    \item \textbf{Platform System Administrator (IT Admin):} Manages the server infrastructure, deploys and rolls back AI model versions, and monitors data pipelines.
 \end{itemize}
 
 The overall flow from the user's perspective is:
@@ -500,6 +606,43 @@ A \textbf{chord} is a set of notes sounded together. Chords are built by stackin
 \textbf{Extended chords} add further notes above the triad. A 7th chord adds the seventh interval; a 9th chord adds the ninth; an 11th chord adds the eleventh; and a 13th chord adds the thirteenth. These chords are common in jazz, soul, neo-soul, and Vietnamese ballads. They create richer, more complex sounds that are harder to detect automatically because their additional notes often overlap with the notes of simpler chords.
 
 \textbf{Roman numeral analysis} describes how each chord functions within a key. In the key of A minor, the chord Am is the tonic (i), the chord E is the dominant (V), and the chord F is the submediant (VI). This information tells a musician how the song ``moves'' harmonically and which scale to use for improvisation.
+
+\paragraph{Jazz Harmony and Extended Chord Theory (Reference: Berklee / Levine)}
+
+In jazz theory, as described in \emph{The Berklee Book of Jazz Harmony} and Mark Levine's \emph{The Jazz Theory Book}, chords are identified by their interval structure, note types, and harmonic role.
+
+\textbf{The jazz basic unit.} In classical music, the basic chord is a three-note triad. But in jazz, the \textbf{seventh chord} (four notes: Root, 3rd, 5th, 7th) is the basic building block. A jazz chord has three types of notes:
+\begin{itemize}
+    \item \textbf{Chord Tones (1, 3, 5, 7):} These notes set the main sound of the chord --- major, minor, dominant, or diminished.
+    \item \textbf{Tensions / Extensions (9, 11, 13):} These notes are added on top of the seventh to give the chord a richer, more colourful sound.
+    \item \textbf{Chord-Scale Relationship:} A chord is a vertical stack of notes played together. A chord scale is those same notes spread out horizontally across one octave --- used for melody and improvisation.
+\end{itemize}
+
+\textbf{Step 1 --- Find the Root.} The first letter in the chord symbol (e.g., \textbf{C}, \textbf{E$\flat$}, \textbf{F$\sharp$}) is the root note. In a slash chord (e.g., G/C), the letter before the slash is the chord above, and the letter after the slash is the bass note.
+
+\textbf{Step 2 --- Identify Chord Quality.} The 3rd and 7th notes decide the chord's quality. The 5th can usually be left out without changing how the chord sounds. The three main seventh-chord types are:
+\begin{itemize}
+    \item \textbf{Major 7th (Maj7, $\Delta$):} Major 3rd + Major 7th. Notes: 1 -- 3 -- 5 -- 7. Example: C$\Delta$7 = C -- E -- G -- B.
+    \item \textbf{Minor 7th (m7, $-$7):} Minor 3rd + Minor 7th. Notes: 1 -- $\flat$3 -- 5 -- $\flat$7. Example: Cm7 = C -- E$\flat$ -- G -- B$\flat$.
+    \item \textbf{Dominant 7th (7):} Major 3rd + Minor 7th. Notes: 1 -- 3 -- 5 -- $\flat$7. Example: C7 = C -- E -- G -- B$\flat$.
+\end{itemize}
+Other chord types include: Suspended (sus4/sus2), Half-Diminished ($-7\flat5$, $\varnothing$), and Fully Diminished ($^\circ$7).
+
+\textbf{Step 3 --- Find the Tensions.} Numbers after the chord quality symbol show the added extension notes:
+\begin{itemize}
+    \item \textbf{Natural tensions:} 9, 11, 13.
+    \item \textbf{Altered tensions:} $\flat$9, $\sharp$9, $\sharp$11, $\flat$13.
+    \item Example: C7($\flat$9, $\sharp$11) is a Dominant 7 chord on C (C -- E -- G -- B$\flat$) with two extra notes: D$\flat$ ($\flat$9) and F$\sharp$ ($\sharp$11).
+\end{itemize}
+
+\textbf{Step 4 --- Harmonic Function.} A chord always works as part of a progression. Knowing where it sits in a common pattern --- such as \textbf{II--V--I} --- tells us its role:
+\begin{itemize}
+    \item \textbf{Minor 7th ($-$7):} Usually works as \textbf{II} (the chord before the dominant).
+    \item \textbf{Dominant 7th (7):} Usually works as \textbf{V} (creates tension that wants to resolve to the tonic).
+    \item \textbf{Major 7th (Maj7):} Usually works as \textbf{I} (the home chord, stable and resolved).
+\end{itemize}
+
+This four-step method is the basis for ChordSense Pro's \textbf{Client-Side Harmonic Engine}. The engine breaks each chord into Root, Quality, and Extensions (Steps 1--3), then finds its Roman numeral role in the song's key (Step 4).
 
 \subsubsubsection{AI Model Research Problems}
 
@@ -658,10 +801,22 @@ The primary business process in ChordSense Pro is the \textbf{Learning Flow}: a 
 
 \subsubsection{Interaction Modeling --- Use Case Diagram}
 
-The system defines six core use cases organized around two AI interaction models:
+The system has ten use cases. Each use case describes how a user interacts with the system. The actors and interaction types are listed below.
+
+\textbf{Actors:}
 \begin{itemize}
-    \item \textbf{Human-on-the-Loop (HOTL):} The AI pipeline runs fully automatically. The user reviews and optionally corrects the output after the fact (Learning Flow, A/B Loop, Admin monitoring).
-    \item \textbf{Human-in-the-Loop (HITL):} The user actively responds to AI feedback in real time during every iteration (Real-Time Practice Mode).
+    \item \textbf{Guest:} A visitor who has not logged in yet. They can sign up or log in.
+    \item \textbf{Free User:} A user with a free account. They can use basic features only.
+    \item \textbf{Paid User (Pro):} A user with a paid subscription. They can use all features.
+    \item \textbf{Expert (Music Theory Advisor):} A music specialist who adds knowledge to the system.
+    \item \textbf{Music Platform Manager:} A business admin who checks AI quality and manages the platform.
+    \item \textbf{Platform System Administrator (IT Admin):} Manages servers and deploys AI model updates.
+\end{itemize}
+
+\textbf{AI Interaction Types:}
+\begin{itemize}
+    \item \textbf{Human-on-the-Loop (HOTL):} The AI works by itself. The user checks the result and can fix it later. (Used in: song analysis, A/B Loop, Admin monitoring.)
+    \item \textbf{Human-in-the-Loop (HITL):} The user reacts to AI feedback in real time. (Used in: Real-Time Practice Mode, MIDI input.)
 \end{itemize}
 
 \begin{figure}[H]
@@ -677,201 +832,391 @@ The system defines six core use cases organized around two AI interaction models
 \setlength{\ucLeft}{28mm}
 
 \vspace{0.5em}
-\noindent\textbf{1/ UC-01: Import and Analyze Music}
+\noindent\textbf{1/ UC-00: Register}
+
+\begin{longtable}{|>{\bfseries}p{\ucLeft}|p{\dimexpr\linewidth-\ucLeft-2\tabcolsep-2\arrayrulewidth}|}
+\hline
+Name & Register \\ \hline
+ID & UC-00 \\ \hline
+Actor & Primary: Guest \\ \hline
+Description & A new visitor creates an account on the ChordSense Pro platform. After registration, the user becomes a Free User and can log in to use the system. \\ \hline
+Preconditions &
+\begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item User has internet access and a valid e-mail address
+    \item User does not already have an account
+\end{itemize}
+\\ \hline
+Postconditions &
+\begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item \textbf{Success:} A new account is created. The user is taken to the dashboard as a Free User.
+    \item \textbf{Failure:} An error message appears (e.g., e-mail already used, password too short).
+\end{itemize}
+\\ \hline
+Basic Flow &
+\begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item Guest opens the ChordSense Pro website
+    \item Guest clicks ``Sign Up''
+    \item Guest enters their name, e-mail, and password
+    \item System checks the input (valid e-mail, strong password)
+    \item System saves the password securely and creates the account
+    \item System logs the user in and takes them to the dashboard
+\end{enumerate}
+\\ \hline
+Alternative Flow &
+\textbf{AF1: Register with Google}
+\begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item Guest clicks ``Continue with Google''
+    \item System opens the Google login screen
+    \item Guest approves; system creates the account using the Google profile
+    \item System takes the user to the dashboard
+\end{enumerate}
+\\ \hline
+Exception Flow &
+\textbf{EF1: E-mail already used}
+\begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item System finds the e-mail is already in the database
+    \item System shows ``This e-mail is already registered. Please log in.''
+\end{enumerate}
+\\ \hline
+\caption{UC\_00: Register}\label{tab:uc00}
+\end{longtable}
+
+\vspace{0.5em}
+\noindent\textbf{2/ UC-01: Login}
+
+\begin{longtable}{|>{\bfseries}p{\ucLeft}|p{\dimexpr\linewidth-\ucLeft-2\tabcolsep-2\arrayrulewidth}|}
+\hline
+Name & Login \\ \hline
+ID & UC-01 \\ \hline
+Actor & Primary: Free User, Paid User (Pro), Expert, Music Platform Manager, IT Admin \\ \hline
+Description & An existing user logs into the system. All registered users (Free, Paid, Expert, Manager, and IT Admin) must log in before they can use any feature. The system checks the user's role and shows the correct dashboard. \\ \hline
+Preconditions &
+\begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item User already has a registered account
+    \item User has internet access
+\end{itemize}
+\\ \hline
+Postconditions &
+\begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item \textbf{Success:} User is logged in and sees the dashboard for their role (Practice Workspace for musicians, Admin Dashboard for managers, IT Dashboard for system admins).
+    \item \textbf{Failure:} An error message appears (e.g., wrong password, account locked).
+\end{itemize}
+\\ \hline
+Basic Flow &
+\begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item User opens the Login page
+    \item User enters their e-mail and password
+    \item System checks the password against the stored hash
+    \item System creates a JWT session token
+    \item System checks the user's role and redirects to the correct dashboard
+\end{enumerate}
+\\ \hline
+Alternative Flow &
+\textbf{AF1: Login with Google}
+\begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item User clicks ``Continue with Google''
+    \item System opens the Google login screen
+    \item User approves; system finds the matching account and logs the user in
+\end{enumerate}
+\\ \hline
+Exception Flow &
+\textbf{EF1: Wrong password too many times}
+\begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item Login fails 5 times in a row
+    \item System locks the account for 15 minutes and asks the user to reset their password
+\end{enumerate}
+\\ \hline
+\caption{UC\_01: Login}\label{tab:uc01_login}
+\end{longtable}
+
+\vspace{0.5em}
+\noindent\textbf{3/ UC-02: Import and Analyze Music}
 
 \begin{longtable}{|>{\bfseries}p{\ucLeft}|p{\dimexpr\linewidth-\ucLeft-2\tabcolsep-2\arrayrulewidth}|}
 \hline
 Name & Import and Analyze Music \\ \hline
-ID & UC-01 \\ \hline
-Actor & Primary: Musician / Learner \\ \hline
-Description & User imports a song via YouTube URL or audio upload. The system dispatches the analysis job. Upon completion, the Smart Grid and harmonic annotations are displayed automatically (HOTL). \\ \hline
+ID & UC-02 \\ \hline
+Actor & Primary: Free User, Paid User (Pro) \\ \hline
+Description & The user adds a song by pasting a YouTube link or uploading an audio file. The system runs the AI analysis. When done, the chord grid and harmonic notes appear automatically (HOTL). Free users see basic chords; Paid users also see Roman numerals and scale suggestions. \\ \hline
 Preconditions &
 \begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
     \item User is logged in
-    \item YouTube URL is valid or audio file is $\leq 50\,\text{MB}$
+    \item YouTube URL is working, or audio file is $\leq 50\,\text{MB}$
+    \item Free User has not used all 10 analyses this month
 \end{itemize}
 \\ \hline
 Postconditions &
 \begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
-    \item \textbf{Success:} Smart Grid rendered with chord events, Roman numeral annotations, and scale suggestions. Song saved to user library.
-    \item \textbf{Failure:} Error message displayed; no data saved.
+    \item \textbf{Success:} The chord grid appears. Paid users also see Roman numerals and scale names. The song is saved to the user's library.
+    \item \textbf{Failure:} An error message appears. No data is saved.
 \end{itemize}
 \\ \hline
 Basic Flow &
 \begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
-    \item User enters YouTube URL or uploads audio file
-    \item System validates input and dispatches analysis job to AI Processing Service queue
-    \item AI pipeline executes: yt-dlp $\rightarrow$ Demucs $\rightarrow$ madmom $\rightarrow$ MERT inference
-    \item Job completion triggers frontend update via WebSocket notification
-    \item Frontend renders Smart Grid with chord events and Harmonic Engine annotations
-    \item Song automatically saved to user's library
+    \item User types a YouTube URL or uploads an audio file
+    \item System checks the input and sends the job to the analysis queue
+    \item The AI pipeline runs: yt-dlp $\rightarrow$ Demucs $\rightarrow$ madmom $\rightarrow$ MERT inference
+    \item When done, the system sends a notification to the browser
+    \item The page shows the Smart Grid with chords and annotations
+    \item The song is saved to the user's library
 \end{enumerate}
 \\ \hline
 Alternative Flow &
-\textbf{AF1: YouTube URL is unavailable}
+\textbf{AF1: YouTube link does not work}
 \begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
-    \item yt-dlp returns download error
-    \item System notifies user; suggests uploading audio file directly
+    \item The download fails
+    \item System tells the user and suggests uploading an audio file instead
 \end{enumerate}
 \\ \hline
 Exception Flow &
-\textbf{EF1: AI service timeout (at step 3)}
+\textbf{EF1: Analysis takes too long}
 \begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
-    \item Analysis job exceeds 60 seconds without completion
-    \item System returns timeout error; user may retry or contact support
+    \item The job runs for more than 60 seconds without finishing
+    \item System shows a timeout error; user can try again or contact support
 \end{enumerate}
 \\ \hline
-\caption{UC\_01: Import and Analyze Music}\label{tab:uc01}
+\caption{UC\_02: Import and Analyze Music}\label{tab:uc02}
 \end{longtable}
 
 \vspace{0.5em}
-\noindent\textbf{2/ UC-02: A/B Loop and Practice Tools}
+\noindent\textbf{4/ UC-03: Connect MIDI Instrument and Analyze in Real Time}
+
+\begin{longtable}{|>{\bfseries}p{\ucLeft}|p{\dimexpr\linewidth-\ucLeft-2\tabcolsep-2\arrayrulewidth}|}
+\hline
+Name & Connect MIDI Instrument and Analyze in Real Time \\ \hline
+ID & UC-03 \\ \hline
+Actor & Primary: Paid User (Pro) \\ \hline
+Description & A Paid user connects a MIDI instrument (e.g., a digital piano or MIDI keyboard) to their computer by USB or Bluetooth. The system reads the MIDI signal and shows the chord the user is playing on the Smart Grid in real time. The user does not need to record audio or send a URL. (HITL) \\ \hline
+Preconditions &
+\begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item User is logged in with a Paid (Pro) account
+    \item A MIDI device is connected and the browser can see it
+    \item User allows the browser to access the MIDI device
+\end{itemize}
+\\ \hline
+Postconditions &
+\begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item \textbf{Success:} The chord the user plays is shown on screen in less than 100\,ms. The user can save the session as a chord chart.
+    \item \textbf{Failure:} If no MIDI device is found, the system asks the user to check the cable or use the microphone instead.
+\end{itemize}
+\\ \hline
+Basic Flow &
+\begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item User goes to the MIDI Practice tab and clicks ``Connect MIDI Device''
+    \item The browser asks for permission to use the MIDI device
+    \item User allows it; the system shows a list of connected MIDI devices
+    \item User picks their instrument from the list
+    \item User plays notes or chords on the instrument
+    \item System reads the MIDI notes and works out the chord
+    \item The chord name (root, quality, extension) appears in the Smart Grid in real time
+    \item The Harmonic Engine adds the Roman numeral and a suggested scale
+    \item User can save the session as a chord chart to their library
+\end{enumerate}
+\\ \hline
+Alternative Flow &
+\textbf{AF1: MIDI device disconnects during the session}
+\begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item The system notices the MIDI device is gone
+    \item The session pauses and a reconnect message appears
+    \item User plugs the device back in and continues the session
+\end{enumerate}
+\\ \hline
+\caption{UC\_03: Connect MIDI Instrument and Analyze in Real Time}\label{tab:uc03}
+\end{longtable}
+
+\vspace{0.5em}
+\noindent\textbf{5/ UC-04: A/B Loop and Practice Tools}
 
 \begin{longtable}{|>{\bfseries}p{\ucLeft}|p{\dimexpr\linewidth-\ucLeft-2\tabcolsep-2\arrayrulewidth}|}
 \hline
 Name & A/B Loop and Practice Tools \\ \hline
-ID & UC-02 \\ \hline
-Actor & Primary: Musician / Learner \\ \hline
-Description & User selects a passage in the Smart Grid for A/B loop practice with metronome and speed shift control. \\ \hline
+ID & UC-04 \\ \hline
+Actor & Primary: Paid User (Pro) \\ \hline
+Description & A Paid user picks a section of the song in the chord grid and sets it to repeat (A/B loop). The user can also use the metronome and slow down the song without changing the pitch. This feature is not available to Free users. \\ \hline
 Preconditions &
 \begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
-    \item User is logged in
-    \item A song with a chord analysis result is loaded in the workspace
+    \item User is logged in with a Paid (Pro) account
+    \item A song with a chord analysis is open in the workspace
 \end{itemize}
 \\ \hline
 Postconditions &
 \begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
-    \item \textbf{Success:} Selected passage loops continuously at the configured speed with metronome enabled.
+    \item \textbf{Success:} The selected section repeats at the chosen speed with the metronome on.
 \end{itemize}
 \\ \hline
 Basic Flow &
 \begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
-    \item User drag-selects a range of bars in the Smart Grid
-    \item System activates A/B Loop mode with the selected range highlighted
-    \item User optionally enables the metronome (synchronized to detected song BPM)
-    \item User optionally adjusts playback speed ($0.5\times$, $0.75\times$, $1.0\times$)
-    \item Web Audio API begins looping the selected passage at the configured speed with pitch preserved
-    \item User clicks any chord in the loop to open the Chord Dictionary
+    \item User drags to select a group of bars in the Smart Grid
+    \item System turns on A/B Loop mode and highlights the selected bars
+    \item User can turn on the metronome (it follows the song's BPM)
+    \item User can change the speed ($0.5\times$, $0.75\times$, $1.0\times$)
+    \item The system loops the selected section at the chosen speed, keeping the original pitch
+    \item User can click any chord to open the Chord Dictionary
 \end{enumerate}
 \\ \hline
-\caption{UC\_02: A/B Loop and Practice Tools}\label{tab:uc02}
+\caption{UC\_04: A/B Loop and Practice Tools}\label{tab:uc04_loop}
 \end{longtable}
 
 \vspace{0.5em}
-\noindent\textbf{3/ UC-03: Edit Marker --- Override AI Chord}
+\noindent\textbf{6/ UC-05: Edit Marker --- Override AI Chord}
 
 \begin{longtable}{|>{\bfseries}p{\ucLeft}|p{\dimexpr\linewidth-\ucLeft-2\tabcolsep-2\arrayrulewidth}|}
 \hline
 Name & Edit Marker --- Override AI Chord \\ \hline
-ID & UC-03 \\ \hline
-Actor & Primary: Musician / Learner; Secondary: Music Platform Manager \\ \hline
-Description & User corrects an AI-detected chord label via the Edit Marker. The Harmonic Engine immediately recalculates Roman numeral and scale annotations for the updated chord. \\ \hline
+ID & UC-05 \\ \hline
+Actor & Primary: Free User, Paid User (Pro) \\ \hline
+Description & The user finds a wrong chord in the AI result and fixes it by clicking on that chord cell. For Paid users, the system also updates the Roman numeral and scale name right away. \\ \hline
 Preconditions &
 \begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
     \item User is logged in
-    \item A song analysis is loaded in the workspace
+    \item A song analysis is open in the workspace
 \end{itemize}
 \\ \hline
 Postconditions &
 \begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
-    \item \textbf{Success:} Chord label updated; \texttt{is\_user\_edited = true}; Harmonic Engine recalculated; change persisted to database.
+    \item \textbf{Success:} The chord is changed. For Paid users, the harmonic analysis is updated. The change is saved to the database.
 \end{itemize}
 \\ \hline
 Basic Flow &
 \begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
     \item User clicks a chord cell in the Smart Grid
-    \item System opens Edit Marker modal showing current Root, Quality, Extension
-    \item User modifies values via dropdown selectors
-    \item System validates the chord combination
-    \item System updates chord event in local state and sets \texttt{is\_user\_edited = true}
-    \item Client-Side Harmonic Engine recalculates Roman numeral and scale for the updated chord
-    \item Updated annotations displayed instantly in the Smart Grid
-    \item System persists the edit to the database asynchronously
+    \item A popup appears showing the current Root, Quality, and Extension
+    \item User chooses new values from the dropdown menus
+    \item System checks the chord is valid
+    \item System updates the chord and marks it as user-edited
+    \item For Paid users: the Harmonic Engine updates the Roman numeral and scale name
+    \item The Smart Grid shows the new chord and annotations right away
+    \item The change is saved to the database in the background
 \end{enumerate}
 \\ \hline
 Alternative Flow &
-\textbf{AF1: User resets to original AI output}
+\textbf{AF1: User goes back to the AI result}
 \begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
-    \item User clicks ``Reset to AI'' in the Edit Marker modal
-    \item System restores AI-detected chord; \texttt{is\_user\_edited} flag cleared
-    \item Harmonic Engine recalculates for the restored chord
+    \item User clicks ``Reset to AI'' in the popup
+    \item System puts the original AI chord back
+    \item For Paid users: the Harmonic Engine updates the analysis for the restored chord
 \end{enumerate}
 \\ \hline
-\caption{UC\_03: Edit Marker --- Override AI Chord}\label{tab:uc03}
+\caption{UC\_05: Edit Marker --- Override AI Chord}\label{tab:uc05}
 \end{longtable}
 
 \vspace{0.5em}
-\noindent\textbf{4/ UC-04: Real-Time Practice Mode}
+\noindent\textbf{7/ UC-06: Real-Time Practice Mode (Microphone)}
 
 \begin{longtable}{|>{\bfseries}p{\ucLeft}|p{\dimexpr\linewidth-\ucLeft-2\tabcolsep-2\arrayrulewidth}|}
 \hline
-Name & Real-Time Practice Mode \\ \hline
-ID & UC-04 \\ \hline
-Actor & Primary: Musician / Learner \\ \hline
-Description & User plays an instrument in front of a microphone. The system performs real-time chord inference and provides visual feedback comparing the live chord to the target chord at the current playback position (HITL). \\ \hline
-Basic Flow &
-\begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
-    \item User opens Real-Time Practice tab
-    \item System requests microphone access and initializes Web Audio API input stream
-    \item System begins real-time chord inference on live audio ($< 200\,\text{ms}$ latency per frame)
-    \item Smart Grid plays the song; at each beat, the target chord is highlighted
-    \item System compares recognized live chord to target chord
-    \item Correct match: cell highlighted green; incorrect: highlighted red with expected chord shown
-    \item User adjusts playing technique in response to visual feedback
-    \item At session end, accuracy summary and chord correctness log saved to user profile
-\end{enumerate}
-\\ \hline
-\caption{UC\_04: Real-Time Practice Mode}\label{tab:uc04}
-\end{longtable}
-
-\vspace{0.5em}
-\noindent\textbf{5/ UC-05: Music Platform Manager --- AI Quality Monitoring}
-
-\begin{longtable}{|>{\bfseries}p{\ucLeft}|p{\dimexpr\linewidth-\ucLeft-2\tabcolsep-2\arrayrulewidth}|}
-\hline
-Name & Music Platform Manager --- AI Quality Monitoring \\ \hline
-ID & UC-05 \\ \hline
-Actor & Primary: Music Platform Manager (Business Admin) \\ \hline
-Description & The Music Platform Manager monitors AI chord recognition quality KPIs on the Admin Dashboard and flags underperforming chord classes for model re-evaluation. \\ \hline
-Basic Flow &
-\begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
-    \item Manager navigates to Admin Dashboard $\rightarrow$ AI Quality tab
-    \item System displays: accuracy by chord class, confidence histogram, user correction rate, active model version
-    \item Manager reviews chord classes below the 75\% accuracy threshold
-    \item Manager submits a re-evaluation request for flagged classes
-    \item System notifies the Platform System Administrator via dashboard alert
-\end{enumerate}
-\\ \hline
-\caption{UC\_05: Music Platform Manager --- AI Quality Monitoring}\label{tab:uc05}
-\end{longtable}
-
-\vspace{0.5em}
-\noindent\textbf{6/ UC-06: Platform System Administrator --- Model Deployment}
-
-\begin{longtable}{|>{\bfseries}p{\ucLeft}|p{\dimexpr\linewidth-\ucLeft-2\tabcolsep-2\arrayrulewidth}|}
-\hline
-Name & Platform System Administrator --- Model Deployment \\ \hline
+Name & Real-Time Practice Mode (Microphone) \\ \hline
 ID & UC-06 \\ \hline
-Actor & Primary: Platform System Administrator (IT Admin) \\ \hline
-Description & The Platform System Administrator deploys a new LoRA adapter version and monitors system health metrics during and after rollout. \\ \hline
+Actor & Primary: Paid User (Pro) \\ \hline
+Description & A Paid user plays an instrument in front of the computer's microphone. The system listens, detects the chord being played, and shows whether it matches the target chord in the song. The user gets colour feedback after each beat. (HITL) \\ \hline
+Preconditions &
+\begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item User is logged in with a Paid (Pro) account
+    \item A song analysis is open in the workspace
+    \item User has allowed the browser to use the microphone
+\end{itemize}
+\\ \hline
 Basic Flow &
 \begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
-    \item Admin navigates to Model Registry in IT Admin Dashboard
-    \item Admin selects the new LoRA adapter version and reviews benchmark metrics
-    \item Admin initiates deployment; system performs blue-green switch
-    \item Admin monitors inference latency, error rate, and GPU utilization during rollout
-    \item If all metrics are within thresholds, deployment is confirmed as stable
+    \item User opens the Real-Time Practice tab and clicks ``Start Practice''
+    \item The browser asks for microphone permission; user allows it
+    \item System starts listening through the microphone and detects the chord (under 200\,ms)
+    \item The song plays; the target chord at each beat is highlighted in the grid
+    \item System compares the chord the user plays with the target chord
+    \item If correct: the cell turns green. If wrong: the cell turns red and shows the correct chord
+    \item User listens to the feedback and adjusts their playing
+    \item At the end of the session, the score and chord log are saved to the user's profile
+\end{enumerate}
+\\ \hline
+\caption{UC\_06: Real-Time Practice Mode (Microphone)}\label{tab:uc06}
+\end{longtable}
+
+\vspace{0.5em}
+\noindent\textbf{8/ UC-07: Manage Playlist and Library}
+
+\begin{longtable}{|>{\bfseries}p{\ucLeft}|p{\dimexpr\linewidth-\ucLeft-2\tabcolsep-2\arrayrulewidth}|}
+\hline
+Name & Manage Playlist and Library \\ \hline
+ID & UC-07 \\ \hline
+Actor & Primary: Free User, Paid User (Pro) \\ \hline
+Description & The user creates and manages personal playlists from their analyzed songs. They can add, remove, rename, or delete playlists. All data is saved to the cloud. \\ \hline
+Preconditions &
+\begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item User is logged in
+    \item At least one song has been analyzed and saved
+\end{itemize}
+\\ \hline
+Basic Flow &
+\begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item User goes to the Library tab
+    \item User clicks ``Create Playlist'' and types a name
+    \item User drags songs into the playlist
+    \item System saves the playlist and its order to the database
+    \item User can rename or delete a playlist any time
+\end{enumerate}
+\\ \hline
+\caption{UC\_07: Manage Playlist and Library}\label{tab:uc07}
+\end{longtable}
+
+\vspace{0.5em}
+\noindent\textbf{9/ UC-08: Music Platform Manager --- Monitor AI Quality}
+
+\begin{longtable}{|>{\bfseries}p{\ucLeft}|p{\dimexpr\linewidth-\ucLeft-2\tabcolsep-2\arrayrulewidth}|}
+\hline
+Name & Music Platform Manager --- Monitor AI Quality \\ \hline
+ID & UC-08 \\ \hline
+Actor & Primary: Music Platform Manager (Business Admin) \\ \hline
+Description & The Manager checks the AI quality report on the Admin Dashboard. They can see which chord types the AI gets wrong most often. If a chord type is too inaccurate, they mark it for retraining. \\ \hline
+Preconditions &
+\begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item Manager is logged in with the Platform Manager role
+\end{itemize}
+\\ \hline
+Basic Flow &
+\begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item Manager goes to Admin Dashboard $\rightarrow$ AI Quality tab
+    \item System shows: accuracy per chord type, confidence scores, user correction rate, current model version
+    \item Manager looks at chord types with accuracy below 75\%
+    \item Manager clicks ``Flag for Re-evaluation'' on those chord types
+    \item System sends a notification to the IT Admin to retrain the model
+\end{enumerate}
+\\ \hline
+\caption{UC\_08: Music Platform Manager --- Monitor AI Quality}\label{tab:uc08}
+\end{longtable}
+
+\vspace{0.5em}
+\noindent\textbf{10/ UC-09: IT Admin --- Deploy or Roll Back AI Model}
+
+\begin{longtable}{|>{\bfseries}p{\ucLeft}|p{\dimexpr\linewidth-\ucLeft-2\tabcolsep-2\arrayrulewidth}|}
+\hline
+Name & IT Admin --- Deploy or Roll Back AI Model \\ \hline
+ID & UC-09 \\ \hline
+Actor & Primary: Platform System Administrator (IT Admin) \\ \hline
+Description & The IT Admin logs in and picks a new AI model version from the Model Registry. They start the update safely. If something goes wrong, they can switch back to the old model right away. \\ \hline
+Preconditions &
+\begin{itemize}[leftmargin=1em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item Admin is logged in with the IT Admin role
+    \item A new model version has been uploaded to the Model Registry
+\end{itemize}
+\\ \hline
+Basic Flow &
+\begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
+    \item Admin goes to Model Registry in the IT Admin Dashboard
+    \item Admin picks the new model version and checks its accuracy scores
+    \item Admin clicks ``Deploy''; system switches to the new model safely
+    \item Admin watches the speed, error rate, and GPU usage in the dashboard
+    \item If everything looks good, admin marks the update as stable
 \end{enumerate}
 \\ \hline
 Alternative Flow &
-\textbf{AF1: Performance regression detected}
+\textbf{AF1: The new model causes errors}
 \begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
-    \item Inference error rate exceeds threshold during rollout
-    \item Admin triggers rollback to previous adapter version
-    \item System logs deployment failure with full diagnostic report
+    \item The error rate goes above the limit during the update
+    \item Admin clicks ``Rollback'' in the dashboard
+    \item System goes back to the old model and saves an error report
 \end{enumerate}
 \\ \hline
-\caption{UC\_06: Platform System Administrator --- Model Deployment}\label{tab:uc06}
+\caption{UC\_09: IT Admin --- Deploy or Roll Back AI Model}\label{tab:uc09}
 \end{longtable}
 
 \subsection{Technology Solution}
