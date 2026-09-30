@@ -1,4 +1,4 @@
-﻿# Node / React
+# Node / React
 node_modules/
 dist/
 .vite/
@@ -45,7 +45,5 @@ Thumbs.db
 .env.production
 *.key
 
-latex_last_project
-
-#build diagram
-build_diagram/
+# latex_last_project/
+# build_diagram/
