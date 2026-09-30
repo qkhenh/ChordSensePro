@@ -1,0 +1,72 @@
+@startuml
+autonumber
+hide footbox
+skinparam sequence {
+    ParticipantBackgroundColor #FF6B6B
+    ParticipantBorderColor #C92A2A
+    ParticipantFontColor white
+    ParticipantFontSize 13
+    LifeLineBorderColor #FA5252
+    LifeLineBackgroundColor #8CE99A
+    ArrowColor #2B2D42
+    ArrowFontColor #10002B
+    ActorBorderColor #2B2D42
+    ActorBackgroundColor #EDF2F4
+    GroupBorderColor #C92A2A
+    GroupHeaderFontColor #C92A2A
+}
+
+actor Musician as "Musician"
+participant UI as "Workspace UI"
+participant Audio as "Web Audio Player"
+participant Engine as "Client Harmonic Engine"
+participant Server as "Backend System"
+database DB as "Database"
+
+Musician -> UI : Click Play button
+activate UI
+UI -> Audio : Start audio playback at current time
+activate Audio
+Audio --> UI : Return playback timestamp in milliseconds
+deactivate Audio
+UI -> UI : Highlight active bar on Smart Grid (< 100ms sync)
+deactivate UI
+
+Musician -> UI : Click chord cell to edit (Open Edit Marker)
+activate UI
+UI -> Musician : Display Edit Marker modal dialog
+deactivate UI
+
+Musician -> UI : Submit corrected chord (e.g. Root = C, Quality = maj9)
+activate UI
+UI -> Engine : Recalculate harmonic context (Chord = Cmaj9, Key = G)
+activate Engine
+
+alt Invalid Chord Form
+    Engine --> UI : Return syntax validation error
+    UI --> Musician : Display "Invalid Chord Format" warning message
+else Valid Chord Form
+    Engine --> UI : Return Roman degree (IVmaj9) and scale mode (C Lydian)
+    deactivate Engine
+    UI -> UI : Update Smart Grid display instantly (Zero Latency)
+
+    Musician -> UI : Click "Save to Playlist"
+    UI -> Server : Send update request with modified chord events
+    activate Server
+    Server -> DB : Update song chart timeline (PostgreSQL JSONB)
+    activate DB
+
+    alt Valid Save and Update
+        DB --> Server : Return database confirmation (200 OK)
+        Server --> UI : Confirm chart successfully persisted
+        UI --> Musician : Display "Custom Chart Saved" toast notification
+    else Failed Save
+        DB --> Server : Return database error (500 Error)
+        deactivate DB
+        Server --> UI : Return internal server error response
+        deactivate Server
+        UI --> Musician : Display error alert and save chart to LocalStorage
+    end
+end
+deactivate UI
+@enduml

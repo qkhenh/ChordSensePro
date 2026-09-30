@@ -1,0 +1,77 @@
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+skinparam actor {
+    BorderColor #E03131
+    BackgroundColor #FFE3E3
+    FontColor #212529
+    FontSize 13
+}
+skinparam usecase {
+    BackgroundColor #0CA678
+    BorderColor #087F5B
+    FontColor #FFFFFF
+    FontSize 11
+}
+skinparam rectangle {
+    BackgroundColor #F8F9FA
+    BorderColor #ADB5BD
+    FontColor #212529
+}
+skinparam package {
+    BackgroundColor #FFFFFF
+    BorderColor #CED4DA
+    FontColor #495057
+    FontSize 13
+}
+skinparam arrow {
+    Color #868E96
+    FontColor #495057
+}
+
+' -- Left Actors --
+actor "Guest" as Guest
+actor "Free User" as FreeUser
+actor "Paid User (Pro)" as PaidUser
+actor "Expert\n(Music Theory Advisor)" as Expert
+actor "Music Platform Manager\n(Business Admin)" as Manager
+actor "System Administrator\n(IT Admin)" as ITAdmin
+
+rectangle "ChordSense Pro System" {
+    usecase "UC-00: Register" as UC00
+    usecase "UC-01: Login" as UC01
+    usecase "UC-02: Import and\nAnalyze Music" as UC02
+    usecase "UC-03: Connect MIDI\nInstrument (HITL)" as UC03
+    usecase "UC-04: A/B Loop and\nPractice Tools" as UC04
+    usecase "UC-05: Edit Marker\n(Override AI Chord)" as UC05
+    usecase "UC-06: Real-Time Practice\nMode / Microphone (HITL)" as UC06
+    usecase "UC-07: Manage Playlist\nand Library" as UC07
+    usecase "UC-08: Monitor\nAI Quality" as UC08
+    usecase "UC-09: Deploy / Roll Back\nAI Model" as UC09
+}
+
+' -- Actor Connections --
+Guest --> UC00
+
+FreeUser --> UC01
+FreeUser --> UC02
+FreeUser --> UC05
+FreeUser --> UC07
+
+PaidUser --> UC01
+PaidUser --> UC02
+PaidUser --> UC03
+PaidUser --> UC04
+PaidUser --> UC05
+PaidUser --> UC06
+PaidUser --> UC07
+
+Expert --> UC01
+
+Manager --> UC01
+Manager --> UC08
+
+ITAdmin --> UC01
+ITAdmin --> UC09
+
+@enduml
