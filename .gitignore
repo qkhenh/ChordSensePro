@@ -38,6 +38,7 @@ outputs/
 Thumbs.db
 .idea/
 *.swp
+.codegraph/
 
 # Env
 .env
