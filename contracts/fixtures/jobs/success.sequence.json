@@ -1,0 +1,50 @@
+[
+  {
+    "job_id": "5ae8d1b8-ce75-5e37-b3fd-0e987715e3f1",
+    "state": "queued",
+    "stage": null,
+    "progress": 0.0,
+    "error": null,
+    "result_chart_id": null
+  },
+  {
+    "job_id": "5ae8d1b8-ce75-5e37-b3fd-0e987715e3f1",
+    "state": "processing",
+    "stage": "normalizing",
+    "progress": 0.15,
+    "error": null,
+    "result_chart_id": null
+  },
+  {
+    "job_id": "5ae8d1b8-ce75-5e37-b3fd-0e987715e3f1",
+    "state": "processing",
+    "stage": "separating",
+    "progress": 0.45,
+    "error": null,
+    "result_chart_id": null
+  },
+  {
+    "job_id": "5ae8d1b8-ce75-5e37-b3fd-0e987715e3f1",
+    "state": "processing",
+    "stage": "beat_tracking",
+    "progress": 0.7,
+    "error": null,
+    "result_chart_id": null
+  },
+  {
+    "job_id": "5ae8d1b8-ce75-5e37-b3fd-0e987715e3f1",
+    "state": "processing",
+    "stage": "recognizing",
+    "progress": 0.9,
+    "error": null,
+    "result_chart_id": null
+  },
+  {
+    "job_id": "5ae8d1b8-ce75-5e37-b3fd-0e987715e3f1",
+    "state": "done",
+    "stage": null,
+    "progress": 1.0,
+    "error": null,
+    "result_chart_id": "706f84e6-6780-544c-b3d4-81fe49f6a288"
+  }
+]

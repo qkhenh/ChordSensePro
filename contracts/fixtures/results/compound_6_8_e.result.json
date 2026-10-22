@@ -1,0 +1,100 @@
+{
+  "schema_version": "1.0",
+  "job_id": "74f9cbe1-ed5b-51ab-a46f-fe1ee4b4bfc3",
+  "content_hash": "e79ac40ec1805db595c0ce9cdae9b5dc0e72841c2c1b1513bfc2e89be159eaf3",
+  "metadata": {
+    "duration_ms": 9000,
+    "key": {
+      "tonic": "E",
+      "mode": "minor",
+      "confidence": 0.9
+    },
+    "beat_grid": {
+      "tempo_bpm": 60.0,
+      "tempo_confidence": 0.92,
+      "time_signature": {
+        "numerator": 6,
+        "denominator": 8
+      },
+      "beats_per_bar": 2,
+      "first_beat_offset_ms": 0,
+      "downbeats_ms": null
+    },
+    "model_version": "fixture-model-0.1",
+    "pipeline_version": "fixture-pipeline-0.1"
+  },
+  "chord_events": [
+    {
+      "event_id": "e0001",
+      "start_ms": 0,
+      "end_ms": 2000,
+      "chord": {
+        "root": "E",
+        "quality": "minor",
+        "extension": "none",
+        "bass": null
+      },
+      "symbol": "Em",
+      "confidence": {
+        "root": 0.96,
+        "quality": 0.92,
+        "extension": 0.88
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0002",
+      "start_ms": 2000,
+      "end_ms": 4000,
+      "chord": {
+        "root": "C",
+        "quality": "major",
+        "extension": "none",
+        "bass": null
+      },
+      "symbol": "C",
+      "confidence": {
+        "root": 0.94,
+        "quality": 0.89,
+        "extension": 0.84
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0003",
+      "start_ms": 4000,
+      "end_ms": 6000,
+      "chord": {
+        "root": "G",
+        "quality": "major",
+        "extension": "none",
+        "bass": null
+      },
+      "symbol": "G",
+      "confidence": {
+        "root": 0.92,
+        "quality": 0.86,
+        "extension": 0.8
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0004",
+      "start_ms": 6000,
+      "end_ms": 8000,
+      "chord": {
+        "root": "D",
+        "quality": "major",
+        "extension": "none",
+        "bass": null
+      },
+      "symbol": "D",
+      "confidence": {
+        "root": 0.9,
+        "quality": 0.92,
+        "extension": 0.76
+      },
+      "is_user_edited": false
+    }
+  ]
+}

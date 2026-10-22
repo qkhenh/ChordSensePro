@@ -1,0 +1,821 @@
+{
+  "components": {
+    "schemas": {
+      "AnalysisMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "beat_grid": {
+            "$ref": "#/components/schemas/BeatGrid"
+          },
+          "duration_ms": {
+            "exclusiveMinimum": 0,
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "key": {
+            "$ref": "#/components/schemas/KeyEstimate"
+          },
+          "model_version": {
+            "minLength": 1,
+            "title": "Model Version",
+            "type": "string"
+          },
+          "pipeline_version": {
+            "minLength": 1,
+            "title": "Pipeline Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "duration_ms",
+          "key",
+          "beat_grid",
+          "model_version",
+          "pipeline_version"
+        ],
+        "title": "AnalysisMetadata",
+        "type": "object"
+      },
+      "AnalysisOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "key_hint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KeyHint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Model Version"
+          }
+        },
+        "title": "AnalysisOptions",
+        "type": "object"
+      },
+      "AnalysisRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "audio_path": {
+            "minLength": 1,
+            "title": "Audio Path",
+            "type": "string"
+          },
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "options": {
+            "$ref": "#/components/schemas/AnalysisOptions",
+            "default": {
+              "key_hint": null,
+              "model_version": null
+            }
+          },
+          "schema_version": {
+            "const": "1.0",
+            "default": "1.0",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "source_kind": {
+            "$ref": "#/components/schemas/SourceKind"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Url"
+          }
+        },
+        "required": [
+          "job_id",
+          "content_hash",
+          "source_kind",
+          "audio_path"
+        ],
+        "title": "AnalysisRequest",
+        "type": "object"
+      },
+      "AnalysisResult": {
+        "additionalProperties": false,
+        "properties": {
+          "chord_events": {
+            "items": {
+              "$ref": "#/components/schemas/ChordEvent"
+            },
+            "title": "Chord Events",
+            "type": "array"
+          },
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/AnalysisMetadata"
+          },
+          "schema_version": {
+            "const": "1.0",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "job_id",
+          "content_hash",
+          "metadata",
+          "chord_events"
+        ],
+        "title": "AnalysisResult",
+        "type": "object"
+      },
+      "BeatGrid": {
+        "additionalProperties": false,
+        "description": "``tempo_bpm`` counts the tracker's beats; ``beats_per_bar`` says how many per bar\n(6/8 tracked in dotted quarters has 2). ``downbeats_ms``, when present, overrides\nany grid interpolated from tempo (irregular tempo).",
+        "properties": {
+          "beats_per_bar": {
+            "maximum": 12,
+            "minimum": 1,
+            "title": "Beats Per Bar",
+            "type": "integer"
+          },
+          "downbeats_ms": {
+            "anyOf": [
+              {
+                "items": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Downbeats Ms"
+          },
+          "first_beat_offset_ms": {
+            "minimum": 0,
+            "title": "First Beat Offset Ms",
+            "type": "integer"
+          },
+          "tempo_bpm": {
+            "exclusiveMinimum": 0,
+            "maximum": 400,
+            "title": "Tempo Bpm",
+            "type": "number"
+          },
+          "tempo_confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Tempo Confidence",
+            "type": "number"
+          },
+          "time_signature": {
+            "$ref": "#/components/schemas/TimeSignature"
+          }
+        },
+        "required": [
+          "tempo_bpm",
+          "tempo_confidence",
+          "time_signature",
+          "beats_per_bar",
+          "first_beat_offset_ms"
+        ],
+        "title": "BeatGrid",
+        "type": "object"
+      },
+      "Chart": {
+        "additionalProperties": false,
+        "properties": {
+          "ai_events": {
+            "items": {
+              "$ref": "#/components/schemas/ChordEvent"
+            },
+            "title": "Ai Events",
+            "type": "array"
+          },
+          "artist": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artist"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "forked_from": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Forked From"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_customized": {
+            "default": false,
+            "title": "Is Customized",
+            "type": "boolean"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/AnalysisMetadata"
+          },
+          "overrides": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventOverride"
+            },
+            "title": "Overrides",
+            "type": "array"
+          },
+          "owner_id": {
+            "format": "uuid",
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ChartSource"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "owner_id",
+          "title",
+          "source",
+          "metadata",
+          "ai_events",
+          "version",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "Chart",
+        "type": "object"
+      },
+      "ChartSource": {
+        "additionalProperties": false,
+        "properties": {
+          "content_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SourceKind"
+          },
+          "playback": {
+            "$ref": "#/components/schemas/PlaybackSource"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Url"
+          }
+        },
+        "required": [
+          "kind",
+          "content_hash",
+          "playback"
+        ],
+        "title": "ChartSource",
+        "type": "object"
+      },
+      "ChordEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "chord": {
+            "$ref": "#/components/schemas/ChordLabelDTO"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Confidence"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "end_ms": {
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "event_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,32}$",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "is_user_edited": {
+            "default": false,
+            "title": "Is User Edited",
+            "type": "boolean"
+          },
+          "start_ms": {
+            "minimum": 0,
+            "title": "Start Ms",
+            "type": "integer"
+          },
+          "symbol": {
+            "title": "Symbol",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "start_ms",
+          "end_ms",
+          "chord",
+          "symbol"
+        ],
+        "title": "ChordEvent",
+        "type": "object"
+      },
+      "ChordExtension": {
+        "description": "15 extension classes — following Chordie.com naming convention.",
+        "enum": [
+          "none",
+          "b5",
+          "#5",
+          "maj7",
+          "min7",
+          "dom7",
+          "add9",
+          "b9",
+          "nat9",
+          "#9",
+          "nat11",
+          "#11",
+          "nat13",
+          "b13",
+          "alt"
+        ],
+        "title": "ChordExtension",
+        "type": "string"
+      },
+      "ChordLabelDTO": {
+        "additionalProperties": false,
+        "properties": {
+          "bass": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RootNote"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "extension": {
+            "$ref": "#/components/schemas/ChordExtension",
+            "default": "none"
+          },
+          "quality": {
+            "$ref": "#/components/schemas/ChordQuality"
+          },
+          "root": {
+            "$ref": "#/components/schemas/RootNote"
+          }
+        },
+        "required": [
+          "root",
+          "quality"
+        ],
+        "title": "ChordLabelDTO",
+        "type": "object"
+      },
+      "ChordQuality": {
+        "description": "5 chord qualities — 'aug' excluded, mapped to major + sharp5.",
+        "enum": [
+          "major",
+          "minor",
+          "dominant",
+          "diminished",
+          "suspended"
+        ],
+        "title": "ChordQuality",
+        "type": "string"
+      },
+      "Confidence": {
+        "additionalProperties": false,
+        "properties": {
+          "extension": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Extension",
+            "type": "number"
+          },
+          "quality": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Quality",
+            "type": "number"
+          },
+          "root": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Root",
+            "type": "number"
+          }
+        },
+        "required": [
+          "root",
+          "quality",
+          "extension"
+        ],
+        "title": "Confidence",
+        "type": "object"
+      },
+      "ErrorCode": {
+        "enum": [
+          "unsupported_format",
+          "file_too_large",
+          "duration_too_long",
+          "url_unresolvable",
+          "ssrf_blocked",
+          "quota_exceeded",
+          "analysis_timeout",
+          "ai_failure"
+        ],
+        "title": "ErrorCode",
+        "type": "string"
+      },
+      "EventOverride": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChordEvent"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "event_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,32}$",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "op": {
+            "$ref": "#/components/schemas/OverrideOp"
+          }
+        },
+        "required": [
+          "event_id",
+          "op"
+        ],
+        "title": "EventOverride",
+        "type": "object"
+      },
+      "JobError": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "JobError",
+        "type": "object"
+      },
+      "JobProgress": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobError"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "progress": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Progress",
+            "type": "number"
+          },
+          "result_chart_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Result Chart Id"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobStage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState"
+          }
+        },
+        "required": [
+          "job_id",
+          "state",
+          "progress"
+        ],
+        "title": "JobProgress",
+        "type": "object"
+      },
+      "JobStage": {
+        "enum": [
+          "fetching",
+          "normalizing",
+          "separating",
+          "beat_tracking",
+          "recognizing"
+        ],
+        "title": "JobStage",
+        "type": "string"
+      },
+      "JobState": {
+        "enum": [
+          "queued",
+          "processing",
+          "done",
+          "failed"
+        ],
+        "title": "JobState",
+        "type": "string"
+      },
+      "KeyEstimate": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "mode": {
+            "enum": [
+              "major",
+              "minor"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "tonic": {
+            "$ref": "#/components/schemas/RootNote"
+          }
+        },
+        "required": [
+          "tonic",
+          "mode",
+          "confidence"
+        ],
+        "title": "KeyEstimate",
+        "type": "object"
+      },
+      "KeyHint": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "enum": [
+              "major",
+              "minor"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "tonic": {
+            "$ref": "#/components/schemas/RootNote"
+          }
+        },
+        "required": [
+          "tonic",
+          "mode"
+        ],
+        "title": "KeyHint",
+        "type": "object"
+      },
+      "OverrideOp": {
+        "enum": [
+          "set",
+          "delete",
+          "insert"
+        ],
+        "title": "OverrideOp",
+        "type": "string"
+      },
+      "PlaybackSource": {
+        "additionalProperties": false,
+        "description": "How the client plays the audio. YouTube/SoundCloud are embedded players: the\nserver keeps no audio for them.",
+        "properties": {
+          "audio_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Audio Url"
+          },
+          "embed_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Embed Id"
+          },
+          "kind": {
+            "enum": [
+              "file",
+              "youtube",
+              "soundcloud",
+              "direct"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "PlaybackSource",
+        "type": "object"
+      },
+      "RootNote": {
+        "description": "12 chromatic pitch classes — sharps as canonical form.\n\nEnharmonic disambiguation (Db vs C#) is handled at the\npost-processing layer after key detection, not here.",
+        "enum": [
+          "C",
+          "C#",
+          "D",
+          "D#",
+          "E",
+          "F",
+          "F#",
+          "G",
+          "G#",
+          "A",
+          "A#",
+          "B"
+        ],
+        "title": "RootNote",
+        "type": "string"
+      },
+      "SourceKind": {
+        "enum": [
+          "file",
+          "url",
+          "recording",
+          "demo"
+        ],
+        "title": "SourceKind",
+        "type": "string"
+      },
+      "TimeSignature": {
+        "additionalProperties": false,
+        "properties": {
+          "denominator": {
+            "enum": [
+              2,
+              4,
+              8,
+              16
+            ],
+            "title": "Denominator",
+            "type": "integer"
+          },
+          "numerator": {
+            "maximum": 32,
+            "minimum": 1,
+            "title": "Numerator",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "numerator",
+          "denominator"
+        ],
+        "title": "TimeSignature",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "ChordSense Pro analysis contract",
+    "version": "1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {}
+}

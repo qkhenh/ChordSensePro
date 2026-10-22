@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "job_id": "16435e5b-822a-5f44-b6d8-fd5af3d905e5",
+  "content_hash": "bf48c7d3baa8dc208a0c037670ce9aef644f80c90579b472562d0fb0b0c64358",
+  "source_kind": "url",
+  "audio_path": "/data/tmp/fixtures/autumn_leaves_gm.wav",
+  "source_url": "https://www.youtube.com/watch?v=FIXTURE0001",
+  "options": {
+    "key_hint": {
+      "tonic": "G",
+      "mode": "minor"
+    },
+    "model_version": null
+  }
+}

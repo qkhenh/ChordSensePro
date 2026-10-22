@@ -1,0 +1,143 @@
+{
+  "schema_version": "1.0",
+  "job_id": "8929b1d2-741b-56f0-b89d-7713cbe1f081",
+  "content_hash": "d519c2963e91f90ad73aa24e586a38a45281233c2725f5ba705452b04e127c8d",
+  "metadata": {
+    "duration_ms": 16000,
+    "key": {
+      "tonic": "C",
+      "mode": "major",
+      "confidence": 0.9
+    },
+    "beat_grid": {
+      "tempo_bpm": 100.0,
+      "tempo_confidence": 0.92,
+      "time_signature": {
+        "numerator": 4,
+        "denominator": 4
+      },
+      "beats_per_bar": 4,
+      "first_beat_offset_ms": 0,
+      "downbeats_ms": [
+        0,
+        2450,
+        4850,
+        7400,
+        9800,
+        12400
+      ]
+    },
+    "model_version": "fixture-model-0.1",
+    "pipeline_version": "fixture-pipeline-0.1"
+  },
+  "chord_events": [
+    {
+      "event_id": "e0001",
+      "start_ms": 0,
+      "end_ms": 2450,
+      "chord": {
+        "root": "C",
+        "quality": "major",
+        "extension": "none",
+        "bass": null
+      },
+      "symbol": "C",
+      "confidence": {
+        "root": 0.96,
+        "quality": 0.92,
+        "extension": 0.88
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0002",
+      "start_ms": 2450,
+      "end_ms": 4850,
+      "chord": {
+        "root": "A",
+        "quality": "minor",
+        "extension": "min7",
+        "bass": null
+      },
+      "symbol": "Am7",
+      "confidence": {
+        "root": 0.94,
+        "quality": 0.89,
+        "extension": 0.84
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0003",
+      "start_ms": 4850,
+      "end_ms": 7400,
+      "chord": {
+        "root": "D",
+        "quality": "minor",
+        "extension": "min7",
+        "bass": null
+      },
+      "symbol": "Dm7",
+      "confidence": {
+        "root": 0.92,
+        "quality": 0.86,
+        "extension": 0.8
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0004",
+      "start_ms": 7400,
+      "end_ms": 9800,
+      "chord": {
+        "root": "G",
+        "quality": "dominant",
+        "extension": "dom7",
+        "bass": null
+      },
+      "symbol": "G7",
+      "confidence": {
+        "root": 0.9,
+        "quality": 0.92,
+        "extension": 0.76
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0005",
+      "start_ms": 9800,
+      "end_ms": 12400,
+      "chord": {
+        "root": "C",
+        "quality": "major",
+        "extension": "none",
+        "bass": null
+      },
+      "symbol": "C",
+      "confidence": {
+        "root": 0.96,
+        "quality": 0.89,
+        "extension": 0.72
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0006",
+      "start_ms": 12400,
+      "end_ms": 15000,
+      "chord": {
+        "root": "C",
+        "quality": "major",
+        "extension": "maj7",
+        "bass": null
+      },
+      "symbol": "Cmaj7",
+      "confidence": {
+        "root": 0.94,
+        "quality": 0.86,
+        "extension": 0.88
+      },
+      "is_user_edited": false
+    }
+  ]
+}

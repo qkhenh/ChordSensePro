@@ -1,0 +1,100 @@
+{
+  "schema_version": "1.0",
+  "job_id": "5ae8d1b8-ce75-5e37-b3fd-0e987715e3f1",
+  "content_hash": "4f587df486966696f0ec26d8fcb2f48767d12ec7295219e01ef19d352ade8e97",
+  "metadata": {
+    "duration_ms": 9000,
+    "key": {
+      "tonic": "C",
+      "mode": "major",
+      "confidence": 0.9
+    },
+    "beat_grid": {
+      "tempo_bpm": 120.0,
+      "tempo_confidence": 0.92,
+      "time_signature": {
+        "numerator": 4,
+        "denominator": 4
+      },
+      "beats_per_bar": 4,
+      "first_beat_offset_ms": 0,
+      "downbeats_ms": null
+    },
+    "model_version": "fixture-model-0.1",
+    "pipeline_version": "fixture-pipeline-0.1"
+  },
+  "chord_events": [
+    {
+      "event_id": "e0001",
+      "start_ms": 0,
+      "end_ms": 2000,
+      "chord": {
+        "root": "D",
+        "quality": "minor",
+        "extension": "min7",
+        "bass": null
+      },
+      "symbol": "Dm7",
+      "confidence": {
+        "root": 0.96,
+        "quality": 0.92,
+        "extension": 0.88
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0002",
+      "start_ms": 2000,
+      "end_ms": 4000,
+      "chord": {
+        "root": "G",
+        "quality": "dominant",
+        "extension": "dom7",
+        "bass": null
+      },
+      "symbol": "G7",
+      "confidence": {
+        "root": 0.94,
+        "quality": 0.89,
+        "extension": 0.84
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0003",
+      "start_ms": 4000,
+      "end_ms": 6000,
+      "chord": {
+        "root": "C",
+        "quality": "major",
+        "extension": "maj7",
+        "bass": null
+      },
+      "symbol": "Cmaj7",
+      "confidence": {
+        "root": 0.92,
+        "quality": 0.86,
+        "extension": 0.8
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0004",
+      "start_ms": 6000,
+      "end_ms": 8000,
+      "chord": {
+        "root": "C",
+        "quality": "major",
+        "extension": "maj7",
+        "bass": null
+      },
+      "symbol": "Cmaj7",
+      "confidence": {
+        "root": 0.9,
+        "quality": 0.92,
+        "extension": 0.76
+      },
+      "is_user_edited": false
+    }
+  ]
+}

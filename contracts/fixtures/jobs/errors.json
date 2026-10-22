@@ -1,0 +1,98 @@
+{
+  "unsupported_format": {
+    "job_id": "dab4ab76-b239-588b-ac99-85af9de3b1ce",
+    "state": "failed",
+    "stage": "normalizing",
+    "progress": 0.35,
+    "error": {
+      "code": "unsupported_format",
+      "message": "The file is not a supported or readable audio format.",
+      "retryable": false
+    },
+    "result_chart_id": null
+  },
+  "file_too_large": {
+    "job_id": "c98be640-63ae-565e-8642-06c756d9e91b",
+    "state": "failed",
+    "stage": "normalizing",
+    "progress": 0.35,
+    "error": {
+      "code": "file_too_large",
+      "message": "The file is larger than the 100 MB limit.",
+      "retryable": false
+    },
+    "result_chart_id": null
+  },
+  "duration_too_long": {
+    "job_id": "04fd3a88-8612-5507-97bc-1630efe4197c",
+    "state": "failed",
+    "stage": "normalizing",
+    "progress": 0.35,
+    "error": {
+      "code": "duration_too_long",
+      "message": "The audio is longer than the 10 minute limit.",
+      "retryable": false
+    },
+    "result_chart_id": null
+  },
+  "url_unresolvable": {
+    "job_id": "e26ad8c5-74de-5fa8-8dff-b51a1ab804d2",
+    "state": "failed",
+    "stage": "fetching",
+    "progress": 0.35,
+    "error": {
+      "code": "url_unresolvable",
+      "message": "The link could not be resolved. Try uploading the file instead.",
+      "retryable": false
+    },
+    "result_chart_id": null
+  },
+  "ssrf_blocked": {
+    "job_id": "93a5ea88-fecb-5171-9a74-fcae919ecbdd",
+    "state": "failed",
+    "stage": "fetching",
+    "progress": 0.35,
+    "error": {
+      "code": "ssrf_blocked",
+      "message": "This address is not allowed.",
+      "retryable": false
+    },
+    "result_chart_id": null
+  },
+  "quota_exceeded": {
+    "job_id": "39af9627-0a61-5711-99bd-2936f09d43a3",
+    "state": "failed",
+    "stage": null,
+    "progress": 0.35,
+    "error": {
+      "code": "quota_exceeded",
+      "message": "Daily analysis quota used up.",
+      "retryable": false
+    },
+    "result_chart_id": null
+  },
+  "analysis_timeout": {
+    "job_id": "de0fc874-e3f3-529a-9e6b-2873d73fab61",
+    "state": "failed",
+    "stage": "recognizing",
+    "progress": 0.35,
+    "error": {
+      "code": "analysis_timeout",
+      "message": "The analysis took too long and was cancelled.",
+      "retryable": true
+    },
+    "result_chart_id": null
+  },
+  "ai_failure": {
+    "job_id": "7001c7f1-25e3-5afc-bdf5-6f388877b316",
+    "state": "failed",
+    "stage": "recognizing",
+    "progress": 0.35,
+    "error": {
+      "code": "ai_failure",
+      "message": "The chord recognition service failed.",
+      "retryable": true
+    },
+    "result_chart_id": null
+  }
+}

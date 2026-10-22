@@ -144,8 +144,9 @@ class ChordEvent(ContractModel):
     confidence: Confidence | None
 class TimeSignature(ContractModel): numerator: int; denominator: int
 class BeatGrid(ContractModel):
-    tempo_bpm: float; tempo_confidence: float
+    tempo_bpm: float; tempo_confidence: float   # tempo đếm theo beat của tracker
     time_signature: TimeSignature; first_beat_offset_ms: int
+    beats_per_bar: int                       # 6/8 theo dõi nốt chấm ⇒ 2 (thêm ở task 1.1)
     downbeats_ms: list[int] | None = None    # nếu có thì ưu tiên hơn nội suy từ tempo
 class KeyEstimate(ContractModel): tonic: RootNote; mode: Literal["major","minor"]; confidence: float
 class AnalysisMetadata(ContractModel):

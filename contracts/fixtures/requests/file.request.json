@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "job_id": "5ae8d1b8-ce75-5e37-b3fd-0e987715e3f1",
+  "content_hash": "4f587df486966696f0ec26d8fcb2f48767d12ec7295219e01ef19d352ade8e97",
+  "source_kind": "file",
+  "audio_path": "/data/tmp/fixtures/ii_v_i_c.wav",
+  "source_url": null,
+  "options": {
+    "key_hint": null,
+    "model_version": null
+  }
+}

@@ -1,0 +1,189 @@
+{
+  "id": "3ad3d15f-8154-5ed9-81c6-ede3cb25fdb1",
+  "owner_id": "4c8ec0ad-911e-5a6c-83a9-d89ed38a059a",
+  "title": "Autumn Leaves (fixture)",
+  "artist": "Public domain",
+  "source": {
+    "kind": "url",
+    "url": "https://www.youtube.com/watch?v=FIXTURE0001",
+    "content_hash": "bf48c7d3baa8dc208a0c037670ce9aef644f80c90579b472562d0fb0b0c64358",
+    "playback": {
+      "kind": "youtube",
+      "audio_url": null,
+      "embed_id": "FIXTURE0001"
+    }
+  },
+  "metadata": {
+    "duration_ms": 18935,
+    "key": {
+      "tonic": "G",
+      "mode": "minor",
+      "confidence": 0.9
+    },
+    "beat_grid": {
+      "tempo_bpm": 110.0,
+      "tempo_confidence": 0.92,
+      "time_signature": {
+        "numerator": 4,
+        "denominator": 4
+      },
+      "beats_per_bar": 4,
+      "first_beat_offset_ms": 480,
+      "downbeats_ms": null
+    },
+    "model_version": "fixture-model-0.1",
+    "pipeline_version": "fixture-pipeline-0.1"
+  },
+  "ai_events": [
+    {
+      "event_id": "e0001",
+      "start_ms": 480,
+      "end_ms": 2662,
+      "chord": {
+        "root": "C",
+        "quality": "minor",
+        "extension": "min7",
+        "bass": null
+      },
+      "symbol": "Cm7",
+      "confidence": {
+        "root": 0.96,
+        "quality": 0.92,
+        "extension": 0.88
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0002",
+      "start_ms": 2662,
+      "end_ms": 4844,
+      "chord": {
+        "root": "F",
+        "quality": "dominant",
+        "extension": "dom7",
+        "bass": null
+      },
+      "symbol": "F7",
+      "confidence": {
+        "root": 0.94,
+        "quality": 0.89,
+        "extension": 0.84
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0003",
+      "start_ms": 4844,
+      "end_ms": 7025,
+      "chord": {
+        "root": "A#",
+        "quality": "major",
+        "extension": "maj7",
+        "bass": null
+      },
+      "symbol": "A#maj7",
+      "confidence": {
+        "root": 0.92,
+        "quality": 0.86,
+        "extension": 0.8
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0004",
+      "start_ms": 7025,
+      "end_ms": 9207,
+      "chord": {
+        "root": "D#",
+        "quality": "major",
+        "extension": "maj7",
+        "bass": null
+      },
+      "symbol": "D#maj7",
+      "confidence": {
+        "root": 0.9,
+        "quality": 0.92,
+        "extension": 0.76
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0005",
+      "start_ms": 9207,
+      "end_ms": 11389,
+      "chord": {
+        "root": "A",
+        "quality": "diminished",
+        "extension": "min7",
+        "bass": null
+      },
+      "symbol": "Am7b5",
+      "confidence": {
+        "root": 0.96,
+        "quality": 0.89,
+        "extension": 0.72
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0006",
+      "start_ms": 11389,
+      "end_ms": 13571,
+      "chord": {
+        "root": "D",
+        "quality": "dominant",
+        "extension": "b9",
+        "bass": null
+      },
+      "symbol": "D7b9",
+      "confidence": {
+        "root": 0.94,
+        "quality": 0.86,
+        "extension": 0.88
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0007",
+      "start_ms": 13571,
+      "end_ms": 15753,
+      "chord": {
+        "root": "G",
+        "quality": "minor",
+        "extension": "none",
+        "bass": null
+      },
+      "symbol": "Gm",
+      "confidence": {
+        "root": 0.92,
+        "quality": 0.92,
+        "extension": 0.84
+      },
+      "is_user_edited": false
+    },
+    {
+      "event_id": "e0008",
+      "start_ms": 15753,
+      "end_ms": 17935,
+      "chord": {
+        "root": "G",
+        "quality": "minor",
+        "extension": "none",
+        "bass": null
+      },
+      "symbol": "Gm",
+      "confidence": {
+        "root": 0.9,
+        "quality": 0.89,
+        "extension": 0.8
+      },
+      "is_user_edited": false
+    }
+  ],
+  "overrides": [],
+  "is_customized": false,
+  "forked_from": null,
+  "version": 1,
+  "created_at": "2026-10-22T09:00:00Z",
+  "updated_at": "2026-10-22T09:00:00Z"
+}

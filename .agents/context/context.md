@@ -4,7 +4,9 @@
 > Kế hoạch đầy đủ: [implementation-plan.md](implementation-plan.md). Quyết định/quy tắc: [../memory/memory.md](../memory/memory.md).
 
 ## Giai đoạn
-**M1 đang chạy.** Task 1.0 ✅ xong (2026-10-22). Tiếp theo: 1.1 (contract package + fixtures, test trước).
+**M1 đang chạy.** Task 1.0 ✅, 1.1 ✅ (2026-10-22). Tiếp theo: 1.2 (Alembic + schema `app`).
+
+Task 1.1: `analysis_contract` (models, `apply_overrides`, port `AnalysisEngine`), 7 fixture kết quả + 3 chart + jobs/errors/requests trong `contracts/fixtures/`, `contracts/openapi.json`, `web/src/api/{generated,types}`. `DE`: 116 pytest xanh (76 mới), ruff sạch; `web`: 13 test, lint, build xanh.
 
 Baseline 1.0:
 - `DE/`: `uv sync --extra api --extra db`; `pytest` 40 passed; ruff **khoanh vào mã mới** (mã cũ có 190 lỗi lint / 71 file chưa format, đã `extend-exclude` trong `pyproject.toml`; bỏ dần khi dọn).
@@ -14,7 +16,7 @@ Baseline 1.0:
 ## Milestone
 | # | Tên | Pri | Trạng thái |
 | :-- | :-- | :-- | :-- |
-| M1 | Foundation, DB, Auth, Workspace Shell | P0 | 🔧 1.0 ✅ · 1.1–1.5 ⏳ |
+| M1 | Foundation, DB, Auth, Workspace Shell | P0 | 🔧 1.0 ✅ · 1.1 ✅ · 1.2–1.5 ⏳ |
 | M2 | Ingestion + Mock Pipeline | P0 | ⏳ |
 | M3 | Chord Viewer & Audio Sync | P1 | ⏳ |
 | M4 | Harmony / Jazz Theory | P1 | ⏳ |
@@ -30,6 +32,9 @@ _(không)_
 1. Docker Desktop (user đang cài) → Redis/Celery thật (M2.6) chưa chạy được; unit test dùng fake/in-process. Cổng 5432: không bật compose `postgres:16` của DE cùng lúc với PG18 native.
 2. `openapi-typescript@7` yêu cầu TypeScript 5 (web dùng TS 6) ⇒ chạy qua `npx` trong script `gen:api`, không cài vào devDependencies.
 
+## Việc cần báo team DE/AI
+- `ChordLabel.display_name` hiển thị `Cmaj9` và `C9` giống nhau ("C9"); từ vựng chưa có `sus4` + extension kiểu `G9sus4`; chưa có `bass` (slash chord). Xem memory.md.
+
 ## Việc kế tiếp
-1. Task 1.1: `DE/src/analysis_contract/` + `contracts/fixtures/` (test trước) → sinh `contracts/openapi.json` → `npm run gen:api`.
-2. Task 1.2: Alembic + schema `app`.
+1. Task 1.2: Alembic + schema `app` (`users`, `charts`, `jobs`, `playlists`, `playlist_items`, `chord_dictionary`, `usage_counters`) — test lên/xuống migration trên `chordsense_test`.
+2. Task 1.3: Auth + RBAC; 1.4: app factory + lỗi chuẩn; 1.5: Workspace Shell.

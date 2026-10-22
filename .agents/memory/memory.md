@@ -32,7 +32,14 @@
 - **2026-10-22 · ADR · `bass` trong ChordLabelDTO là optional**: AI (DE) chưa nhận diện slash chord ⇒ `null`; chỉ có giá trị khi user sửa. Chưa chốt với team AI.
 - **2026-10-22 · ADR · Dev DB = PostgreSQL 18 native (DB `chordsense_app`)**, prod/compose = 16 ⇒ SQL phải tương thích cả hai. Compose DE map 5432 → trùng cổng với PG18.
 
+- **2026-10-22 · ADR · Contract v1.0 (task 1.1)**: `DE/src/analysis_contract/` → `contracts/openapi.json` → `web/src/api/generated/schema.d.ts`. Thêm so với bản phác thảo: `BeatGrid.beats_per_bar` (6/8 theo dõi bằng nốt chấm = 2 beat/ô; `tempo_bpm` đếm theo beat của tracker), `ChordEvent.symbol` bị validator ép khớp `chord` có cấu trúc, `Chart.ai_events` bất biến + `overrides` (set/delete/insert, tối đa 1 override/event), `apply_overrides()` là ngữ nghĩa chuẩn của "effective timeline" (bản TS ở M4 phải qua cùng fixtures).
+  How: sửa model → `rtk uv run python -m src.analysis_contract.export` → `npm run gen:api` (test drift sẽ đỏ nếu quên bước 1). Fixtures sinh bằng `rtk uv run python ../contracts/gen_fixtures.py` (chạy từ `DE/`).
+
 ## FIX — Lỗi đã gặp & cách xử lý
+
+- **2026-10-22 · FIX · `ChordLabel.display_name` (DE) gộp `Cmaj9` và `C9` thành "C9"**
+  Why: `major+nat9` và `dominant+nat9` cùng ra "C9" (tương tự nat11/nat13) — sai nhạc lý, ảnh hưởng chế độ Precise.
+  How: contract dùng `chord_symbol()` riêng (major + 9/11/13 ⇒ `maj9/11/13`); **chưa sửa `display_name` của DE** vì thuộc team DE/AI — cần báo họ. Ngoài ra từ vựng DE chưa biểu diễn được `G9sus4` (ví dụ của FR-14): `sus` chỉ có "Csus"/"Gsus9"; Basic/Precise ở FE phải làm trên trường có cấu trúc.
 
 - **2026-10-22 · FIX · `crystaldba/postgres-mcp` không chạy được trên Windows máy này**
   Why: bản mới (0.3.0) phụ thuộc `pglast==7.2.0` không có wheel Windows ⇒ `uvx` lùi về bản 0.1.0 là một package khác (nhận DSN qua `argv[1]`); khi thả `mcp` mới nhất thì lỗi `Server has no attribute 'list_resources'`.
