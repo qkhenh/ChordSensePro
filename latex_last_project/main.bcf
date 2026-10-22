@@ -2373,7 +2373,15 @@
     <bcf:datasource type="file" datatype="bibtex" glob="false">citations.bib</bcf:datasource>
   </bcf:bibdata>
   <bcf:section number="0">
-    <bcf:citekey order="1" intorder="1" nocite="1">*</bcf:citekey>
+    <bcf:citekey order="1" intorder="1">nextjs_layouts</bcf:citekey>
+    <bcf:citekey order="2" intorder="1">asyncpg_readme</bcf:citekey>
+    <bcf:citekey order="3" intorder="1">asyncpg_psycopg_blog</bcf:citekey>
+    <bcf:citekey order="4" intorder="1">fiber_benchmarks</bcf:citekey>
+    <bcf:citekey order="5" intorder="1">fastapi_benchmarks</bcf:citekey>
+    <bcf:citekey order="6" intorder="1">modular_monolith_blog</bcf:citekey>
+    <bcf:citekey order="7" intorder="1">chrome_webmidi</bcf:citekey>
+    <bcf:citekey order="8" intorder="1">webkit_mediarecorder</bcf:citekey>
+    <bcf:citekey order="9" intorder="1" nocite="1">*</bcf:citekey>
   </bcf:section>
   <!-- SORTING TEMPLATES -->
   <bcf:sortingtemplate name="none">
