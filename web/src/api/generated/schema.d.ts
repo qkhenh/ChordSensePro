@@ -77,6 +77,18 @@ export interface components {
              */
             schema_version: "1.0";
         };
+        /** AuthResponse */
+        AuthResponse: {
+            /** Access Token */
+            access_token: string;
+            /** Expires In */
+            expires_in: number;
+            /** Refresh Token */
+            refresh_token: string;
+            /** Token Type */
+            token_type: string;
+            user: components["schemas"]["UserOut"];
+        };
         /**
          * BeatGrid
          * @description ``tempo_bpm`` counts the tracker's beats; ``beats_per_bar`` says how many per bar
@@ -285,6 +297,13 @@ export interface components {
             mode: "major" | "minor";
             tonic: components["schemas"]["RootNote"];
         };
+        /** LoginRequest */
+        LoginRequest: {
+            /** Email */
+            email: string;
+            /** Password */
+            password: string;
+        };
         /**
          * OverrideOp
          * @enum {string}
@@ -312,6 +331,51 @@ export interface components {
              */
             kind: "file" | "youtube" | "soundcloud" | "direct";
         };
+        /** QuotaOut */
+        QuotaOut: {
+            /** Limit */
+            limit: number | null;
+            /** Remaining */
+            remaining: number | null;
+            /**
+             * Resets At
+             * Format: date-time
+             */
+            resets_at: string;
+            /**
+             * Tier
+             * @enum {string}
+             */
+            tier: "free" | "pro" | "education";
+            /** Used */
+            used: number;
+        };
+        /** RefreshRequest */
+        RefreshRequest: {
+            /** Refresh Token */
+            refresh_token: string;
+        };
+        /** RegisterRequest */
+        RegisterRequest: {
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
+            /**
+             * Name
+             * @default null
+             */
+            name: string | null;
+            /** Password */
+            password: string;
+        };
+        /**
+         * Role
+         * @description The eight roles of NFR-10. ``GUEST`` is anonymous and never stored.
+         * @enum {string}
+         */
+        Role: "guest" | "free" | "paid" | "teacher" | "student" | "expert" | "music_pm" | "it_admin";
         /**
          * RootNote
          * @description 12 chromatic pitch classes — sharps as canonical form.
@@ -335,6 +399,24 @@ export interface components {
             denominator: 2 | 4 | 8 | 16;
             /** Numerator */
             numerator: number;
+        };
+        /** UserOut */
+        UserOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Email */
+            email: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string | null;
+            role: components["schemas"]["Role"];
         };
     };
     responses: never;
