@@ -35,7 +35,15 @@
 - **2026-10-22 · ADR · Contract v1.0 (task 1.1)**: `DE/src/analysis_contract/` → `contracts/openapi.json` → `web/src/api/generated/schema.d.ts`. Thêm so với bản phác thảo: `BeatGrid.beats_per_bar` (6/8 theo dõi bằng nốt chấm = 2 beat/ô; `tempo_bpm` đếm theo beat của tracker), `ChordEvent.symbol` bị validator ép khớp `chord` có cấu trúc, `Chart.ai_events` bất biến + `overrides` (set/delete/insert, tối đa 1 override/event), `apply_overrides()` là ngữ nghĩa chuẩn của "effective timeline" (bản TS ở M4 phải qua cùng fixtures).
   How: sửa model → `rtk uv run python -m src.analysis_contract.export` → `npm run gen:api` (test drift sẽ đỏ nếu quên bước 1). Fixtures sinh bằng `rtk uv run python ../contracts/gen_fixtures.py` (chạy từ `DE/`).
 
+- **2026-10-22 · ADR · Persistence (task 1.2)**: SQLAlchemy **Core** tables ở `DE/src/persistence/tables.py` (schema `app`), migration Alembic **viết tay** ở `DE/migrations/versions/` (thư mục tên `migrations`, không phải `alembic/` để khỏi che package `alembic`). Test integration so `compare_metadata` giữa DB đã migrate và `tables.py` ⇒ hai bên không lệch. Revision đã merge/áp dụng thì **đóng băng**, thay đổi mới = revision mới.
+  Điểm đáng nhớ: `analyses` (key = content_hash) là kho kết quả AI dùng chung để cache không tốn quota; `jobs` có CHECK `(state='failed') = (error IS NOT NULL)`; `playlist_items` unique `(playlist_id, order_index)` **DEFERRABLE INITIALLY DEFERRED** để đổi chỗ trong 1 transaction; `usage_counters` PK `(user_id, period_date)` cho upsert nguyên tử; email unique theo `lower(email)`; role lưu 7 giá trị (Guest không lưu).
+  How: `rtk uv run alembic upgrade head` (từ `DE/`, đọc `DE/.env`); integration test dùng `TEST_DATABASE_URL` (tên DB phải kết thúc `_test`, fixture từ chối DB khác).
+
 ## FIX — Lỗi đã gặp & cách xử lý
+
+- **2026-10-22 · FIX · `PostgresSettings` (DE) không đọc `DE/.env`**
+  Why: chỉ `Settings` cha có `env_file`; lớp con tạo bằng `default_factory` chỉ đọc biến môi trường thật ⇒ chạy ngoài Docker rơi về mặc định `group26`/`group26`.
+  How: `src.persistence.database_url()` tự `load_dotenv(DE/.env)` (không ghi đè env thật). Chưa sửa `config.py` của DE (thuộc team DE); nếu code khác cần đọc `.env` ngoài Docker sẽ gặp lại.
 
 - **2026-10-22 · FIX · `ChordLabel.display_name` (DE) gộp `Cmaj9` và `C9` thành "C9"**
   Why: `major+nat9` và `dominant+nat9` cùng ra "C9" (tương tự nat11/nat13) — sai nhạc lý, ảnh hưởng chế độ Precise.
