@@ -1,0 +1,17 @@
+import type { components } from './generated/schema'
+
+type Schemas = components['schemas']
+
+export type AnalysisRequest = Schemas['AnalysisRequest']
+export type AnalysisResult = Schemas['AnalysisResult']
+export type AnalysisMetadata = Schemas['AnalysisMetadata']
+export type BeatGrid = Schemas['BeatGrid']
+export type Chart = Schemas['Chart']
+export type ChordEvent = Schemas['ChordEvent']
+export type ChordLabel = Schemas['ChordLabelDTO']
+export type ErrorCode = Schemas['ErrorCode']
+export type EventOverride = Schemas['EventOverride']
+export type JobProgress = Schemas['JobProgress']
+export type JobStage = Schemas['JobStage']
+export type JobState = Schemas['JobState']
+export type PlaybackSource = Schemas['PlaybackSource']
