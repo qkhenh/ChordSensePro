@@ -161,6 +161,39 @@
         "title": "AnalysisResult",
         "type": "object"
       },
+      "AuthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          },
+          "token_type": {
+            "title": "Token Type",
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserOut"
+          }
+        },
+        "required": [
+          "user",
+          "access_token",
+          "refresh_token",
+          "token_type",
+          "expires_in"
+        ],
+        "title": "AuthResponse",
+        "type": "object"
+      },
       "BeatGrid": {
         "additionalProperties": false,
         "description": "``tempo_bpm`` counts the tracker's beats; ``beats_per_bar`` says how many per bar\n(6/8 tracked in dotted quarters has 2). ``downbeats_ms``, when present, overrides\nany grid interpolated from tempo (irregular tempo).",
@@ -700,6 +733,25 @@
         "title": "KeyHint",
         "type": "object"
       },
+      "LoginRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
       "OverrideOp": {
         "enum": [
           "set",
@@ -753,6 +805,122 @@
         ],
         "title": "PlaybackSource",
         "type": "object"
+      },
+      "QuotaOut": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining"
+          },
+          "resets_at": {
+            "format": "date-time",
+            "title": "Resets At",
+            "type": "string"
+          },
+          "tier": {
+            "enum": [
+              "free",
+              "pro",
+              "education"
+            ],
+            "title": "Tier",
+            "type": "string"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tier",
+          "limit",
+          "used",
+          "remaining",
+          "resets_at"
+        ],
+        "title": "QuotaOut",
+        "type": "object"
+      },
+      "RefreshRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refresh_token"
+        ],
+        "title": "RefreshRequest",
+        "type": "object"
+      },
+      "RegisterRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          },
+          "password": {
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "RegisterRequest",
+        "type": "object"
+      },
+      "Role": {
+        "description": "The eight roles of NFR-10. ``GUEST`` is anonymous and never stored.",
+        "enum": [
+          "guest",
+          "free",
+          "paid",
+          "teacher",
+          "student",
+          "expert",
+          "music_pm",
+          "it_admin"
+        ],
+        "title": "Role",
+        "type": "string"
       },
       "RootNote": {
         "description": "12 chromatic pitch classes — sharps as canonical form.\n\nEnharmonic disambiguation (Db vs C#) is handled at the\npost-processing layer after key detection, not here.",
@@ -808,6 +976,48 @@
           "denominator"
         ],
         "title": "TimeSignature",
+        "type": "object"
+      },
+      "UserOut": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "name",
+          "role",
+          "created_at"
+        ],
+        "title": "UserOut",
         "type": "object"
       }
     }

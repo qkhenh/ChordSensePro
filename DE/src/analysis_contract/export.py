@@ -8,6 +8,8 @@ from pathlib import Path
 
 from pydantic.json_schema import models_json_schema
 
+from src.api import schemas as api_schemas
+
 from . import models
 
 OUTPUT = Path(__file__).parents[3] / "contracts" / "openapi.json"
@@ -20,6 +22,12 @@ _EXPORTED = (
     models.EventOverride,
     models.ChordEvent,
     models.PlaybackSource,
+    api_schemas.RegisterRequest,
+    api_schemas.LoginRequest,
+    api_schemas.RefreshRequest,
+    api_schemas.UserOut,
+    api_schemas.AuthResponse,
+    api_schemas.QuotaOut,
 )
 
 

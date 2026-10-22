@@ -31,6 +31,9 @@ api = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "python-multipart>=0.0.12",
+    "bcrypt>=5.0.0",
+    "pyjwt>=2.15.1",
+    "email-validator>=2.3.0",
 ]
 ai = [
     "torch>=2.5.0",
@@ -42,6 +45,7 @@ ai = [
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
@@ -84,8 +88,11 @@ extend-exclude = [
 select = ["E", "F", "W", "I", "UP", "B", "S", "DTZ", "ASYNC", "RUF"]
 ignore = ["RUF001", "RUF002", "RUF003"]  # Vietnamese text in docstrings/comments
 
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends"]
+
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+"tests/**" = ["S101", "S105", "S106"]  # fixture credentials
 # Raw SQL fixtures: long literals, ids are generated in the tests themselves.
 "tests/integration/**" = ["E501", "S608"]
 

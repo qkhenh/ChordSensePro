@@ -39,7 +39,19 @@
   Điểm đáng nhớ: `analyses` (key = content_hash) là kho kết quả AI dùng chung để cache không tốn quota; `jobs` có CHECK `(state='failed') = (error IS NOT NULL)`; `playlist_items` unique `(playlist_id, order_index)` **DEFERRABLE INITIALLY DEFERRED** để đổi chỗ trong 1 transaction; `usage_counters` PK `(user_id, period_date)` cho upsert nguyên tử; email unique theo `lower(email)`; role lưu 7 giá trị (Guest không lưu).
   How: `rtk uv run alembic upgrade head` (từ `DE/`, đọc `DE/.env`); integration test dùng `TEST_DATABASE_URL` (tên DB phải kết thúc `_test`, fixture từ chối DB khác).
 
+- **2026-10-22 · ADR · Identity & auth (task 1.3)**: bounded context `DE/src/identity/{domain,application,infrastructure}` + lớp HTTP `DE/src/api/`. JWT HS256 (chỉ `sub/type/jti/iat/exp`; **role và is_active luôn đọc từ DB mỗi request** ⇒ đổi role/khoá tài khoản có hiệu lực ngay). Thuật toán bị ghim (`alg:none`, HS384/512 bị từ chối); hết hạn so với `clock` được tiêm (test xác định). Refresh **rotate + revoke**, tái dùng token cũ ⇒ `token_revoked`. Mật khẩu bcrypt cost ≥ 12 (settings ép; test dùng 4), > 72 byte bị từ chối thay vì cắt ngầm; login email lạ vẫn tốn 1 lần verify (chống dò email). Quota: `QuotaService` đọc `PolicyProvider`, reset 00:00 UTC, `try_consume` là **một câu lệnh SQL nguyên tử** (đã test 20 request đồng thời, hạn mức 5 ⇒ đúng 5). `refund()` không idempotent theo receipt — M2 phải chặn bằng cờ `jobs.quota_charged`.
+  FE: access token chỉ ở **bộ nhớ**, refresh token ở `localStorage` (`createApiClient`); 401 `token_expired|invalid_token|not_authenticated` ⇒ **một** lần refresh dùng chung giữa các request đồng thời rồi retry đúng 1 lần; mất mạng KHÔNG đăng xuất, bị server từ chối (4xx) thì có. Thêm `POST /auth/logout` (204, im lặng với token xấu) để thu hồi refresh token.
+  Chưa làm (cố ý): khoá tài khoản sau 5 lần sai (FR-32, thuộc gateway protection), tier Education pooled quota.
+- **2026-10-22 · RULE · Test auth dùng `tests/support/{identity,api}.py`** (container in-memory + app FastAPI nhỏ có route thăm dò cho ma trận role×endpoint, NFR-10). Role quyết định ở `Role`/`PRO_ROLES` (`models.py`); `Guest` không lưu DB.
+
 ## FIX — Lỗi đã gặp & cách xử lý
+
+- **2026-10-22 · FIX · msw 3 đổi tên `onUnhandledRequest` → `onUnhandledFrame`**
+  Why: tên cũ bị bỏ qua âm thầm (mặc định chỉ cảnh báo) ⇒ request chưa mock không làm test đỏ. TypeScript báo lỗi nên mới phát hiện.
+  How: `server.listen({ onUnhandledFrame: 'error' })` trong `web/src/test/setup.ts`; mọi test phải khai báo handler cho request nó phát ra.
+- **2026-10-22 · FIX · Đăng nhập xong bị đưa về `/` thay vì trang đang định vào**
+  Why: `GuestOnly` render lại ngay khi trạng thái thành `authenticated` và `Navigate to="/"` thắng `navigate(destination)` của form.
+  How: `GuestOnly` tự đọc `location.state.from` qua `destinationFrom()` (`auth/destination.ts`). Mọi guard "chuyển hướng khi đã đăng nhập" phải làm vậy.
 
 - **2026-10-22 · FIX · `PostgresSettings` (DE) không đọc `DE/.env`**
   Why: chỉ `Settings` cha có `env_file`; lớp con tạo bằng `default_factory` chỉ đọc biến môi trường thật ⇒ chạy ngoài Docker rơi về mặc định `group26`/`group26`.

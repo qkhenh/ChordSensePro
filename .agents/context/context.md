@@ -4,7 +4,10 @@
 > Kế hoạch đầy đủ: [implementation-plan.md](implementation-plan.md). Quyết định/quy tắc: [../memory/memory.md](../memory/memory.md).
 
 ## Giai đoạn
-**M1 đang chạy.** Task 1.0 ✅, 1.1 ✅, 1.2 ✅ (2026-10-22). Tiếp theo: 1.3 (Auth + RBAC).
+**M1 đang chạy.** Task 1.0 ✅, 1.1 ✅, 1.2 ✅, 1.3 ✅ (2026-10-22). Tiếp theo: 1.4 (app factory + lỗi chuẩn + `/healthz`), rồi 1.5 (Workspace Shell).
+
+Task 1.3: BE `identity` + `api` (register/login/refresh/logout, `GET /users/me`, `GET /users/me/quota`, `require_roles`, `PolicyProvider`), `DE` 287 pytest xanh (không đổi DB mới), ruff sạch. FE: client HTTP có interceptor refresh, `AuthProvider`, route guard, trang Login/Register, `web` 43 test + lint + build + e2e smoke xanh. `openapi.json` giờ gồm cả schema auth.
+**Chưa có `create_app()`**: các router chỉ được gắn vào app nhỏ của test; FE chạy với MSW. Việc gắn thật (PG repos, settings, CORS) là task 1.4.
 
 Task 1.2: Alembic `0001` đã áp lên DB dev `chordsense_app` (8 bảng trong schema `app`; `chordsense_ro` chỉ đọc được, ghi bị từ chối) và chạy lên/xuống/lên sạch trên `chordsense_test`. `DE`: 147 pytest xanh (31 mới (23 integration cần PG, 8 unit)), ruff sạch.
 
@@ -18,7 +21,7 @@ Baseline 1.0:
 ## Milestone
 | # | Tên | Pri | Trạng thái |
 | :-- | :-- | :-- | :-- |
-| M1 | Foundation, DB, Auth, Workspace Shell | P0 | 🔧 1.0 ✅ · 1.1 ✅ · 1.2 ✅ · 1.3–1.5 ⏳ |
+| M1 | Foundation, DB, Auth, Workspace Shell | P0 | 🔧 1.0 ✅ · 1.1 ✅ · 1.2 ✅ · 1.3 ✅ · 1.4–1.5 ⏳ |
 | M2 | Ingestion + Mock Pipeline | P0 | ⏳ |
 | M3 | Chord Viewer & Audio Sync | P1 | ⏳ |
 | M4 | Harmony / Jazz Theory | P1 | ⏳ |
@@ -34,9 +37,14 @@ _(không)_
 1. Docker Desktop (user đang cài) → Redis/Celery thật (M2.6) chưa chạy được; unit test dùng fake/in-process. Cổng 5432: không bật compose `postgres:16` của DE cùng lúc với PG18 native.
 2. `openapi-typescript@7` yêu cầu TypeScript 5 (web dùng TS 6) ⇒ chạy qua `npx` trong script `gen:api`, không cài vào devDependencies.
 
+## Rủi ro đang mở
+- `InMemoryRevocationStore`: refresh token đã thu hồi **hợp lệ trở lại sau khi server khởi động lại**, và không chia sẻ giữa nhiều worker. Phải thay bằng Redis (M2.6) hoặc bảng PG trước khi chạy thật; ở 1.4 chỉ dùng cho dev.
+- Refresh token nằm trong `localStorage` ⇒ lộ nếu có XSS. Chấp nhận cho MVP (access token ở bộ nhớ, rotate mỗi lần dùng); cân nhắc cookie `httpOnly` khi triển khai thật.
+- `AUTH_JWT_SECRET` dev nằm trong `DE/.env` (gitignored). Môi trường thật phải đặt biến riêng ≥ 32 ký tự.
+
 ## Việc cần báo team DE/AI
 - `ChordLabel.display_name` hiển thị `Cmaj9` và `C9` giống nhau ("C9"); từ vựng chưa có `sus4` + extension kiểu `G9sus4`; chưa có `bass` (slash chord). Xem memory.md.
 
 ## Việc kế tiếp
-1. Task 1.3: Auth + RBAC (bcrypt cost ≥ 12, JWT, `require_role`, `GET /users/me/quota`, `PolicyProvider`) — cần thêm dependency (bcrypt, PyJWT, email-validator) vào `pyproject`.
-2. Task 1.4: app factory + lỗi chuẩn + `/healthz`; 1.5: Workspace Shell (FE).
+1. Task 1.4: `create_app()` (đọc `AuthSettings`, PG engine, `PgUserRepository`/`PgUsageRepository`, CORS, `/healthz`, request-id structlog, lỗi 422 chuẩn hoá `{code,message}`), test chạy app thật trên `chordsense_test`; sau đó chạy FE dev với backend thật.
+2. Task 1.5: Workspace Shell (FE): layout, badge quota/tier (dùng `GET /users/me/quota`), i18n.
