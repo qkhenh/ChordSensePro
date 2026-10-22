@@ -55,7 +55,40 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+# Legacy DE/AI code predates the ruff setup (baseline 2026-10-22: 190 lint errors,
+# 71 unformatted files). Excluded so new gateway code is linted strictly without
+# rewriting files owned by the DE/AI team. Remove entries as they get cleaned up.
+extend-exclude = [
+    "dags",
+    "markdown",
+    "scripts",
+    "main.py",
+    "conftest.py",
+    "test_api.py",
+    "src/data_ingest",
+    "src/data_loader",
+    "src/data_processing",
+    "src/shared",
+    "src/song_analysis",
+    "src/user_analytics",
+    "tests/unit/audio_processing",
+    "tests/unit/shared",
+    "tests/unit/song_analysis",
+    "tests/unit/user_analytics",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "S", "DTZ", "ASYNC", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # Vietnamese text in docstrings/comments
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
 [tool.pytest.ini_options]
+markers = ["integration: needs PostgreSQL/Redis (skipped without TEST_DATABASE_URL)"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
