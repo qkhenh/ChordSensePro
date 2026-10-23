@@ -39,12 +39,16 @@ class RootNote(str, Enum):
 
 
 class ChordQuality(str, Enum):
-    """5 chord qualities — 'aug' excluded, mapped to major + sharp5."""
+    """6 chord qualities — 'aug' excluded, mapped to major + sharp5.
+
+    Enum order == quality_id in the database / exported dataset (do not reorder).
+    """
     major     = "major"
     minor     = "minor"
     dominant  = "dominant"   # implies b7, used for G7, G7#9, G7alt...
     dim       = "diminished" # 1-b3-b5
-    sus       = "suspended"  # sus2 (1-2-5) or sus4 (1-4-5)
+    sus2      = "sus2"       # 1-2-5
+    sus4      = "sus4"       # 1-4-5 (a bare 'sus' label is read as sus4)
 
 
 class ChordExtension(str, Enum):
@@ -123,6 +127,82 @@ class ConfidenceScore:
         return self.root >= 0.6 and self.quality >= 0.55
 
 
+# ---------------------------------------------------------------------------
+# Valid (quality, extension) combinations — single source of truth for:
+#   1. display naming (suffix after the root), injective over valid combos
+#   2. masking impossible head combinations at inference (see valid_combo_mask)
+#
+# The model has 3 independent heads, so it can output pairs that are not real chords
+# (e.g. major + min7). Anything not listed here is invalid.
+# NOTE: Csus2 (C-D-G) and Gsus4 (G-C-D) are the same three notes; telling them apart needs the bass /
+# context, so expect more root confusion on suspended chords than on other qualities.
+# ---------------------------------------------------------------------------
+_Q = ChordQuality
+_E = ChordExtension
+
+CHORD_SUFFIX: dict[tuple[ChordQuality, ChordExtension], str] = {
+    # --- major (maj7-family names for 7th+ because dominant owns the plain 7/9/11/13 names)
+    (_Q.major, _E.none):    "",
+    (_Q.major, _E.flat5):   "b5",
+    (_Q.major, _E.sharp5):  "aug",        # Caug — 'aug' quality is folded into major + #5
+    (_Q.major, _E.maj7):    "maj7",
+    (_Q.major, _E.add9):    "add9",
+    (_Q.major, _E.nat9):    "maj9",
+    (_Q.major, _E.nat11):   "maj11",
+    (_Q.major, _E.sharp11): "maj7#11",
+    (_Q.major, _E.nat13):   "maj13",
+    # --- minor
+    (_Q.minor, _E.none):    "m",
+    (_Q.minor, _E.maj7):    "m(maj7)",
+    (_Q.minor, _E.min7):    "m7",
+    (_Q.minor, _E.add9):    "madd9",
+    (_Q.minor, _E.flat9):   "m7b9",
+    (_Q.minor, _E.nat9):    "m9",
+    (_Q.minor, _E.nat11):   "m11",
+    (_Q.minor, _E.sharp11): "m7#11",
+    (_Q.minor, _E.nat13):   "m13",
+    (_Q.minor, _E.flat13):  "m7b13",
+    # --- dominant (always implies a b7)
+    (_Q.dominant, _E.flat5):   "7b5",
+    (_Q.dominant, _E.sharp5):  "7#5",
+    (_Q.dominant, _E.dom7):    "7",
+    (_Q.dominant, _E.flat9):   "7b9",
+    (_Q.dominant, _E.nat9):    "9",
+    (_Q.dominant, _E.sharp9):  "7#9",
+    (_Q.dominant, _E.nat11):   "11",
+    (_Q.dominant, _E.sharp11): "7#11",
+    (_Q.dominant, _E.nat13):   "13",
+    (_Q.dominant, _E.flat13):  "7b13",
+    (_Q.dominant, _E.alt):     "7alt",
+    # --- diminished (Chordie convention: min7 = half-diminished, dom7 = fully diminished)
+    (_Q.dim, _E.none):  "dim",
+    (_Q.dim, _E.min7):  "m7b5",
+    (_Q.dim, _E.dom7):  "dim7",
+    # --- suspended 2nd (a 9th/11th/13th on top of a sus2 is not a meaningful chord)
+    (_Q.sus2, _E.none):  "sus2",
+    (_Q.sus2, _E.maj7):  "maj7sus2",
+    (_Q.sus2, _E.dom7):  "7sus2",
+    # --- suspended 4th
+    (_Q.sus4, _E.none):  "sus4",
+    (_Q.sus4, _E.maj7):  "maj7sus4",
+    (_Q.sus4, _E.dom7):  "7sus4",
+    (_Q.sus4, _E.nat9):  "9sus4",
+    (_Q.sus4, _E.nat13): "13sus4",
+}
+
+VALID_COMBOS: frozenset[tuple[ChordQuality, ChordExtension]] = frozenset(CHORD_SUFFIX)
+
+
+def valid_combo_mask() -> list[list[bool]]:
+    """``mask[quality_id][ext_id]`` — True if the (quality, extension) pair is a real chord.
+
+    Ids follow enum declaration order (same as ``training_samples.quality_id / ext_id``).
+    Use at inference: after the quality head is decided, suppress extension logits whose mask
+    entry is False before taking the argmax.
+    """
+    return [[(q, e) in VALID_COMBOS for e in ChordExtension] for q in ChordQuality]
+
+
 @dataclass(frozen=True)
 class ChordLabel:
     """Full chord label — final model output.
@@ -131,57 +211,30 @@ class ChordLabel:
     Examples:
         ChordLabel(A, minor, min7)   → "Am7"
         ChordLabel(C, major, sharp5) → "Caug"
+        ChordLabel(C, major, nat9)   → "Cmaj9"  (≠ dominant nat9 → "C9")
         ChordLabel(G, dominant, sharp9) → "G7#9"
         ChordLabel(B, dim, min7)     → "Bm7b5"  (half-dim)
         ChordLabel(B, dim, dom7)     → "Bdim7"  (fully dim)
+
+    display_name is injective over VALID_COMBOS. Invalid combos (e.g. major + min7) render as
+    "C[major+min7]" so they are visible instead of silently looking like another chord.
     """
     root:      RootNote
     quality:   ChordQuality
     extension: ChordExtension = ChordExtension.none
 
     @property
+    def is_valid(self) -> bool:
+        """True if (quality, extension) is a real chord (member of VALID_COMBOS)."""
+        return (self.quality, self.extension) in VALID_COMBOS
+
+    @property
     def display_name(self) -> str:
         root = self.root.value
-
-        # --- Special case: dim + extension (Chordie convention) ---
-        if self.quality == ChordQuality.dim:
-            if self.extension == ChordExtension.min7:
-                return f"{root}m7b5"   # half-diminished
-            if self.extension == ChordExtension.dom7:
-                return f"{root}dim7"   # fully diminished
-            if self.extension == ChordExtension.none:
-                return f"{root}dim"
-
-        # --- Quality suffix ---
-        q = {
-            ChordQuality.major:    "",
-            ChordQuality.minor:    "m",
-            ChordQuality.dominant: "",
-            ChordQuality.dim:      "dim",
-            ChordQuality.sus:      "sus",
-        }[self.quality]
-
-        # --- Extension suffix ---
-        e = {
-            ChordExtension.none:   "",
-            ChordExtension.flat5:  "b5",
-            ChordExtension.sharp5: "aug",       # Caug is more common than C#5 on Chordie
-            ChordExtension.maj7:   "maj7",
-            ChordExtension.min7:   "7",         # "m" already in quality suffix → Am7
-            ChordExtension.dom7:   "7",
-            ChordExtension.add9:   "add9",
-            ChordExtension.flat9:  "7b9",
-            ChordExtension.nat9:   "9",
-            ChordExtension.sharp9: "7#9",
-            ChordExtension.nat11:  "11",
-            # sharp11: major → "maj7#11", dominant → "7#11" (Chordie style)
-            ChordExtension.sharp11: "maj7#11" if self.quality == ChordQuality.major else "7#11",
-            ChordExtension.nat13:  "13",
-            ChordExtension.flat13: "7b13",
-            ChordExtension.alt:    "7alt",
-        }[self.extension]
-
-        return f"{root}{q}{e}"
+        suffix = CHORD_SUFFIX.get((self.quality, self.extension))
+        if suffix is None:
+            return f"{root}[{self.quality.value}+{self.extension.value}]"
+        return f"{root}{suffix}"
 
     def pitch_shift(self, semitones: int) -> ChordLabel:
         """Pitch shift root by n semitones, quality + extension unchanged."""

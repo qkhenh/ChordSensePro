@@ -2,7 +2,10 @@
 import pytest
 from datetime import datetime, timezone
 
-from src.shared.domain.value_objects import RootNote, ChordQuality, ChordExtension, ChordLabel, ChromaVector
+from src.shared.domain.value_objects import (
+    RootNote, ChordQuality, ChordExtension, ChordLabel, ChromaVector,
+    VALID_COMBOS, valid_combo_mask,
+)
 from src.shared.domain.processing_result import ProcessingResult
 from src.shared.domain.base_model import BaseEntity, AuditedEntity
 
@@ -29,6 +32,82 @@ class TestChordLabel:
     def test_cmaj_display_name(self):
         label = ChordLabel(root=RootNote.C, quality=ChordQuality.major, extension=ChordExtension.none)
         assert label.display_name == "C"
+
+    def test_maj9_and_dominant9_are_distinct(self):
+        """Regression: Cmaj9 and C9 both rendered as 'C9'."""
+        maj9 = ChordLabel(RootNote.C, ChordQuality.major, ChordExtension.nat9)
+        dom9 = ChordLabel(RootNote.C, ChordQuality.dominant, ChordExtension.nat9)
+        assert maj9.display_name == "Cmaj9"
+        assert dom9.display_name == "C9"
+
+    @pytest.mark.parametrize("quality, ext, expected", [
+        (ChordQuality.major, ChordExtension.nat11, "Cmaj11"),
+        (ChordQuality.dominant, ChordExtension.nat11, "C11"),
+        (ChordQuality.major, ChordExtension.nat13, "Cmaj13"),
+        (ChordQuality.dominant, ChordExtension.nat13, "C13"),
+        (ChordQuality.dominant, ChordExtension.dom7, "C7"),
+        (ChordQuality.dominant, ChordExtension.sharp9, "C7#9"),
+        (ChordQuality.minor, ChordExtension.min7, "Cm7"),
+        (ChordQuality.minor, ChordExtension.maj7, "Cm(maj7)"),
+        (ChordQuality.dim, ChordExtension.min7, "Cm7b5"),
+        (ChordQuality.dim, ChordExtension.dom7, "Cdim7"),
+        (ChordQuality.sus4, ChordExtension.dom7, "C7sus4"),
+        (ChordQuality.sus2, ChordExtension.dom7, "C7sus2"),
+        (ChordQuality.sus2, ChordExtension.none, "Csus2"),
+        (ChordQuality.sus4, ChordExtension.none, "Csus4"),
+        (ChordQuality.sus4, ChordExtension.nat9, "C9sus4"),
+        (ChordQuality.major, ChordExtension.sharp5, "Caug"),
+    ])
+    def test_known_display_names(self, quality, ext, expected):
+        assert ChordLabel(RootNote.C, quality, ext).display_name == expected
+
+    def test_display_name_is_injective_over_valid_combos(self):
+        """Every valid (quality, extension) pair must have its own unique name."""
+        names = {}
+        for q, e in VALID_COMBOS:
+            name = ChordLabel(RootNote.C, q, e).display_name
+            assert name not in names, f"{name!r} produced by both {names[name]} and {(q, e)}"
+            names[name] = (q, e)
+        assert len(names) == len(VALID_COMBOS)
+
+    def test_invalid_combo_is_visible_not_aliased(self):
+        """major + min7 is not a real chord: it must not look like any valid chord."""
+        bad = ChordLabel(RootNote.C, ChordQuality.major, ChordExtension.min7)
+        assert not bad.is_valid
+        valid_names = {ChordLabel(RootNote.C, q, e).display_name for q, e in VALID_COMBOS}
+        assert bad.display_name not in valid_names
+        assert "[" in bad.display_name
+
+    def test_pitch_shift_keeps_validity_and_changes_root_only(self):
+        label = ChordLabel(RootNote.A, ChordQuality.dominant, ChordExtension.nat9)
+        shifted = label.pitch_shift(3)
+        assert shifted.display_name == "C9"
+        assert shifted.is_valid == label.is_valid
+
+
+class TestValidComboMask:
+    def test_mask_shape_matches_class_counts(self):
+        mask = valid_combo_mask()
+        assert len(mask) == len(ChordQuality)
+        assert all(len(row) == len(ChordExtension) for row in mask)
+
+    def test_mask_agrees_with_valid_combos(self):
+        mask = valid_combo_mask()
+        qs, es = list(ChordQuality), list(ChordExtension)
+        for qi, q in enumerate(qs):
+            for ei, e in enumerate(es):
+                assert mask[qi][ei] == ((q, e) in VALID_COMBOS)
+
+    def test_every_quality_has_at_least_one_valid_extension(self):
+        """Otherwise the cascaded head could be masked to nothing."""
+        assert all(any(row) for row in valid_combo_mask())
+
+    def test_known_impossible_pairs_are_masked(self):
+        mask = valid_combo_mask()
+        qs, es = list(ChordQuality), list(ChordExtension)
+        assert not mask[qs.index(ChordQuality.major)][es.index(ChordExtension.min7)]
+        assert not mask[qs.index(ChordQuality.minor)][es.index(ChordExtension.dom7)]
+        assert not mask[qs.index(ChordQuality.dominant)][es.index(ChordExtension.none)]
 
 
 class TestProcessingResult:
