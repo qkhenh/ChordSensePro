@@ -10,13 +10,17 @@
 ```
 DE/
 ├── src/
-│   ├── shared/                    # Shared domain + infrastructure
-│   ├── audio_processing/          # Pipeline handlers + domain
-│   ├── song_analysis/             # Song analysis domain
-│   ├── student_analytics/         # Analytics rollup
-│   └── api/                       # FastAPI routes
+│   ├── shared/                    # Domain value objects, DB clients, dataset_split
+│   ├── data_loader/               # E: downloaders (YouTube/yt-dlp, local, Kaggle…) + AudioDispatcher
+│   ├── data_processing/           # T: handler chain, annotation parsers, HarteMapper
+│   ├── data_ingest/              # Orchestration services (IngestRawService, ProcessAudioService), crawl_queue, Mongo staging
+│   ├── training_data/             # L: TrainingSample + TrainingSampleRepository (training_samples table)
+│   ├── song_analysis/             # (system side — parked) song analysis domain
+│   └── user_analytics/            # (system side — parked) analytics rollup
 ├── tests/
-├── dags/                          # Airflow DAGs
+├── dags/                          # Airflow DAGs + wrapper/ (thin adapters)
+├── scripts/                       # seed_local_datasets, reset_for_recrawl, export_dataset
+├── init/init.sql                  # Postgres schema (fresh volume only)
 ├── markdown/
 ├── pyproject.toml
 ├── pyrightconfig.json
@@ -24,6 +28,7 @@ DE/
 ```
 
 > `curriculum/` module đã bị loại bỏ. Project root là `DE/` (không phải `DE/chordsense/`).
+> `audio_processing/` đã được migrate sang `data_processing/` — các section 2 bên dưới dùng tên module cũ, đọc kèm **section 6**.
 
 ---
 
@@ -40,14 +45,14 @@ DE/
 
 **Design decisions:**
 - `RootNote`: sharp làm canonical form. Enharmonic disambiguation ở post-processing.
-- `ChordQuality`: `aug` bị loại — quy về `major + #5`. 5 qualities: major/minor/dominant/dim/sus.
+- `ChordQuality`: `aug` bị loại — quy về `major + #5`. 6 qualities: major/minor/dominant/dim/sus2/sus4.
 - `ChordExtension`: 15 classes. Naming theo Chordie.com.
 - `dim` + extension cần xử lý đặc biệt trong `ChordLabel.display_name`:
   - `dim + min7` → `"m7b5"` (half-diminished)
   - `dim + dom7` → `"dim7"` (fully diminished)
 
-**TODO:** `DatasetNotationMapper` — map alias raw dataset ("m7", "M7", "mi7"...) về canonical enum.
-Vị trí: `src/audio_processing/application/mappers/harte_mapper.py`
+**✅ DONE (2026-10-19):** `HarteMapper` — map nhãn Harte/JAMS thô → `(root_id, quality_id, ext_id)` + `LabelStatus`.
+Vị trí: `src/data_processing/application/mappers/harte_mapper.py` (xem section 6.2).
 
 ### `domain/base_model.py`
 
@@ -117,17 +122,17 @@ with handler.download_temp(url) as result:
 ### `application/handlers/separate_handler.py` ✅
 
 - Model: **`htdemucs_6s`** (6-stem) — updated from `htdemucs` (4-stem)
-- Fallback chain: `piano` → `guitar` → `other` (handles songs without explicit piano stem)
+- Harmonic mix: `piano` + `guitar` + `other` được cộng thành `harmonic.wav` (peak ≤ 0.99; bỏ drums/bass/vocals). Thay cho fallback cũ vốn không bao giờ chạy vì `htdemucs_6s` luôn ghi `piano.wav`.
 - Runs via `subprocess` — Demucs loads ~800MB model weights, subprocess isolates memory
 - Model weights auto-downloaded on first run to `~/.cache/torch/hub/`
-- Install: `demucs>=4.0.0` added to `[project.optional-dependencies] audio` in `pyproject.toml`
+- Install: `demucs>=4.0.0` is listed in `requirements.txt` (the old `pyproject.toml` was removed 2026-10-23)
 
 ### `application/handlers/beat_handler.py` ✅
 
 - **madmom replaced with `librosa.beat.beat_track()`** — madmom unmaintained since 2022, build fails on Python 3.12+
 - `librosa.beat.beat_track()` uses dynamic programming beat tracker — sufficient for thesis
 - `estimate_bpm(beat_times)` — calculates avg BPM from inter-beat intervals
-- madmom removed from `pyproject.toml` audio deps entirely
+- madmom is not a dependency (removed from the project entirely)
 
 ### `application/handlers/segment_handler.py` ✅
 
@@ -175,12 +180,16 @@ user_chord_mastery (user_id, chord, date,
 
 ### MongoDB
 
+> **Cập nhật 2026-10-19:** trong training ETL MongoDB chỉ có **một** collection `raw_audio_jobs` (staging: `wav_path`, `annotation_path`,
+> `crawl_queue_id`, `status`). Các collection bên dưới là thiết kế gốc cho phía hệ thống, chưa được cài. Dữ liệu train nằm ở Postgres
+> `training_samples` + file `.npy` (section 6).
+
 | Collection | TTL | Nội dung |
 |---|---|---|
 | `raw_audio` | 30 ngày | Binary WAV từ user |
 | `song_audio_cache` | 7 ngày | Demucs output |
 | `mel_spectrograms` | 90 ngày | Matrix per segment |
-| `training_samples` | — | Processed samples |
+| `training_samples` | — | *(không dùng — đã chuyển sang Postgres)* |
 
 ---
 
@@ -191,20 +200,20 @@ user_chord_mastery (user_id, chord, date,
 **Prerequisites:**
 - Docker Desktop
 - CUDA 12.x + cuDNN (for RTX 3050 GPU acceleration)
-- uv (package manager)
+- Python 3.11 (local tests only; the runtime is the Airflow Docker image)
 
 **Start infrastructure:**
 ```bash
 # PostgreSQL + MongoDB + Redis + Airflow
 docker-compose up -d
 
-# Install DE dependencies
-uv sync --extra audio --extra db --extra api
+# Local dev/test dependencies (pytest, ruff) — runtime deps are baked into the Docker image
+pip install -r requirements-dev.txt
 ```
 
 **Run pipeline manually (no Airflow):**
 ```bash
-uv run python main.py analyze "https://youtube.com/..."
+python main.py analyze "https://youtube.com/..."
 ```
 
 **Expose to GVHD for demo (no server needed):**
@@ -274,3 +283,74 @@ User request → FastAPI → Airflow DAG (async)
 - Practice Mode (real-time 2s) can run in browser via ONNX Runtime Web
 - Song Analysis still server-side (Demucs too heavy for browser)
 
+
+---
+
+## 6. Training ETL — như đã cài (2026-10-19)
+
+> Mục tiêu duy nhất: **crawl + xử lý data để train AI**. Chi tiết thay đổi: [`change_log.md`](change_log.md). Hướng dẫn chạy: [`setup.md`](setup.md).
+
+### 6.1 Luồng dữ liệu
+
+```
+crawl_queue ──► IngestRawService ──► Mongo raw_audio_jobs ──► ProcessAudioService ──► training_samples + .npy
+ (Postgres)     annotation → duration       (staging)           training pipeline        (Postgres)   (volume)
+                / section → audio
+                (YouTube / local)
+```
+
+DAG chạy mỗi 2 giờ, `INGEST_BATCH_SIZE=100` URL/lượt, lấy `priority` cao trước (hooktheory 6–7 → guitarset 5 → swd 4 → choco 3 → billboard 1 → còn lại 0).
+Mỗi nguồn chỉ khác ở 4 điểm: cách lấy audio, parser nhãn, kiểm tra thời lượng/đoạn, có chạy Demucs không — xem bảng trong [`data_flow.md`](data_flow.md).
+
+Chain: `AlignmentCheck → Separate → Beat → Segment → Annotation → Label → SampleWriter`
+(`build_training_pipeline` trong `pipeline_factory.py`; chain inference `build_pipeline` không đổi).
+
+| Handler | Việc | Ghi chú |
+|---------|------|---------|
+| `AlignmentCheckHandler` | JAAH/ChoCo: so duration WAV với annotation · Hooktheory: so độ dài WAV với độ dài đoạn đã yêu cầu (`SECTION_CHECKED`) | lệch > `ALIGN_TOLERANCE_SEC` (3 s) → fail `duration_mismatch` |
+| `SeparateHandler` | Demucs `htdemucs_6s` → trộn stem piano+guitar+other | GPU nếu có; nguồn sạch (`kaggle`/`local`/`pianoteq`) **bỏ qua Demucs** |
+| `BeatHandler` | librosa beat tracking | nguồn sạch không có beat → không lỗi |
+| `SegmentHandler` | cửa sổ 2 s, bước 1.5 s (overlap 0.5 s), start snap theo beat | giữ nguyên |
+| `AnnotationHandler` | nhãn Harte theo midpoint của segment | Kaggle: nhãn từ tên file; không có chord → `N`; Hooktheory: segment ngoài `labelled_range` (±0.25 s) giữ `None` → bị bỏ, không thành `N` |
+| `LabelHandler` | nhãn → `root_id/quality_id/ext_id/label_status` | dùng `HarteMapper` |
+| `SampleWriterHandler` | 24 kHz int16 `(N,48000)` → `.npy`; điền `sample_rows` | không truy cập DB |
+
+### 6.2 `HarteMapper`
+
+`map_harte(label) -> MappedChord(status, root, quality, extension)`; id lấy theo thứ tự enum trong `shared/domain/value_objects.py`
+(khớp đánh số trong spec). Quy ước: `dim7` = (dim, dom7), `hdim7` = (dim, min7), `aug` = (major, #5).
+
+| `LabelStatus` | Ý nghĩa | Ví dụ |
+|---------------|---------|-------|
+| `ok` | đủ 3 head | `C:maj7`, `Bb:7(b9)`, `G:sus4` |
+| `partial` | có root, thiếu quality/extension trong taxonomy | `C:6`, `C:5` (power chord) |
+| `no_chord` | không có lớp "N" | `N`, `X` |
+| `unmapped` | chưa hiểu nhãn — **vẫn lưu** để map lại sau, khỏi crawl lại | nhãn lạ |
+
+### 6.3 Bảng `training_samples`
+
+`(song_id, segment_idx)` UNIQUE. Cột: nguồn (`source_type`, `source_url`), vị trí (`start_ms`, `end_ms`), audio (`audio_path` tương đối so với
+`TRAINING_DIR`, `audio_idx` = chỉ số dòng trong `.npy`, `sample_rate`=24000), nhãn (`label_raw`, `label_status`, `root_id`, `quality_id`, `ext_id`),
+`split` (train/val/test), `align_status`. DDL ở `init/init.sql` và `TrainingSampleRepository.ensure_table()`.
+Ghi theo bài hát: `replace_song()` = DELETE + INSERT trong một transaction → chạy lại không sinh bản sao.
+
+### 6.4 Quyết định & điểm cần nhớ
+
+- **Lưu bản gốc (không augment)**; split theo `hash(source_url)` (70/20/10) quyết định lúc ingest.
+  Kaggle: mỗi file WAV là một "bài" riêng nên các octave/variant của cùng một hợp âm có thể rơi vào split khác nhau (rò rỉ nhẹ, chấp nhận được cho nguồn bổ trợ).
+- Biên độ audio **không chuẩn hóa** (stem Demucs có thể nhỏ) → normalize ở phía train.
+- JAAH chỉ kiểm tra duration (option B). Căn chỉnh beat (option C) chưa làm.
+- Stem harmonic nay là bản trộn piano+guitar+other (đã sửa); 27 bài JAAH cũ đã được xếp lại hàng đợi để xử lý lại với stem mới (2026-10-19).
+- **Hooktheory** (`source_type=hooktheory`): `seed_local_datasets.py --source hooktheory --hooktheory-scope rare|all` đọc `Hooktheory.json.gz` (Sheet Sage), đổi hợp âm xếp chồng sang nhãn Harte interval-list
+  (`annotation_parsers/hooktheory.py`), ghi JSON annotation (thời gian theo đoạn, `section` = vùng nhãn ± 3 s). `HooktheoryDownloader` chỉ tải đúng đoạn đó bằng yt-dlp `download_ranges`;
+  `source_url = youtube?v=<id>#ht=<id>` (phần `#ht=` bị bỏ khi hash split và khi tải) để nhiều clip trong cùng video không trùng khóa queue nhưng vẫn chung split.
+- `reset_for_recrawl.py` có thể reset **một nguồn** (`--source jaah --truncate-samples --priority 8`): chỉ xóa `training_samples` + file `.npy` của nguồn đó và xếp lại các dòng `crawl_queue` tương ứng.
+- `song_analyses` không còn được ghi (dữ liệu cũ giữ nguyên).
+
+### 6.5 Việc còn mở (chuyển từ `issue_log.md` đã xóa 2026-10-23)
+
+- **Stem piano của `htdemucs_6s`**: model luôn xuất đủ 6 stem nên `piano.wav` luôn tồn tại; với jazz không có piano (sax, trumpet…) stem này có thể chỉ là phần rò rỉ. Nghe thử 5–10 bài JAAH (`scripts/listen_samples.py` chỉ nghe segment đã xử lý; muốn so stem cần nghe file `separated/` trước khi bị xóa); nếu kém thì chuyển sang mix `other+piano+guitar` (đang dùng) hoặc toàn bộ mix.
+- **Không có DAG discover URL**: nguồn nạp qua `seed_local_datasets.py` (đủ dùng, vì mọi dataset đều tĩnh).
+- **`crawl_queue` kẹt `running`** khi container bị dừng giữa chừng: chưa có cơ chế tự phục hồi → `UPDATE crawl_queue SET status='pending' WHERE status='running'` (chỉ chạy khi cả hai DAG rảnh).
+- **39 nhãn `unmapped`** đều chứa bậc `b2` (vd `F:(b2,b5,b7)`), chưa có quy tắc.
+- ~~Hàng có tổ hợp (quality, ext) không hợp lệ~~ → **đã xử lý (2026-10-23):** `export_dataset.py` tự loại (233 / 49.840 hàng, 0,47 %; vd dim+b9 61, sus4+b5 22, sus2+nat13 19). DB vẫn giữ nguyên các hàng này (chỉ export bỏ). `--keep-invalid-combos` để giữ lại.

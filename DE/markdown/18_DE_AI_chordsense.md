@@ -14,7 +14,7 @@
 | **Fine-tuning method** | LoRA (PEFT) — rank r=16 |
 | **Model architecture** | Cascaded 3-Head (Root → Quality → Extension) |
 | **Head 1 — Root** | 12 classes: C / C# / D / D# / E / F / F# / G / G# / A / A# / B |
-| **Head 2 — Quality** | 5 classes: major / minor / dominant / diminished / suspended *(aug đã bỏ → quy về major + #5)* |
+| **Head 2 — Quality** | 6 classes: major / minor / dominant / diminished / sus2 / sus4 *(aug đã bỏ → quy về major + #5)* |
 | **Head 3 — Extension** | 15 classes: none / b5 / #5 / maj7 / min7 / dom7 / add9 / b9 / nat9 / #9 / nat11 / #11 / nat13 / b13 / alt |
 | **Dataset chính** | RWC + McGill Billboard + JAAH + ChoCo + Pianoteq synthetic |
 | **Augmentation chính** | Pitch-shift + label update (×12 keys) + noise/reverb |
@@ -22,6 +22,23 @@
 | **Post-processing** | HMM smoothing + Chord Transition Prior |
 | **ETL orchestration** | Apache Airflow |
 | **Primary DB** | PostgreSQL (structured) + MongoDB (audio/raw) |
+
+> **Cập nhật 2026-10-19 — khác biệt giữa spec này và code thực tế (phần training ETL).** Spec bên dưới giữ nguyên làm thiết kế gốc;
+> chi tiết trong [`change_log.md`](change_log.md).
+>
+> | Spec | Thực tế đã cài |
+> |------|----------------|
+> | Output ETL = feature `(N,152)` (chroma + hpss + mel) | Output = **segment sạch 2 s, 24 kHz, int16** `(N,48000)` — đúng thứ MERT nhận (waveform). Feature do model tự tính. |
+> | Augmentation trong ETL (×12 key, noise, reverb) | **Không augment trong ETL**; lưu bản gốc, augment chỉ áp cho split `train` ở phía train. `AugmentHandler`/`FeatureHandler` vẫn còn code nhưng không nằm trong chain training. |
+> | Lưu dữ liệu train ở Postgres | Postgres lưu **metadata + nhãn** (`training_samples`); audio là `.npy` trên volume `/data/training`. Mongo chỉ là staging (`raw_audio_jobs`). |
+> | Split train/val/test | Cố định theo `hash(source_url)` 70/20/10 lúc ingest (không leakage giữa các segment chồng lấp của cùng một bài). |
+> | JAAH tải từ Zenodo | Chỉ có annotation; audio tải từ YouTube, chọn bản **khớp thời lượng** annotation (lệch > 3 s bị loại). |
+> | Dataset: RWC + McGill + JAAH + ChoCo + Pianoteq | Hiện có: **Hooktheory (Sheet Sage)** 6.084 clip (ưu tiên cao nhất cho lớp hiếm: sus/add9/9/11/13/dim/aug) + **JAAH** (113) + **ChoCo** (1.359 có audio) + **GuitarSet** (360) + **SWD** (48) + **Kaggle piano_triads** (432). McGill/RWC chưa có data; Pianoteq cần license; HLSD không dùng được (link hết hạn); POP909 hoãn. |
+> | Kaggle Guitar v3 | Thực tế là `piano_triads` (piano, 3 loại triad). |
+> | Lấy stem "piano" (fallback guitar) | `htdemucs_6s` luôn ghi `piano.wav` nên fallback không chạy → thực tế **trộn piano + guitar + other** thành `harmonic.wav` (bỏ drums/bass/vocals). Nguồn sạch (Kaggle/GuitarSet) bỏ qua Demucs. |
+> | Beat tracking bằng madmom | Dùng `librosa.beat.beat_track` (madmom ngừng bảo trì, lỗi build Python ≥ 3.12). |
+> | `dag_dataset_ingest` thủ công 1 lần | 2 DAG tự chạy: `dag_ingest_raw` (mỗi 2 giờ, 50 URL/lượt, `crawl_queue` có `priority`) → `dag_process_audio`. |
+> | Hooktheory | Chỉ tải **đoạn có nhãn ± 3 s** của video YouTube (yt-dlp `download_ranges`); segment ngoài đoạn có nhãn bị bỏ, không gán `N`. License CC BY-NC-SA 3.0 (phi thương mại). |
 
 ---
 
@@ -267,25 +284,26 @@ MERT (frozen) → 1024-dim embedding
                         │ concat root_logits (12,)
                         ▼
 ┌─────────────────────────────────────────────────────────┐
-│  HEAD 2 — QUALITY (5 classes)                           │
+│  HEAD 2 — QUALITY (6 classes)                           │
 │  Input: [embedding(1024) + root_logits(12)] = (1036,)   │
-│  Linear(1036→128) → ReLU → Linear(128→5)                │
+│  Linear(1036→128) → ReLU → Linear(128→6)                │
 │                                                         │
 │  0: major      — 1-3-5        (e.g. C, Cmaj7)          │
 │  1: minor      — 1-b3-5       (e.g. Am, Dm7)           │
 │  2: dominant   — implies b7   (e.g. G7, G7#9)          │
 │  3: diminished — 1-b3-b5      (e.g. Bdim, Bdim7)       │
-│  4: suspended  — sus2 / sus4  (e.g. Csus2, Gsus4)      │
+│  4: sus2       — 1-2-5        (e.g. Csus2, C7sus2)     │
+│  5: sus4       — 1-4-5        (e.g. Csus4, C9sus4)     │
 │                                                         │
 │  ⚠️ aug KHÔNG ở đây → encode = major + #5 (ext)        │
 │  Accuracy target: >85%                                  │
 └───────────────────────┬─────────────────────────────────┘
-                        │ concat root(12) + quality_logits(5)
+                        │ concat root(12) + quality_logits(6)
                         ▼
 ┌─────────────────────────────────────────────────────────┐
 │  HEAD 3 — EXTENSION (15 classes)                        │
-│  Input: [embedding(1024) + root(12) + quality(5)] = (1041,)
-│  Linear(1041→256) → ReLU → Dropout(0.3)                │
+│  Input: [embedding(1024) + root(12) + quality(6)] = (1042,)
+│  Linear(1042→256) → ReLU → Dropout(0.3)                │
 │  → Linear(256→64) → ReLU → Linear(64→15)               │
 │  Loss: Focal Loss (γ=2) — class imbalance               │
 │                                                         │
