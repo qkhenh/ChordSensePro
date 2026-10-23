@@ -27,6 +27,10 @@ class ProcessedAudio:
     segments:        list[AudioSegment] = field(default_factory=list)  # set by SegmentHandler+
     annotation_path: Path | None = None          # set by caller for training pipeline (JAMS/Harte/CSV)
 
+    # Training pipeline outputs (see build_training_pipeline)
+    align_status:    str = "n/a"                 # set by AlignmentCheckHandler: ok | n/a | duration_mismatch
+    sample_rows:     list[dict] = field(default_factory=list)  # set by SampleWriterHandler (one dict per saved segment)
+
     # Populated by SummaryHandler (aggregates segment-level → song-level)
     chord_timeline:  list[dict] = field(default_factory=list)    # [{time_ms, duration_ms, chord}]
     detected_key:    str = ""                                    # e.g. "C", "Am", "F#"

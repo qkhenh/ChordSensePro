@@ -8,10 +8,15 @@ ChoCo Corpus:
 
 Note: ChoCo is primarily an annotation corpus. Audio must be fetched
 via YouTube IDs embedded in each track's metadata JSON.
-source_url = YouTube URL extracted from ChoCo track metadata.
+source_url = YouTube URL extracted from ChoCo track metadata (chordify/CASD partition), or
+'ytsearch1:<performer> <title>' for the audio partitions of the ChoCo release (Isophonics,
+USpop2002, RWC-Pop, Robbie Williams, Billboard) that only carry title/performer/duration. In the
+search case the candidate whose length matches the JAMS ``file_metadata.duration`` is downloaded
+(same logic as JAAH, see jaah_downloader.py).
 """
 from __future__ import annotations
 
+from src.data_loader.application.downloaders._ytdlp import base_opts
 from src.data_loader.domain.models.audio_file import AudioFile
 from src.data_loader.domain.models.download_response import DownloadResponse
 
@@ -24,26 +29,20 @@ class ChocoDownloader:
     to allow future customization (e.g. different retry logic, rate limiting).
     """
 
-    _YDL_OPTS = {
-        "format": "bestaudio/best",
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "wav",
-        }],
-        "postprocessor_args": {
-            "ffmpeg": ["-ar", "44100", "-ac", "1"]
-        },
-        "quiet": True,
-        "no_warnings": True,
-    }
-
     def download(self, audio_file: AudioFile) -> DownloadResponse:
         """Download ChoCo track via yt-dlp using YouTube ID from annotation."""
+        if audio_file.source_url.startswith("ytsearch"):
+            from src.data_loader.application.downloaders.jaah_downloader import JaahDownloader
+            response = JaahDownloader().download(audio_file)
+            if response.is_err and response.error:
+                response.error = response.error.replace("JAAH download failed", "ChoCo search download failed")
+            return response
+
         import yt_dlp  # lazy — Docker only
         out_dir = audio_file.dest_dir
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        opts = {**self._YDL_OPTS, "outtmpl": str(out_dir / "%(id)s.%(ext)s")}
+        opts = base_opts(out_dir)   # shared: retries, timeouts, optional cookies
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(audio_file.source_url, download=True)

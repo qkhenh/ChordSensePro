@@ -22,6 +22,9 @@ class AudioSource(str, Enum):
         PIANOTEQ  — Synthetic render of extended chords via Pianoteq (internal)
         KAGGLE    — Kaggle Guitar v3, 7,000+ isolated chord recordings (optional)
         LOCAL     — Local file already on disk (for testing / manual additions)
+        GUITARSET — GuitarSet, 360 acoustic-guitar clips with JAMS chords (local audio)
+        SWD       — Schubert Winterreise Dataset, 2 audio versions x 24 songs, CSV chords (local audio)
+        HOOKTHEORY — Sheet Sage Hooktheory dataset: ~20 s annotated YouTube clips with rich chords (CC BY-NC-SA)
     """
     RWC      = "rwc"
     MCGILL   = "mcgill"
@@ -30,6 +33,9 @@ class AudioSource(str, Enum):
     PIANOTEQ = "pianoteq"
     KAGGLE   = "kaggle"
     LOCAL    = "local"
+    GUITARSET = "guitarset"
+    SWD      = "swd"
+    HOOKTHEORY = "hooktheory"
 
 
 @dataclass
@@ -51,11 +57,15 @@ class AudioFile(BaseEntity):
     source_type:  AudioSource = AudioSource.LOCAL
     dest_dir:     Path        = Path(".")
     dataset_name: str         = ""   # human-readable label for logging/tracking
+    expected_duration: float | None = None  # seconds, from the annotation (JAAH) — used to pick the right YouTube version
+    section: tuple[float, float] | None = None  # (start, end) seconds of the video to download (Hooktheory clips)
 
     @classmethod
     def from_url(cls, source_url: str, analysis_id: str, dest_dir: Path,
                  source_type: AudioSource | None = None,
-                 dataset_name: str = "") -> AudioFile:
+                 dataset_name: str = "",
+                 expected_duration: float | None = None,
+                 section: tuple[float, float] | None = None) -> AudioFile:
         """Factory — infer source_type from URL if not explicitly provided."""
         if source_type is None:
             # Best-effort inference — callers should pass source_type explicitly
@@ -66,4 +76,6 @@ class AudioFile(BaseEntity):
             source_type=source_type,
             dest_dir=dest_dir,
             dataset_name=dataset_name,
+            expected_duration=expected_duration,
+            section=section,
         )

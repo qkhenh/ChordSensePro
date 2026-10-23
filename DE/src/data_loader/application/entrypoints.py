@@ -11,6 +11,7 @@ from src.data_loader.application.downloaders.choco_downloader import ChocoDownlo
 from src.data_loader.application.downloaders.pianoteq_downloader import PianoteqDownloader
 from src.data_loader.application.downloaders.kaggle_downloader import KaggleDownloader
 from src.data_loader.application.downloaders.local_file_downloader import LocalFileDownloader
+from src.data_loader.application.downloaders.hooktheory_downloader import HooktheoryDownloader
 
 
 def _build_dispatcher() -> AudioDispatcher:
@@ -23,6 +24,9 @@ def _build_dispatcher() -> AudioDispatcher:
     dispatcher.register(AudioSource.PIANOTEQ, PianoteqDownloader())
     dispatcher.register(AudioSource.KAGGLE,   KaggleDownloader())
     dispatcher.register(AudioSource.LOCAL,    LocalFileDownloader())
+    dispatcher.register(AudioSource.HOOKTHEORY, HooktheoryDownloader())
+    for source in (AudioSource.GUITARSET, AudioSource.SWD):   # local audio + own annotations
+        dispatcher.register(source, LocalFileDownloader())
     return dispatcher
 
 
@@ -40,6 +44,7 @@ def run_data_loader(audio_file: AudioFile) -> DownloadResponse:
         PIANOTEQ — Synthetic render of extended chords (Pianoteq CLI)
         KAGGLE   — Guitar v3, 7,000+ recordings (Kaggle API CLI)
         LOCAL    — Local file already on disk (testing / manual additions)
+        HOOKTHEORY — Hooktheory clips: yt-dlp section download of the annotated ~20 s
 
     Args:
         audio_file: AudioFile with source_url, dest_dir, source_type set.

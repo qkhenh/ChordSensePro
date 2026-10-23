@@ -83,6 +83,8 @@ class SegmentHandler(BaseProcessingHandler):
     def _snap_to_beat(self, t: float, beat_times: list[float]) -> float:
         """Snap timestamp to nearest beat within 0.1s tolerance."""
         import numpy as np  # lazy
+        if not beat_times:
+            return t
         beats = np.array(beat_times)
         diffs = np.abs(beats - t)
         nearest_idx = int(np.argmin(diffs))

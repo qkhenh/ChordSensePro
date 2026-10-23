@@ -1,7 +1,8 @@
-"""DAG 2: dag_process_audio — process staged WAVs from MongoDB → save to PostgreSQL.
+"""DAG 2: dag_process_audio — process staged WAVs from MongoDB → labeled training samples.
 
-Schedule: every 6 hours, offset +30 min from dag_ingest_raw so DAG 1 finishes first.
-Picks pending RawAudioJobs from MongoDB → Demucs → beats → features → PostgreSQL.
+Trigger: fired by dag_ingest_raw (TriggerDagRunOperator) right after DAG 1 finishes; no schedule.
+Picks pending RawAudioJobs from MongoDB → training pipeline (alignment check → Demucs → beats →
+segments → labels → .npy) → PostgreSQL ``training_samples``.
 
 Architecture:
     This file contains Airflow wiring only.
@@ -10,9 +11,7 @@ Architecture:
 Pipeline:
     pick_pending_jobs → process_and_save → send_summary
 
-Dependency:
-    Runs 30 min after dag_ingest_raw (schedule offset).
-    If MongoDB has no pending jobs, tasks complete immediately — no-op.
+If MongoDB has no pending jobs, tasks complete immediately — no-op.
 """
 from __future__ import annotations
 from datetime import timedelta
@@ -38,7 +37,7 @@ default_args = {
 with DAG(
     dag_id="dag_process_audio",
     default_args=default_args,
-    description="DAG 2: Process staged WAVs (Demucs + features) → save to PostgreSQL",
+    description="DAG 2: Process staged WAVs → labeled clean segments (.npy + training_samples)",
     schedule=None,   # triggered by dag_ingest_raw via TriggerDagRunOperator — not time-based
     start_date=pendulum.datetime(2026, 9, 9, tz="UTC"),
     catchup=False,

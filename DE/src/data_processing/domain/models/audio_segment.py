@@ -30,6 +30,12 @@ class AudioSegment(BaseEntity):
     hpss_harmonic : list[float] | None = None   # 64-dim
     mel_high      : list[float] | None = None   # 64-dim
     chord_label   : str | None = None           # Harte notation, e.g. "C:maj7" — set by AnnotationHandler
+
+    # Set by LabelHandler (training pipeline): class ids for the 3 classification heads
+    label_status  : str | None = None           # ok | partial | no_chord | unmapped
+    root_id       : int | None = None           # 0-11
+    quality_id    : int | None = None           # 0-4
+    ext_id        : int | None = None           # 0-14
     
     @property
     def duration_ms(self) -> float:

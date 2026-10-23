@@ -5,11 +5,15 @@ Does NOT run Demucs or any processing — just downloads WAV (+ annotation) and 
 """
 from __future__ import annotations
 import os
+import shutil
 import urllib.request
 from pathlib import Path
 
 from src.data_loader.domain.models.audio_file import AudioFile, AudioSource
 from src.data_loader.application.entrypoints import run_data_loader
+from src.data_processing.application.annotation_parsers.parsers import (
+    read_annotation_duration, read_annotation_section,
+)
 from src.data_ingest.domain.models.raw_audio_job import RawAudioJob, RawIngestResult
 from src.data_ingest.infrastructure.mongo.raw_audio_job_repository import RawAudioJobRepository
 from src.shared.infrastructure.mongo.client import get_mongo_db
@@ -55,23 +59,37 @@ class IngestRawService:
 
         dest_dir = self._tmp_dir(analysis_id)
 
-        # ── E: Download audio ─────────────────────────────────────────────────
+        # -- E: Download annotation FIRST (it carries the expected duration) -------
+        annotation_path = ""
+        if annotation_url:
+            annotation_path = self._download_annotation(annotation_url, dest_dir)
+            if not annotation_path:
+                # A source that declares an annotation but has none yields unlabeled audio -
+                # useless for training, so fail instead of silently staging it.
+                shutil.rmtree(dest_dir, ignore_errors=True)
+                return RawIngestResult.failed(f"Annotation unavailable: {annotation_url}")
+
+        expected_duration = (
+            read_annotation_duration(Path(annotation_path)) if annotation_path else None
+        )
+        # Hooktheory: only the annotated section of the video is downloaded
+        section = read_annotation_section(Path(annotation_path)) if annotation_path else None
+
+        # -- E: Download audio -------------------------------------------------------
         audio_file = AudioFile.from_url(
             source_url=source_url,
             analysis_id=analysis_id,
             dest_dir=dest_dir,
             source_type=AudioSource(source_type),
+            expected_duration=expected_duration,
+            section=section,
         )
         response = run_data_loader(audio_file)
         if response.is_err:
+            shutil.rmtree(dest_dir, ignore_errors=True)   # don't leak partial downloads
             return RawIngestResult.failed(response.error or "Download failed")
 
-        # ── E: Download annotation (optional) ────────────────────────────────
-        annotation_path = ""
-        if annotation_url:
-            annotation_path = self._download_annotation(annotation_url, dest_dir)
-
-        # ── Stage to MongoDB ──────────────────────────────────────────────────
+        # -- Stage to MongoDB --------------------------------------------------------
         job = RawAudioJob(
             id=analysis_id,
             source_url=source_url,
@@ -91,7 +109,8 @@ class IngestRawService:
         - HTTP/HTTPS URL  → urllib download (ChoCo GitHub, JAAH Zenodo)
         - Absolute path   → copy to dest_dir  (local datasets via seed script)
 
-        Returns local path string, or '' on failure (non-fatal).
+        Returns local path string, or '' on failure (caller treats it as fatal when an
+        annotation_url was declared — unlabeled audio is useless for training).
         """
         if not url:
             return ""
@@ -102,7 +121,6 @@ class IngestRawService:
             src = Path(src_path)
             if not src.exists():
                 return ""
-            import shutil
             dest = dest_dir / src.name
             shutil.copy2(src, dest)
             return str(dest)

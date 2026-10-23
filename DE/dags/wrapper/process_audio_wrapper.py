@@ -2,13 +2,15 @@
 
 Flow: pick_pending_jobs → process_and_save → send_summary
 
-DAG 2 responsibility: Read RawAudioJob from MongoDB → Demucs → features → PostgreSQL.
+DAG 2 responsibility: Read RawAudioJob from MongoDB → training pipeline → labeled clean 2s
+segments (.npy on the training volume + rows in PostgreSQL ``training_samples``).
 After each job, updates BOTH MongoDB (job status) AND Postgres crawl_queue (via crawl_queue_id).
 Triggered by dag_ingest_raw via TriggerDagRunOperator — not on a time schedule.
 """
 from __future__ import annotations
 import asyncio
 import logging
+import os
 
 from src.data_ingest.infrastructure.mongo.raw_audio_job_repository import RawAudioJobRepository
 from src.data_ingest.domain.models.raw_audio_job import RawAudioJob, RawJobStatus
@@ -21,7 +23,7 @@ from src.shared.application.email_utils import notify_dag_failure, notify_batch_
 
 log = logging.getLogger(__name__)
 
-BATCH_SIZE = 10
+BATCH_SIZE = int(os.getenv("INGEST_BATCH_SIZE", "20"))
 
 
 # ── Airflow failure callback ──────────────────────────────────────────────────
@@ -55,6 +57,7 @@ def pick_pending_jobs(**context) -> None:
                 "source_type":     job.source_type,
                 "wav_path":        job.wav_path,
                 "crawl_queue_id":  job.crawl_queue_id,
+                "annotation_path": job.annotation_path,
             }
             for job in jobs
         ]
@@ -65,7 +68,7 @@ def pick_pending_jobs(**context) -> None:
 
 
 def process_and_save(**context) -> None:
-    """Task 2: Run Demucs + features + save to PostgreSQL for each pending job.
+    """Task 2: Run the training pipeline + save labeled segments for each pending job.
 
     On completion: updates MongoDB job status AND crawl_queue (via crawl_queue_id).
     """
@@ -89,6 +92,7 @@ def process_and_save(**context) -> None:
                 source_url=entry["source_url"],
                 source_type=entry["source_type"],
                 wav_path=entry["wav_path"],
+                annotation_path=entry.get("annotation_path", ""),
                 crawl_queue_id=entry.get("crawl_queue_id", ""),
                 status=RawJobStatus.PROCESSING,
             )

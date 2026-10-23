@@ -7,6 +7,8 @@ Supported formats:
   JamsParser  — McGill Billboard (JAMS JSON), JAAH (JAMS JSON)
   HarteParser — ChoCo Corpus (.lab / .txt in Harte notation)
   RwcParser   — RWC Popular Music (beat-level CSV)
+  SwdParser   — Schubert Winterreise Dataset (semicolon CSV with start;end;shorthand header)
+  HooktheoryParser — Sheet Sage Hooktheory clips (JSON built by annotation_parsers/hooktheory.py)
 """
 from __future__ import annotations
 from pathlib import Path
@@ -30,19 +32,34 @@ class JamsParser:
         data = json.loads(path.read_text(encoding="utf-8"))
         timeline: ChordTimeline = []
 
-        for annotation in data.get("annotations", []):
-            ns = annotation.get("namespace", "")
-            if ns not in ("chord", "chord_harte"):
-                continue
-            for obs in annotation.get("data", []):
-                start = float(obs.get("time", 0.0))
-                dur   = float(obs.get("duration", 0.0))
-                label = str(obs.get("value", "N"))
-                if dur > 0:
-                    timeline.append((start, start + dur, label))
-            break  # use first chord annotation track
+        chord_anns = [
+            a for a in data.get("annotations", [])
+            if a.get("namespace", "") in ("chord", "chord_harte") and isinstance(a.get("data"), list)
+        ]
+        if not chord_anns:
+            return timeline
+        annotation = self._pick_annotation(chord_anns)
+
+        for obs in annotation.get("data", []):
+            start = float(obs.get("time", 0.0))
+            dur   = float(obs.get("duration", 0.0))
+            label = str(obs.get("value", "N"))
+            if dur > 0:
+                timeline.append((start, start + dur, label))
 
         return sorted(timeline, key=lambda x: x[0])
+
+    @staticmethod
+    def _pick_annotation(chord_anns: list[dict]) -> dict:
+        """First chord track, unless one was derived from a note transcription (GuitarSet 'performed').
+
+        Multi-annotator corpora (Chordify CASD) keep their first annotator.
+        """
+        for ann in chord_anns:
+            source = str((ann.get("annotation_metadata") or {}).get("data_source", "")).lower()
+            if "transcription" in source:
+                return ann
+        return chord_anns[0]
 
 
 class HarteParser:
@@ -276,13 +293,104 @@ class JaahParser:
         return timeline
 
 
-def get_parser(annotation_path: Path) -> JamsParser | HarteParser | RwcParser | JaahParser:
+class SwdParser:
+    """Parse Schubert Winterreise Dataset chord CSV (``ann_audio_chord/*.csv``).
+
+    Format (semicolon separated, quoted, with header):
+        start;end;shorthand;extended;majmin;majmin_inv
+        0.46;4.58;"C:min";"C:(b3,5)";"C:min";"C:min"
+        4.58;5.2;"B:dim7/C";"B:(b3,b5,bb7)/C";"B:min";"B:min/C"
+        9.3;9.92;                         <- empty label = no chord
+
+    ``shorthand`` is the richest standard Harte label; ``extended`` (interval list) is the fallback.
+    """
+
+    def parse(self, path: Path) -> ChordTimeline:
+        import csv
+        timeline: ChordTimeline = []
+        with path.open(encoding="utf-8", newline="") as fh:
+            for row in csv.DictReader(fh, delimiter=";"):
+                try:
+                    start, end = float(row["start"]), float(row["end"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                label = (row.get("shorthand") or row.get("extended") or "N").strip() or "N"
+                if end > start:
+                    timeline.append((start, end, label))
+        return sorted(timeline, key=lambda x: x[0])
+
+
+class HooktheoryParser:
+    """Parse the per-clip JSON produced by ``hooktheory.build_annotation``.
+
+    ``timeline`` is already in clip time (0 = start of the downloaded section) and in Harte
+    interval-list notation, so no conversion is needed here. Only the part inside
+    ``labelled_range`` is annotated — see ``read_annotation_range``.
+    """
+
+    def parse(self, path: Path) -> ChordTimeline:
+        import json
+        data = json.loads(path.read_text(encoding="utf-8"))
+        timeline: ChordTimeline = []
+        for start, end, label in data.get("timeline", []):
+            if float(end) > float(start):
+                timeline.append((float(start), float(end), str(label)))
+        return sorted(timeline, key=lambda x: x[0])
+
+
+def _read_hooktheory_pair(annotation_path: Path, key: str) -> tuple[float, float] | None:
+    """Read a ``[start, end]`` pair from a Hooktheory annotation JSON; None for other formats."""
+    import json
+    try:
+        if annotation_path.suffix.lower() != ".json":
+            return None
+        data = json.loads(annotation_path.read_text(encoding="utf-8"))
+        if data.get("format") != "hooktheory":
+            return None
+        start, end = data[key]
+        return float(start), float(end)
+    except Exception:
+        return None
+
+
+def read_annotation_section(annotation_path: Path) -> tuple[float, float] | None:
+    """Absolute (start, end) seconds of the video section to download (Hooktheory only)."""
+    return _read_hooktheory_pair(annotation_path, "section")
+
+
+def read_annotation_range(annotation_path: Path) -> tuple[float, float] | None:
+    """Clip-time (start, end) in which labels are valid; segments outside are dropped (Hooktheory only)."""
+    return _read_hooktheory_pair(annotation_path, "labelled_range")
+
+
+def read_annotation_duration(annotation_path: Path) -> float | None:
+    """Return the audio duration (seconds) declared by an annotation file, if any.
+
+    JAAH JSON: top-level ``duration``.   JAMS: ``file_metadata.duration``.
+    Returns None for formats without duration (.lab / .csv) or on any parse problem.
+    """
+    import json
+    try:
+        if annotation_path.suffix.lower() not in (".json", ".jams"):
+            return None
+        data = json.loads(annotation_path.read_text(encoding="utf-8"))
+        value = data.get("duration")
+        if value is None:
+            value = (data.get("file_metadata") or {}).get("duration")
+        return float(value) if value is not None else None
+    except Exception:
+        return None
+
+
+def get_parser(
+    annotation_path: Path,
+) -> JamsParser | HarteParser | RwcParser | JaahParser | SwdParser | HooktheoryParser:
     """Return the correct parser based on file extension and content.
 
     JAAH detection: .json files with 'parts' key → JaahParser
     Standard JAMS:  .jams files → JamsParser
     Harte .lab:     .lab/.txt → HarteParser
-    RWC CSV:        .csv → RwcParser
+    RWC CSV:        .csv → RwcParser  (SWD 'start;end;shorthand' header → SwdParser)
     """
     ext = annotation_path.suffix.lower()
 
@@ -293,6 +401,8 @@ def get_parser(annotation_path: Path) -> JamsParser | HarteParser | RwcParser | 
             data = json.loads(annotation_path.read_text(encoding="utf-8"))
             if "parts" in data:
                 return JaahParser()
+            if data.get("format") == "hooktheory":
+                return HooktheoryParser()
         except Exception:
             pass
         # Fall back to JAMS parser (some JAMS files use .json extension)
@@ -303,5 +413,11 @@ def get_parser(annotation_path: Path) -> JamsParser | HarteParser | RwcParser | 
     elif ext in (".lab", ".txt"):
         return HarteParser()
     elif ext == ".csv":
+        try:
+            first_line = annotation_path.read_text(encoding="utf-8").splitlines()[0]
+        except (OSError, IndexError):
+            first_line = ""
+        if first_line.lower().startswith("start;end"):
+            return SwdParser()
         return RwcParser()
     raise ValueError(f"Unsupported annotation format: {ext}. Expected .jams, .json, .lab, .txt, .csv")

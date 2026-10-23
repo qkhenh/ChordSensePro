@@ -7,12 +7,15 @@ Reads ProcessedAudio.annotation_path, parses chord timeline, then for each segme
 finds the chord covering its midpoint and assigns it as segment.chord_label.
 
 Skipped (pass-through) if annotation_path is None — safe for inference pipeline.
+
+Hooktheory annotations only cover a short clip: segments outside ``labelled_range`` are left with
+chord_label=None (not 'N') so SampleWriterHandler drops them instead of training on a wrong 'no chord'.
 """
 from __future__ import annotations
 
 from src.data_processing.domain.models.base_handler import BaseProcessingHandler
 from src.data_processing.domain.models.processed_audio import ProcessedAudio
-from src.data_processing.application.annotation_parsers.parsers import get_parser
+from src.data_processing.application.annotation_parsers.parsers import get_parser, read_annotation_range
 
 
 class AnnotationHandler(BaseProcessingHandler):
@@ -46,11 +49,20 @@ class AnnotationHandler(BaseProcessingHandler):
             return data
 
         # Assign chord_label to each segment by midpoint lookup
+        labelled = read_annotation_range(data.annotation_path)
         for segment in data.segments:
+            if labelled is not None and not self._inside(segment, labelled):
+                continue                       # annotated clip only: padding stays unlabeled (dropped later)
             mid_sec = (segment.start_ms + segment.end_ms) / 2 / 1000.0
             segment.chord_label = self._find_chord(mid_sec, timeline)
 
         return self._call_next(data)
+
+    @staticmethod
+    def _inside(segment, labelled: tuple[float, float], tolerance: float = 0.25) -> bool:
+        """True when the whole 2 s segment lies within the labelled range (± tolerance seconds)."""
+        start, end = segment.start_ms / 1000.0, segment.end_ms / 1000.0
+        return start >= labelled[0] - tolerance and end <= labelled[1] + tolerance
 
     @staticmethod
     def _find_chord(mid_sec: float, timeline: list[tuple[float, float, str]]) -> str:

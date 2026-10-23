@@ -2,11 +2,11 @@
 # ChordSensePro DE — Docker Compose
 #
 # Services:
-#   postgres       → App database (song_analyses, chord_attempts, mastery)
+#   postgres       → App database (crawl_queue, training_samples; song_analyses etc. parked)
 #   postgres_meta  → Airflow metadata database (separate for safety)
-#   mongo          → Raw audio blob storage
+#   mongo          → Raw audio staging (raw_audio_jobs — pointers to temp WAVs)
 #   redis          → Celery broker (future) + cache
-#   airflow        → Pipeline orchestrator (standalone = webserver + scheduler)
+#   airflow        → Pipeline orchestrator (standalone = webserver + scheduler), GPU for Demucs
 #
 # Usage:
 #   docker compose up -d          # start all
@@ -120,13 +120,32 @@ services:
       APP_ENV: production
       LOG_LEVEL: INFO
       DATA_DIR: /data
+
+      # ── Training ETL (see markdown/change_log.md) ──
+      TRAINING_DIR: /data/training          # clean labeled segments (.npy) — bind-mounted below
+      INGEST_BATCH_SIZE: "100"              # URLs per DAG run (every 2 h); 20 → 50 → 100 for Hooktheory clips
+      DEMUCS_SEGMENT: "6"                   # seconds per Demucs chunk — keeps a 4 GB GPU from OOM
+      ALIGN_TOLERANCE_SEC: "3.0"            # JAAH: max |audio - annotation| duration
+      YTDLP_COOKIES: /etc/chordsense/cookies.txt   # optional; used only if the file exists
     ports:
       - "8080:8080"
+    # NVIDIA GPU for Demucs (needs NVIDIA driver + Docker Desktop WSL2 GPU support).
+    # No GPU? delete this block — the pipeline falls back to CPU automatically (much slower).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     volumes:
       - ./dags:/opt/airflow/dags           # hot-reload DAGs during dev
       - ./src:/opt/airflow/src             # hot-reload source during dev
-      - ./scripts:/opt/airflow/scripts     # seed scripts
+      - ./scripts:/opt/airflow/scripts     # seed / reset / export scripts
       - ./data/datasets:/data/datasets     # local datasets (read-only)
+      - ./data/training:/data/training     # OUTPUT: training audio (.npy) — visible on the host
+      - ./data/export:/data/export         # OUTPUT: exported train/val/test files for Colab
+      - ./config:/etc/chordsense           # optional config/cookies.txt for yt-dlp
       - chordsense_data:/data              # persistent audio working dir
     command: bash -c "mkdir -p /data/tmp && chmod 777 /data/tmp || true && airflow standalone"
 
