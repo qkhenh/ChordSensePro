@@ -20,6 +20,7 @@ runs/
 checkpoints/
 outputs/
 .cache/
+.pytest_cache/
 
 # LaTeX
 *.aux
@@ -47,3 +48,8 @@ Thumbs.db
 
 # latex_last_project/
 # build_diagram/
+
+# Personal / local-only material
+markdown/learn/
+paper/
+*.zip
