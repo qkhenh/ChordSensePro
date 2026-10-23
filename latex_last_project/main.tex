@@ -81,9 +81,9 @@
 \newcommand*{\subsubsubsectionmark}[1]{}
 \makeatother
 
-% ── longtable global: flush with text block ──────────────────────────
-\setlength{\LTleft}{0pt}
-\setlength{\LTright}{0pt}
+% ── longtable: LTleft/LTright set per-table for borderless tables only ──
+% (UC spec tables use | borders and must NOT have LTleft=LTright=0)
+
 
 \begin{document}
 \justifying
@@ -195,7 +195,7 @@ The main objectives of ChordSense Pro are:
 The project covers the following areas:
 \begin{itemize}
     \item \textbf{AI Model Scope:} The primary instrument is \textbf{piano}. Piano has a well-defined acoustic model and abundant training data. Guitar is considered an optional extension if time permits.
-    \item \textbf{Chord Vocabulary:} Basic triads (major, minor, diminished, augmented), dominant and major 7th chords, and extended chords up to the 13th (9th, 11th, 13th, suspended, altered).
+    \item \textbf{Chord Vocabulary:} Basic triads (major, minor, diminished, suspended; augmented triads are represented as major with a raised 5th), dominant and major 7th chords, and extended chords up to the 13th (9th, 11th, 13th, suspended, altered).
     \item \textbf{Data Sources:} Academic datasets with open licenses (McGill Billboard, JAAH, ChoCo, RWC, Kaggle), plus a custom Vietnamese Piano Extended Chord Dataset recorded by the authors.
     \item \textbf{Platform:} A web application (React.js front end + Python FastAPI back end) containerized with Docker Compose.
     \item \textbf{Out of scope:} Real-time instrument tuning, score generation from scratch (sheet music export is a future feature), and mobile native applications.
@@ -266,9 +266,9 @@ ChordSense Pro uses a Python-centric ecosystem for data engineering and AI, comb
 
     Audio Ingestion & yt-dlp & Download audio from YouTube URLs as WAV. \\
     \addlinespace
-    Audio Processing & Demucs (Meta AI) & Source separation --- isolates the harmonic instrument stem. \\
+    Audio Processing & Demucs \texttt{htdemucs\_6s} (Meta AI) & Six-stem source separation --- isolates the harmonic instrument stem (piano, with guitar/other as fallback). \\
     \addlinespace
-    Beat Tracking & madmom & Detects musical tempo, beat times, and time signature. \\
+    Beat Tracking & Librosa (\texttt{beat\_track}) & Detects musical tempo (BPM) and beat times via dynamic-programming beat tracking. \\
     \addlinespace
     Feature Extraction & Librosa & Chroma CQT, Mel-spectrogram, HPSS features. \\
     \addlinespace
@@ -284,8 +284,7 @@ ChordSense Pro uses a Python-centric ecosystem for data engineering and AI, comb
     \addlinespace
     Staging Storage & MongoDB 7.0 & Temporary queue for raw audio jobs between pipeline stages. \\
     \addlinespace
-    Cache & Redis 7.2 & Session and inference result caching. \\
-    \addlinespace
+
     Backend API & Python FastAPI & Asynchronous RESTful API and WebSocket notifications. \\
     \addlinespace
     Frontend UI & React.js + Vite & Single-page application for the interactive practice workspace. \\
@@ -304,7 +303,7 @@ ChordSense Pro follows a \textbf{Three-Tier Web Architecture} with two specializ
     \item \textbf{Client-Side Harmonic Engine:} A high-performance JavaScript module running entirely in the browser. It maps each chord to its Roman numeral function and recommends improvisation scales with no network latency.
     \item \textbf{Application Layer:} A Python FastAPI backend providing asynchronous REST endpoints (JWT authentication, song chart management, playlist CRUD, dictionary queries) and WebSocket job notifications.
     \item \textbf{Data Engineering Layer:} Apache Airflow 2.8 orchestrating three ETL DAGs: raw audio ingestion, audio processing, and analytics rollup.
-    \item \textbf{AI Processing Service:} A Python service integrating Demucs (stem separation), madmom (beat tracking), Librosa (feature extraction), and MERT-v1-330M with Cascaded 3-Head LoRA for chord inference.
+    \item \textbf{AI Processing Service:} A Python service integrating Demucs (stem separation), Librosa (beat tracking and feature extraction), and MERT-v1-330M with Cascaded 3-Head LoRA for chord inference.
     \item \textbf{Data \& Storage Layer:} PostgreSQL 16 for relational data and JSONB chord event timelines; MongoDB 7.0 for audio staging between pipeline stages.
 \end{itemize}
 
@@ -504,7 +503,7 @@ Before setting prices for users, the team studied the real cost of running the C
     \bottomrule
     \endlastfoot
 
-    Web Server (Backend API + Frontend) & \$50--\$120 & DigitalOcean or AWS Lightsail: 4\,vCPU, 8\,GB RAM VPS. Includes FastAPI, React build, Redis, and PostgreSQL. \\
+    Web Server (Backend API + Frontend) & \$50--\$120 & DigitalOcean or AWS Lightsail: 4\,vCPU, 8\,GB RAM VPS. Includes FastAPI, React build, and PostgreSQL. \\
     \addlinespace
     GPU Inference Server & \$150--\$400 & NVIDIA T4 on RunPod or Lambda Labs (\$0.15--\$0.35/hr). Used for Demucs stem separation and MERT chord inference. Serverless mode reduces cost during low traffic. \\
     \addlinespace
@@ -591,7 +590,7 @@ The system has the following types of users and roles:
 The overall flow from the user's perspective is:
 \begin{enumerate}
     \item User pastes a YouTube URL or uploads an MP3/WAV file.
-    \item The AI pipeline runs automatically: yt-dlp $\to$ Demucs (stem separation) $\to$ madmom (beat tracking) $\to$ MERT + LoRA (chord inference) $\to$ key detection.
+    \item The AI pipeline runs automatically: yt-dlp $\to$ Demucs (stem separation) $\to$ Librosa (beat tracking) $\to$ MERT + LoRA (chord inference) $\to$ key detection.
     \item The front end renders a Smart Grid: a beat-aligned chord display synchronized with the audio player ($<$100\,ms accuracy).
     \item The Client-Side Harmonic Engine annotates each chord with its Roman numeral function (I, ii, V7\ldots) and a recommended scale.
     \item The user can practice with A/B Loop, metronome, and speed shift, look up any chord in the Chord Dictionary, override incorrect chords with the Edit Marker, and save the song to a personal playlist.
@@ -692,7 +691,7 @@ The core research challenge is building a model that reliably recognizes extende
 
     FR-01 & Accept music input via YouTube URL or MP3/WAV file upload and dispatch it to the AI analysis pipeline. & \cmark & \cmark & High \\
     \addlinespace
-    FR-02 & The AI pipeline shall perform source separation (Demucs), beat tracking (madmom), and chord recognition (MERT + LoRA Hierarchical) to produce a chord event timeline. & \cmark & \cmark & High \\
+    FR-02 & The AI pipeline shall perform source separation (Demucs), beat tracking (Librosa), and chord recognition (MERT + LoRA Hierarchical) to produce a chord event timeline. & \cmark & \cmark & High \\
     \addlinespace
     FR-03 & Render the chord event timeline as a beat-aligned Smart Grid synchronized to audio playback with sub-100\,ms accuracy. & \cmark & \cmark & High \\
     \addlinespace
@@ -955,7 +954,7 @@ Basic Flow &
 \begin{enumerate}[leftmargin=1.5em, nosep, topsep=2pt, partopsep=0pt, parsep=0pt, after=\strut]
     \item User types a YouTube URL or uploads an audio file
     \item System checks the input and sends the job to the analysis queue
-    \item The AI pipeline runs: yt-dlp $\rightarrow$ Demucs $\rightarrow$ madmom $\rightarrow$ MERT inference
+    \item The AI pipeline runs: yt-dlp $\rightarrow$ Demucs $\rightarrow$ Librosa beat tracking $\rightarrow$ MERT inference
     \item When done, the system sends a notification to the browser
     \item The page shows the Smart Grid with chords and annotations
     \item The song is saved to the user's library
@@ -1323,8 +1322,8 @@ The data engineering pipeline is organized using \textbf{Domain-Driven Design (D
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.6\textwidth]{image/ddd_onion_architecture.jpg}
-    \caption{DDD Onion Architecture --- Domain Layer at the core, Application Layer in the middle, Infrastructure Layer at the outermost ring.}
+    \includegraphics[width=0.6\textwidth]{image/ddd.png}
+    \caption{DDD Architecture --- Domain Layer at the core, Application Layer in the middle, Infrastructure Layer at the outermost ring.}
     \label{fig:ddd-onion}
 \end{figure}
 
@@ -1422,9 +1421,9 @@ For the inference pipeline (no augmentation), only five handlers are used:
 Table~\ref{tab:handlers} describes the input and output of each handler.
 
 \begin{longtable}{@{}
-    >{\raggedright\arraybackslash}p{0.22\linewidth}
-    >{\raggedright\arraybackslash}p{0.35\linewidth}
-    >{\raggedright\arraybackslash}p{0.37\linewidth}@{}}
+    >{\raggedright\arraybackslash}p{0.21\linewidth}
+    >{\raggedright\arraybackslash}p{0.34\linewidth}
+    >{\raggedright\arraybackslash}p{0.38\linewidth}@{}}
 
     \caption{Pipeline Handler Chain: Input and Output}\label{tab:handlers} \\
     \toprule
@@ -1439,9 +1438,9 @@ Table~\ref{tab:handlers} describes the input and output of each handler.
     \bottomrule
     \endlastfoot
 
-    SeparateHandler & WAV file path & Isolated harmonic stem WAV (Demucs \texttt{htdemucs} model) \\
+    SeparateHandler & WAV file path & Isolated harmonic stem WAV (Demucs \texttt{htdemucs\_6s} model; fallback order piano $\to$ guitar $\to$ other) \\
     \addlinespace
-    BeatHandler & Harmonic stem WAV & Beat times (seconds), tempo (BPM), time signature \\
+    BeatHandler & Harmonic stem WAV & Beat times (seconds), tempo (BPM) \\
     \addlinespace
     SegmentHandler & Harmonic stem + beat times & List of 2-second audio segments aligned to beat boundaries \\
     \addlinespace
@@ -1454,7 +1453,7 @@ Table~\ref{tab:handlers} describes the input and output of each handler.
     FeatureHandler & Segments (original + augmented) & Chroma CQT, Mel-spectrogram, HPSS harmonic component per segment \\
 \end{longtable}
 
-The annotation parser module supports six formats: JAMS (\texttt{JamsParser}), JAAH custom JSON (\texttt{JaahParser}), Harte notation (\texttt{HarteParser}), RWC CSV (\texttt{RwcParser}), and Kaggle filename convention. This makes the pipeline dataset-agnostic: adding a new dataset only requires adding a new parser.
+The annotation parser module supports five formats: JAMS (\texttt{JamsParser}), JAAH custom JSON (\texttt{JaahParser}), Harte notation (\texttt{HarteParser}), RWC CSV (\texttt{RwcParser}), and Kaggle filename convention. This makes the pipeline dataset-agnostic: adding a new dataset only requires adding a new parser.
 
 \subsubsection{Orchestration Layer (data\_ingest)}
 
@@ -1533,10 +1532,10 @@ Between DAG~1 and DAG~2, the system needs a place to temporarily hold raw audio 
 Table~\ref{tab:db_staging} compares three candidate databases for this role.
 
 \begin{longtable}{@{}
-    >{\raggedright\arraybackslash}p{0.27\linewidth}
-    >{\raggedright\arraybackslash}p{0.22\linewidth}
-    >{\raggedright\arraybackslash}p{0.22\linewidth}
-    >{\raggedright\arraybackslash}p{0.22\linewidth}@{}}
+    >{\raggedright\arraybackslash}p{0.28\linewidth}
+    >{\raggedright\arraybackslash}p{0.21\linewidth}
+    >{\raggedright\arraybackslash}p{0.21\linewidth}
+    >{\raggedright\arraybackslash}p{0.21\linewidth}@{}}
 
     \caption{Database Comparison for the Staging Layer}\label{tab:db_staging} \\
     \toprule
@@ -1583,10 +1582,10 @@ After DAG~2 finishes, the output data is clean and well-structured: a detected k
 Table~\ref{tab:db_final} compares three candidate databases for this role.
 
 \begin{longtable}{@{}
-    >{\raggedright\arraybackslash}p{0.27\linewidth}
-    >{\raggedright\arraybackslash}p{0.22\linewidth}
-    >{\raggedright\arraybackslash}p{0.22\linewidth}
-    >{\raggedright\arraybackslash}p{0.22\linewidth}@{}}
+    >{\raggedright\arraybackslash}p{0.28\linewidth}
+    >{\raggedright\arraybackslash}p{0.21\linewidth}
+    >{\raggedright\arraybackslash}p{0.21\linewidth}
+    >{\raggedright\arraybackslash}p{0.21\linewidth}@{}}
 
     \caption{Database Comparison for the Final Storage Layer}\label{tab:db_final} \\
     \toprule
@@ -1684,8 +1683,8 @@ The key novelty of ChordSense Pro's AI model is the \textbf{Cascaded 3-Head} out
 
 \begin{enumerate}
     \item \textbf{Head 1 --- Root (12 classes):} Predicts the root note: C, C\#, D, D\#, E, F, F\#, G, G\#, A, A\#, B.
-    \item \textbf{Head 2 --- Quality (6 classes):} Predicts the chord quality: major, minor, dominant, diminished, augmented, suspended. This head receives the MERT embedding \textit{plus} the logits from Head 1.
-    \item \textbf{Head 3 --- Extension (8 classes):} Predicts the harmonic extension: none, maj7, min7, dom7, 9th, 11th, 13th, altered. This head receives the MERT embedding \textit{plus} the logits from Head 1 \textit{and} Head 2.
+    \item \textbf{Head 2 --- Quality (5 classes):} Predicts the chord quality: major, minor, dominant, diminished, suspended. Augmented chords are not a separate quality; they are encoded as the \texttt{\#5} extension. This head receives the MERT embedding \textit{plus} the logits from Head 1.
+    \item \textbf{Head 3 --- Extension (15 classes):} Predicts the harmonic extension, following Chordie.com naming: none; 5th alterations (b5, \#5); 7th layer (maj7, min7, dom7); 9th layer (add9, b9, nat9, \#9); 11th layer (nat11, \#11); 13th layer (nat13, b13); and alt. This head receives the MERT embedding \textit{plus} the logits from Head 1 \textit{and} Head 2.
 \end{enumerate}
 
 This cascaded conditioning resolves the core spectral ambiguity problem. Am7 and C6 contain the same four pitch classes, so a flat classifier cannot distinguish them from the audio alone. But in the cascaded design, Head 1 first determines the root note (A vs.\ C). Head 3 then receives this root information as context, making it far easier to determine that the extension is ``min7'' (given root A) rather than ``6th'' (given root C).
@@ -1709,7 +1708,7 @@ The combined dataset is split 70\% training / 20\% validation / 10\% test using 
 
 \begin{longtable}{@{}
     >{\raggedright\arraybackslash}p{0.40\linewidth}
-    >{\raggedright\arraybackslash}p{0.55\linewidth}@{}}
+    >{\raggedright\arraybackslash}p{0.52\linewidth}@{}}
 
     \caption{AI Model Training Hyperparameters}\label{tab:training_config} \\
     \toprule
@@ -1754,9 +1753,9 @@ The combined dataset is split 70\% training / 20\% validation / 10\% test using 
 \subsection{Target Performance Benchmarks}
 
 \begin{longtable}{@{}
-    >{\raggedright\arraybackslash}p{0.46\linewidth}
-    >{\centering\arraybackslash}p{0.24\linewidth}
-    >{\centering\arraybackslash}p{0.24\linewidth}@{}}
+    >{\raggedright\arraybackslash}p{0.44\linewidth}
+    >{\centering\arraybackslash}p{0.23\linewidth}
+    >{\centering\arraybackslash}p{0.23\linewidth}@{}}
 
     \caption{Performance Benchmarks: ChordSense Pro vs.\ ChordAI}\label{tab:target_metrics} \\
     \toprule

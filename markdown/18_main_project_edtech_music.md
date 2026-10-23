@@ -91,8 +91,8 @@ Cách 2: Paste YouTube URL
 BƯỚC 2: AI PHÂN TÍCH TOÀN BÀI (DE/AI scope)
 ══════════════════════════════════════════════
 Pipeline:
-  Audio → Source Separation (Demucs) → Guitar/Piano track tách riêng
-        → Beat Tracking (madmom) → tempo + downbeat positions
+  Audio → Source Separation (Demucs htdemucs_6s) → trộn stem harmonic (piano + guitar + other)
+        → Beat Tracking (librosa) → tempo + beat positions
         → Chord Detection theo từng beat → Key Detection
 
 Output BE trả về cho FE:
@@ -184,23 +184,23 @@ YouTube URL
 yt-dlp → WAV (mono, 44.1kHz)
     │
     ▼
-Demucs (Meta AI, open source):
-  → stems: drums.wav | bass.wav | other.wav | vocals.wav
-  → Chỉ dùng "other" (guitar) + "bass" cho chord detection
+Demucs htdemucs_6s (Meta AI, open source, chạy GPU):
+  → 6 stems: drums | bass | vocals | other | guitar | piano
+  → Trộn piano + guitar + other → harmonic.wav cho chord detection (bỏ drums / bass / vocals)
     │
     ▼
-Beat Tracker (madmom BeatTracker):
+Beat Tracker (librosa.beat.beat_track — thay madmom):
   → beat_times = [0.0, 0.5, 1.0, 1.5, ...]  ← downbeats mỗi 0.5s ở 120BPM
   → time_signature = 4/4
     │
     ▼
 Segmenter:
-  → Chia audio thành 2s segments căn theo beat boundaries
+  → Chia audio thành segment 2 s (bước 1.5 s), điểm bắt đầu hút về beat gần nhất
   → Mỗi segment = 1 chord prediction context
     │
     ▼
 MERT + LoRA Hierarchical Model:
-  → Input: mel spectrogram của từng segment
+  → Input: waveform 24 kHz của từng segment 2 s (MERT tự trích đặc trưng)
   → Output: Root + Quality + Extension + confidence
     │
     ▼
@@ -319,8 +319,8 @@ G13  = G–B–D–F–A–C–E (7 nốt) ← gần như toàn bộ thang âm C
                            embedding → Head3 (Extension)  ← không biết root+quality
 
 ✅ Cascaded (cải tiến):   embedding → Head1 → root_logits (12)
-                           embedding + root_logits → Head2 → quality_logits (6)
-                           embedding + root_logits + quality_logits → Head3 → extension_logits (8)
+                           embedding + root_logits → Head2 → quality_logits (5)
+                           embedding + root_logits + quality_logits → Head3 → extension_logits (15)
 
 → Head3 "biết" context từ Head1+2 → xác suất extension chuẩn hơn
 → Am7 vs C6: Head1 xác định root (A vs C) trước → Head3 dễ phân biệt hơn
@@ -412,7 +412,7 @@ Vấn đề C — CHORD DURATION:
   → Ảnh hưởng đến cách tính accuracy (per-frame vs per-chord)
 ```
 
-**Giải pháp trong thesis:** Beat-aligned segmentation (madmom) + HMM smoothing với chord transition probability.
+**Giải pháp trong thesis:** Beat-aligned segmentation (librosa beat tracker) + HMM smoothing với chord transition probability.
 
 ---
 
@@ -490,10 +490,10 @@ Scope thesis:
   OPTIONAL: Guitar (nếu còn thời gian sau khi piano model hoàn thiện)
 
 Dataset strategy:
-  Piano:  Download sẵn (RWC, McGill có piano tracks)
-          + Pianoteq synthetic (render extended chords)
+  Piano:  Hooktheory / JAAH / ChoCo (qua Demucs → stem harmonic) + Kaggle piano_triads + SWD
+          + Pianoteq synthetic (render extended chords — cần license, chưa làm)
           + Tự thu âm piano (hoặc dùng digital piano/keyboard)
-  Guitar: Dataset Kaggle (basic chords đủ dùng)
+  Guitar: GuitarSet (360 clip, JAMS) + Kaggle (basic chords đủ dùng)
           → Chỉ dùng làm "optional fine-tune" nếu mở rộng
 ```
 
@@ -529,8 +529,8 @@ Phương pháp fine-tuning cho ACR (Automatic Chord Recognition)
 
 | Phương pháp | Params Train | VRAM | Accuracy (Extended) | Inference Latency | Overfitting Risk | Phù hợp thesis? |
 |-------------|-------------|------|---------------------|-------------------|------------------|-----------------|
-| **Full Fine-Tuning** | 100% (~95M) | ~40GB | Lý thuyết cao nhất | Bình thường | **Rất cao** | ❌ Không thực tế |
-| **LoRA** | ~0.5% (~500K) | ~8GB | 90-99% của full FT | **Zero overhead** | Thấp | **✅ Lựa chọn chính** |
+| **Full Fine-Tuning** | 100% (~330M) | ~40GB+ | Lý thuyết cao nhất | Bình thường | **Rất cao** | ❌ Không thực tế |
+| **LoRA** | ~0.6% (~2M) | ~20–24GB | 90-99% của full FT | **Zero overhead** | Thấp | **✅ Lựa chọn chính** |
 | **Adapter Layers** | ~1-3% | ~10GB | ~90-95% của full FT | +10-20ms/layer | Thấp | ✅ Tốt |
 | **Prefix Tuning** | < 0.1% | ~6GB | 75-85% của full FT | Rất nhỏ | Thấp | ⚠️ Yếu hơn với task phức tạp |
 | **Conformer/Chordformer** | Thiết kế mới | ~16GB | **SOTA 2024** | ~186ms | Trung bình | ✅ Tốt (kiến trúc phức hơn) |
@@ -556,7 +556,7 @@ Ví dụ MERT-95M:
 **Ưu điểm:**
 - ✅ **Industry standard** — dùng trong GPT, Stable Diffusion, hầu hết SOTA 2024
 - ✅ **Zero inference latency**: adapter merge vào W trước khi serve
-- ✅ **VRAM thấp**: train được trên RTX 3090/4090 (24GB) — không cần A100
+- ✅ **VRAM thấp hơn full fine-tuning**: ~20–24 GB — fine-tune trên Google Colab Pro (A100 40GB)
 - ✅ **Chống catastrophic forgetting**: W gốc không bị thay đổi
 - ✅ **Dễ thực nghiệm**: thay đổi rank r=8/16/32 → thesis experiments rõ ràng
 - ✅ **PEFT library** của HuggingFace: 5 dòng code để gắn vào MERT
@@ -565,7 +565,7 @@ Ví dụ MERT-95M:
 - ⚠️ Có thể thua full fine-tuning 1-5% khi task quá khác biệt so với pre-training
 - ⚠️ Chọn `target_modules` sai → kết quả kém (cần attention layers, không phải FFN)
 
-**Kết luận**: LoRA là lựa chọn **thực tế và đủ mạnh** cho thesis. Không cần A100, có thể replicate ở bất kỳ đâu.
+**Kết luận**: LoRA là lựa chọn **thực tế và đủ mạnh** cho thesis. Chạy được trên Colab Pro (A100 40GB), dễ replicate.
 
 ---
 
@@ -715,7 +715,7 @@ Experiments để so sánh trong thesis:
   Baseline C: MERT zero-shot (không fine-tune)
   Baseline D: Conformer/Chordformer (2024 SOTA architecture)   ← Thêm mới
   Our Model A: MERT + LoRA Flat (không hierarchical)
-  Our Model B: MERT + LoRA Hierarchical (McGill + JAAH + ChoCo)
+  Our Model B: MERT + LoRA Hierarchical (Hooktheory + JAAH + ChoCo + GuitarSet)
   Our Model C: Model B + VN fine-tune                           ← Best model
   Commercial:  ChordAI (so sánh trên VN test set)
 ```
@@ -782,7 +782,7 @@ lora_config = LoraConfig(
 
 model = get_peft_model(mert_model, lora_config)
 model.print_trainable_parameters()
-# trainable params: 3,964,820 || all params: 330,000,000 || trainable%: 1.201%
+# trainable params: ~1,982,464 || all params: ~330M || trainable%: ~0.600%
 ```
 
 ---
@@ -874,6 +874,8 @@ key = key_detector(full_song)  # Detect key 1 lần cho cả bài
 # → Model biết bài đang ở Fm → B = Bb (không phải A#) → label chuẩn hơn
 ```
 
+> **Lưu ý theo code (2026-10-19):** ETL **không** trích feature (chroma / HPSS / mel). Nó lưu waveform 24 kHz sạch vì MERT nhận waveform và tự học đặc trưng. Multi-scale feature ở trên là hướng thí nghiệm / ablation phía train hoặc inference; `FeatureHandler` vẫn còn trong code nhưng không nằm trong chain training.
+
 ### 4.4 Target Metrics — Vượt ChordAI
 
 | Chord Category | ChordAI Accuracy (est.) | Target ChordSense | Cách đạt |
@@ -941,8 +943,8 @@ Feature 6: User UGC — Cá nhân hóa & Thư viện
    → Guitar VN đặc thù (detuned, noise) → chưa có ai làm
 
 2. Hierarchical LoRA cho Extended Chord Recognition:
-   → Mức 1: Root note (12 classes) → Mức 2: Quality (major/minor/dim/aug)
-   → Mức 3: Extension (basic/7th/9th/alt) → So sánh với flat 60-class approach
+   → Mức 1: Root note (12 classes) → Mức 2: Quality (5: major/minor/dominant/dim/sus; aug quy về major + #5)
+   → Mức 3: Extension (15 lớp: none/b5/#5/maj7/min7/dom7/add9/b9/nat9/#9/nat11/#11/nat13/b13/alt) → So sánh với flat 60-class approach
    → Contribution: hierarchical approach vượt trội trên extended chords
 
 3. Harmonic Analysis Engine tích hợp client-side:
@@ -959,7 +961,7 @@ Feature 6: User UGC — Cá nhân hóa & Thư viện
 
 ## 6. Kiến Trúc Tổng Thể — DE Pipeline (Actual Implementation)
 
-> **Cập nhật 2026-09-16:** Phản ánh đúng source code thực tế đã triển khai. Áp dụng Domain-Driven Design (DDD) với tách biệt domain/application/infrastructure cho từng Bounded Context.
+> **Cập nhật 2026-10-19:** Phản ánh đúng source code hiện tại. Phạm vi DE = **crawl + xử lý data để train AI** (training ETL). Đầu ra của ETL là **segment audio sạch 2 s (24 kHz, int16) + nhãn hợp âm** — đúng thứ MERT nhận vào — chứ không còn là feature thủ công (chroma/mel/HPSS). Áp dụng Domain-Driven Design (DDD) với tách biệt domain/application/infrastructure cho từng Bounded Context. Chi tiết thay đổi: `DE/markdown/change_log.md`; luồng dữ liệu từng nguồn: `DE/markdown/data_flow.md`.
 
 ### 6.1 DDD Architecture — Bounded Contexts
 
@@ -969,167 +971,186 @@ Feature 6: User UGC — Cá nhân hóa & Thư viện
 
 ```
 DE/
-├── docker-compose.yml              ← 5 services: PostgreSQL ×2, MongoDB, Redis, Airflow
-├── Dockerfile                      ← Custom Airflow image + ffmpeg + libsndfile
+├── docker-compose.yml              ← 5 services: PostgreSQL ×2, MongoDB, Redis, Airflow (GPU NVIDIA)
+├── Dockerfile                      ← Airflow 2.10.3 / Python 3.11 + ffmpeg + libsndfile + librosa, demucs, yt-dlp...
+├── config/                         ← cookies.txt (yt-dlp, tùy chọn khi YouTube chặn 403)
 │
 ├── dags/                           ← Airflow DAG definitions
-│   ├── dag_ingest_raw.py           ← DAG 1: crawl_queue → download → MongoDB (*/2h, batch=10)
-│   ├── dag_process_audio.py        ← DAG 2: MongoDB → handler chain → PostgreSQL (trigger)
-│   ├── dag_analytics_rollup.py     ← DAG 3: daily mastery rollup (23:30)
+│   ├── dag_ingest_raw.py           ← DAG 1: crawl_queue → download → MongoDB (*/2h, 50 URL/lượt, priority cao trước)
+│   ├── dag_process_audio.py        ← DAG 2: MongoDB → training pipeline → PostgreSQL + .npy (trigger sau DAG 1)
+│   ├── dag_analytics_rollup.py     ← DAG 3: mastery rollup (23:30) — phía hệ thống, giữ nguyên
 │   └── wrapper/                    ← Thin wrappers calling Application Services
 │
 ├── src/
 │   ├── shared/                     ← SHARED KERNEL
-│   │   ├── domain/                 ← BaseEntity, ValueObjects
-│   │   └── infrastructure/         ← Config, PostgreSQL pool, MongoDB client
+│   │   ├── domain/                 ← BaseEntity, value_objects (Root/Quality/Extension), dataset_split.py
+│   │   └── infrastructure/         ← Config, PostgreSQL client, MongoDB client
 │   │
 │   ├── data_ingest/                ← BC 1: Orchestration & Coordination
-│   │   ├── domain/models/
-│   │   │   ├── crawl_queue_item.py ← CrawlQueueItem (pending→running→done/failed)
-│   │   │   ├── raw_audio_job.py    ← RawAudioJob (MongoDB staging)
-│   │   │   └── ingest_record.py
+│   │   ├── domain/models/          ← CrawlQueueItem (pending→running→done/failed), RawAudioJob (Mongo staging)
 │   │   ├── application/
-│   │   │   ├── ingest_raw_service.py     ← DAG 1: crawl → download → MongoDB
-│   │   │   └── process_audio_service.py  ← DAG 2: MongoDB → chain → PostgreSQL
-│   │   └── infrastructure/
-│   │       ├── repositories/crawl_queue_repository.py  ← PostgreSQL
-│   │       └── mongo/raw_audio_job_repository.py       ← MongoDB
+│   │   │   ├── ingest_raw_service.py     ← DAG 1: annotation → duration/section → audio → MongoDB
+│   │   │   └── process_audio_service.py  ← DAG 2: MongoDB → chain → training_samples
+│   │   └── infrastructure/         ← crawl_queue_repository (PostgreSQL), raw_audio_job_repository (MongoDB)
 │   │
 │   ├── data_loader/                ← BC 2: Audio Acquisition (Extract)
 │   │   ├── domain/
-│   │   │   ├── models/audio_file.py       ← AudioFile + AudioSource enum
-│   │   │   ├── models/download_response.py
+│   │   │   ├── models/audio_file.py       ← AudioFile (+ section) + AudioSource enum
 │   │   │   ├── ports/downloader.py        ← Downloader Protocol (port)
 │   │   │   └── services/audio_dispatcher.py ← Registry: source → downloader
 │   │   └── application/downloaders/
-│   │       ├── jaah_downloader.py         ← yt-dlp search → WAV
-│   │       ├── local_file_downloader.py   ← Copy + resample
-│   │       ├── choco_downloader.py        ← yt-dlp YouTube URL
-│   │       ├── mcgill_downloader.py       ← yt-dlp YouTube URL
-│   │       ├── rwc_downloader.py          ← Copy + resample
-│   │       ├── kaggle_downloader.py       ← Kaggle CLI (stub)
-│   │       └── pianoteq_downloader.py     ← MIDI render (stub)
+│   │       ├── jaah_downloader.py         ← yt-dlp search 10 kết quả → chọn bản khớp thời lượng
+│   │       ├── choco_downloader.py        ← ytsearch (ChoCo release) hoặc URL (chordify)
+│   │       ├── hooktheory_downloader.py   ← yt-dlp download_ranges: chỉ tải đúng đoạn có nhãn
+│   │       ├── local_file_downloader.py   ← Kaggle / GuitarSet / SWD: librosa → WAV 44.1 kHz mono
+│   │       ├── _ytdlp.py                  ← helper dùng chung (cookies, JS runtime, retry)
+│   │       └── mcgill / rwc / kaggle / pianoteq   ← stub, chưa có data / license
 │   │
 │   ├── data_processing/            ← BC 3: Audio Transform (Transform)
-│   │   ├── domain/models/
-│   │   │   ├── base_handler.py            ← BaseProcessingHandler (CoR pattern)
-│   │   │   ├── processed_audio.py         ← ProcessedAudio (data bag)
-│   │   │   └── audio_segment.py           ← AudioSegment (2s clip + features)
+│   │   ├── domain/models/          ← BaseProcessingHandler (CoR), ProcessedAudio (data bag), AudioSegment
 │   │   └── application/
-│   │       ├── pipeline_factory.py
+│   │       ├── pipeline_factory.py       ← build_training_pipeline() / build_pipeline() (inference)
 │   │       ├── pipeline_handlers/
-│   │       │   ├── separate_handler.py    ← Demucs → stem WAV
-│   │       │   ├── beat_handler.py        ← madmom → tempo + beats
-│   │       │   ├── segment_handler.py     ← 2s segments
-│   │       │   ├── annotation_handler.py  ← JAMS/JAAH/Kaggle chord labels
-│   │       │   ├── summary_handler.py     ← chord_timeline + key detection
-│   │       │   ├── augment_handler.py     ← Pitch-shift ×12 + noise + reverb
-│   │       │   └── feature_handler.py     ← chroma/mel/HPSS features
-│   │       └── annotation_parsers/parsers.py ← JamsParser, JaahParser, HarteParser, RwcParser
+│   │       │   ├── alignment_check_handler.py ← JAAH/ChoCo: thời lượng bài · Hooktheory: độ dài đoạn
+│   │       │   ├── separate_handler.py   ← Demucs htdemucs_6s (GPU) → harmonic mix piano+guitar+other
+│   │       │   ├── beat_handler.py       ← librosa beat tracking
+│   │       │   ├── segment_handler.py    ← cửa sổ 2 s, bước 1.5 s, snap theo beat
+│   │       │   ├── annotation_handler.py ← nhãn tại điểm giữa segment (+ gating theo labelled_range)
+│   │       │   ├── label_handler.py      ← HarteMapper → root / quality / extension
+│   │       │   ├── sample_writer_handler.py ← 24 kHz int16 → 1 file .npy / bài
+│   │       │   └── summary / augment / feature   ← chỉ cho pipeline inference, KHÔNG nằm trong chain training
+│   │       ├── annotation_parsers/   ← parsers.py (Jams, Jaah, Harte, Rwc, Swd, Hooktheory) + hooktheory.py
+│   │       └── mappers/harte_mapper.py ← nhãn Harte/JAMS thô → (root_id, quality_id, ext_id, LabelStatus)
 │   │
-│   ├── song_analysis/              ← BC 4: Analysis Output (Load)
-│   │   ├── domain/models/song_analysis.py
-│   │   └── infrastructure/repositories/song_analysis_repository.py
+│   ├── training_data/              ← BC 3b: Load (Training)
+│   │   └── TrainingSample + TrainingSampleRepository  ← bảng training_samples (replace_song idempotent)
 │   │
-│   └── user_analytics/             ← BC 5: Student Progress
-│       ├── domain/models/
-│       │   ├── chord_attempt.py
-│       │   └── chord_mastery.py
-│       └── infrastructure/repositories/
+│   ├── song_analysis/              ← (phía hệ thống — parked) song_analyses
+│   └── user_analytics/             ← (phía hệ thống — parked) chord_attempts / mastery
 │
 ├── scripts/
-│   ├── seed_local_datasets.py      ← Seed crawl_queue (545 entries)
-│   └── seed_chords.py
+│   ├── seed_local_datasets.py      ← Seed crawl_queue: scanner riêng cho từng nguồn (--source, --hooktheory-scope)
+│   ├── reset_for_recrawl.py        ← Reset có chọn lọc (--source, --priority, --truncate-samples)
+│   ├── remap_labels.py             ← Map lại nhãn `unmapped` mà không crawl lại
+│   └── export_dataset.py           ← Gom theo split → {train,val,test}_audio.npy + _meta.parquet (cho Colab)
 │
 └── init/
-    └── init.sql                    ← Auto-create tables on container start
+    └── init.sql                    ← Tạo bảng khi container start (crawl_queue, training_samples, ...)
 ```
 
 ### 6.2 ETL Pipeline — Data Flow
 
 ```
 ═══════════════════════════════════════════════════════════════════════
- DAG 1: dag_ingest_raw (Extract)                        Schedule: */2h
+ DAG 1: dag_ingest_raw (Extract)          Schedule: */2h · batch = 50 URL
 ═══════════════════════════════════════════════════════════════════════
 
-  PostgreSQL                                         MongoDB
- ┌──────────────┐                                ┌──────────────────┐
- │ crawl_queue  │  pick batch(10)                │ raw_audio_jobs   │
- │ (545 entries)│ ──────────────┐                │                  │
- │              │               ▼                │ wav_path:        │
- │ status:      │     ┌──────────────────┐       │ annotation_path: │
- │  pending ──► │     │ AudioDispatcher  │       │ status:          │
- │  running     │     │ (Registry)       │       │  pending_proc    │
- │  done        │     │                  │       └──────────────────┘
- │  failed      │     │ jaah → JaahDL    │                ▲
- └──────────────┘     │ local → LocalDL  │       write job + WAV
-                      │ choco → ChocoDL  │                │
-                      └────────┬─────────┘       ─────────┘
-                               │
-                         download → WAV (mono, 22050Hz)
-                         save /data/tmp/{id}.wav
+  PostgreSQL                                          MongoDB
+ ┌───────────────┐   pick 50 theo priority         ┌──────────────────┐
+ │ crawl_queue   │ ──────────────┐                 │ raw_audio_jobs   │
+ │ (~8.400 mục)  │               ▼                 │ (chỉ là staging) │
+ │               │     ┌────────────────────┐      │ wav_path         │
+ │ status:       │     │ copy file nhãn     │      │ annotation_path  │
+ │  pending ──►  │     │ đọc duration/section│     │ status           │
+ │  running      │     └─────────┬──────────┘      └──────────────────┘
+ │  done/failed  │               ▼                          ▲
+ └───────────────┘     ┌────────────────────┐               │
+                       │ AudioDispatcher    │      WAV tạm + job
+                       │ (Registry)         │               │
+                       │ jaah   → YouTube search, khớp thời lượng ≤ 3 s
+                       │ choco  → ytsearch / URL ─────────────┤
+                       │ hooktheory → yt-dlp tải ĐÚNG ĐOẠN có nhãn
+                       │ local / guitarset / swd → file local (librosa)
+                       └────────────────────┘
 
 ═══════════════════════════════════════════════════════════════════════
  DAG 2: dag_process_audio (Transform + Load)         Triggered by DAG 1
 ═══════════════════════════════════════════════════════════════════════
 
-  MongoDB              Handler Chain (Chain of Responsibility)
- ┌────────────┐  ┌───────────────────────────────────────────────────┐
- │ raw_audio  │  │            ProcessedAudio (data bag)              │
- │ _jobs      │  │                                                   │
- │ pick next  │──│  Separate ─► Beat ─► Segment ─► Annotation       │
- │ pending    │  │  (Demucs)   (madmom)  (2s win)   (JAMS/JAAH/     │
- └────────────┘  │                                   Kaggle fname)   │
-                 │  ─► Summary ─► Augment ─► Feature                │
-                 │  (timeline,   (×12 pitch   (chroma_cqt,          │
-                 │   key detect)  +noise/rev)  mel, HPSS)           │
-                 └───────────────────┬───────────────────────────────┘
-                                     ▼
-                            ┌─────────────────┐
-                            │ PostgreSQL       │
-                            │ song_analyses    │
-                            │ (detected_key,   │
-                            │  chord_timeline, │
-                            │  chord_sheet)    │
-                            └─────────────────┘
+ MongoDB            Handler Chain (Chain of Responsibility)
+┌──────────┐  ┌──────────────────────────────────────────────────────────┐
+│ raw_audio│  │                ProcessedAudio (data bag)                 │
+│ _jobs    │  │                                                          │
+│ pick     │──│ AlignmentCheck ─► Separate ─► Beat ─► Segment            │
+│ pending  │  │ (duration /       (Demucs     (librosa) (2 s, bước 1.5 s)│
+└──────────┘  │  section)         htdemucs_6s,                           │
+              │                   GPU; bỏ qua                            │
+              │                   clean source)                          │
+              │  ─► Annotation ─► Label ─► SampleWriter                  │
+              │     (parser theo   (Harte   (24 kHz int16,               │
+              │      định dạng)     Mapper)  1 .npy / bài)               │
+              └────────────────────────┬─────────────────────────────────┘
+                                       ▼
+        ┌───────────────────────────────────────────────┐
+        │ PostgreSQL  training_samples                  │  + /data/training/audio/{song_id}.npy
+        │ (source, start/end_ms, label_raw, root/quality│    int16 (N, 48000)
+        │  /ext id, label_status, split, align_status)  │
+        └───────────────────────┬───────────────────────┘
+                                ▼
+              scripts/export_dataset.py → Colab (train MERT + LoRA)
 
 ═══════════════════════════════════════════════════════════════════════
- DAG 3: dag_analytics_rollup                          Schedule: 23:30
+ DAG 3: dag_analytics_rollup (phía hệ thống)          Schedule: 23:30
 ═══════════════════════════════════════════════════════════════════════
   chord_attempts → aggregate → student_chord_mastery (rolling 3-day)
 ```
+
+**Điểm mấu chốt:** lõi xử lý (Segment → Annotation → Label → SampleWriter) **dùng chung cho mọi dataset**. Mỗi nguồn chỉ khác ở 4 điểm: cách lấy audio, parser nhãn, có kiểm tra thời lượng/đoạn không, có chạy Demucs không (bảng đầy đủ ở `DE/markdown/data_flow.md`).
 
 ### 6.3 Design Patterns
 
 | Pattern | Where | Purpose |
 |---------|-------|---------|
-| Chain of Responsibility | `BaseProcessingHandler` → 7 handlers | Pipeline extensibility: add/remove handlers without touching others |
-| Registry / Strategy | `AudioDispatcher` → 7 downloaders | Polymorphic audio download: new dataset = new downloader + register |
-| Data Bag / DTO | `ProcessedAudio` dataclass | Single mutable object flows through entire chain |
-| Ports & Adapters | `Downloader` Protocol + concrete impls | Domain doesn't know about yt-dlp, ffmpeg, etc. |
-| Factory Method | `pipeline_factory.py` | `build_pipeline()` vs `build_training_pipeline()` |
+| Chain of Responsibility | `BaseProcessingHandler` → 7 handler (training) | Pipeline extensibility: thêm/bớt handler không ảnh hưởng handler khác |
+| Registry / Strategy | `AudioDispatcher` → downloader theo `AudioSource` | Nguồn dữ liệu mới = 1 downloader + 1 dòng đăng ký (Hooktheory được thêm đúng cách này) |
+| Data Bag / DTO | `ProcessedAudio` dataclass | Một object mutable đi xuyên suốt chain; `sample_rows` do SampleWriter điền |
+| Ports & Adapters | `Downloader` Protocol + concrete impls | Domain không biết yt-dlp, ffmpeg, librosa |
+| Parser Strategy | `get_parser()` nhận diện định dạng nhãn | JAAH JSON / JAMS / CSV / Hooktheory JSON dùng chung interface |
+| Repository | `CrawlQueueRepository`, `TrainingSampleRepository` | `replace_song()` = DELETE + INSERT trong 1 transaction → chạy lại không sinh bản sao |
+| Factory Method | `pipeline_factory.py` | `build_training_pipeline()` (ETL train) vs `build_pipeline()` (inference) |
 
 ### 6.4 Infrastructure Services
 
 | Service | Container | Port | Role |
 |---------|-----------|------|------|
-| PostgreSQL 16 | `chordsense_postgres` | 5432 | App DB: crawl_queue, song_analyses, chord_attempts |
+| PostgreSQL 16 | `chordsense_postgres` | 5432 | App DB: `crawl_queue`, **`training_samples`** (dữ liệu train), `song_analyses` / `chord_attempts` (phía hệ thống) |
 | PostgreSQL 16 | `chordsense_airflow_meta` | — | Airflow metadata (isolated) |
-| MongoDB 7.0 | `chordsense_mongo` | 27017 | WAV staging: raw_audio_jobs |
-| Redis 7.2 | `chordsense_redis` | 6379 | Cache + future Celery broker |
-| Airflow 2.10 | `chordsense_airflow` | 8080 | DAG orchestration (standalone) |
+| MongoDB 7.0 | `chordsense_mongo` | 27017 | **Chỉ staging**: `raw_audio_jobs` (đường dẫn WAV tạm + nhãn) |
+| Redis 7.2 | `chordsense_redis` | 6379 | Cache (chưa dùng trong training ETL) |
+| Airflow 2.10.3 | `chordsense_airflow` | 8080 | DAG orchestration (standalone) + **GPU NVIDIA** (RTX 3050 4 GB) cho Demucs |
+
+Volume: `./data/datasets` (dataset tải tay) · `./data/training` → `/data/training` (file `.npy`) · `./config` → `/etc/chordsense` (cookies). Biến môi trường chính: `INGEST_BATCH_SIZE=50`, `DEMUCS_SEGMENT`, `ALIGN_TOLERANCE_SEC=3`, `TRAINING_DIR`, `YTDLP_COOKIES`.
 
 ### 6.5 Annotation Parser Support
 
 | Dataset | Format | Parser | Notes |
 |---------|--------|--------|-------|
+| Hooktheory (Sheet Sage) | JSON do seed sinh từ `Hooktheory.json.gz` (beat → giây bằng nội suy tuyến tính từng đoạn) | `HooktheoryParser` | Nhãn Harte interval-list (`G:(3,5,9)` = add9, sus2/sus4, 9/11/13, dim7); thời gian tính theo **đoạn đã tải** |
 | JAAH | Custom JSON (`parts[].beats[] + chords[]`) | `JaahParser` | 113 jazz tracks |
-| ChoCo | JAMS (`chord` or `chord_harte` namespace) | `JamsParser` | 20k tracks |
-| McGill | JAMS (`chord` namespace) | `JamsParser` | 1300 pop/rock |
-| Kaggle | Filename (`A_dim_2_0.wav → A:dim`) | `_label_from_filename()` | 432 piano triads |
-| RWC | CSV | `RwcParser` | 100 J-pop |
+| ChoCo | JAMS (`chord` / `chord_harte`) | `JamsParser` | chordify 50 + release 1.309 bài có audio |
+| GuitarSet | JAMS (chọn track *performed*) | `JamsParser` | 360 clip guitar |
+| SWD | CSV (`;`) | `SwdParser` | 48 bản thu |
+| Kaggle piano_triads | Tên file (`A_dim_2_0.wav → A:dim`) | `_label_from_filename()` | 432 piano triads |
+| McGill / RWC | JAMS / CSV | `JamsParser` / `RwcParser` | Parser có sẵn nhưng chưa có data |
 | Harte | `.lab/.txt` tab-separated | `HarteParser` | Standard ACR format |
 
+### 6.6 Công nghệ & quyết định xử lý chính
+
+| Hạng mục | Quyết định | Lý do |
+|----------|-----------|-------|
+| Output ETL | Segment sạch 2 s · 24 kHz · int16 `(N, 48000)` / bài (`.npy`) + metadata ở Postgres | MERT nhận waveform 24 kHz; feature để model tự tính; không phình Postgres |
+| Augmentation | **Không** nằm trong ETL (chỉ áp cho split `train` ở phía train) | Lưu bản gốc, tránh rò rỉ giữa split; `AugmentHandler`/`FeatureHandler` giữ lại cho inference |
+| Source separation | Demucs `htdemucs_6s` chạy qua subprocess, GPU nếu có (`--segment` nhỏ cho VRAM 4 GB, OOM thì thử lại CPU) | Tách 6 stem; nguồn "clean" (Kaggle, GuitarSet) bỏ qua Demucs |
+| Stem để gán nhãn | **Trộn piano + guitar + other** → `harmonic.wav` (bỏ drums/bass/vocals, peak ≤ 0.99) | `htdemucs_6s` luôn ghi `piano.wav` kể cả bài không có piano → fallback cũ không bao giờ chạy |
+| Beat tracking | `librosa.beat.beat_track` (đã thay madmom) | madmom ngừng bảo trì từ 2022, lỗi build Python ≥ 3.12 |
+| Segmentation | Cửa sổ 2 s, bước 1.5 s (chồng 0.5 s), start hút về beat gần nhất nếu lệch < 0.1 s | Căn theo nhịp, tăng số mẫu |
+| Gán nhãn | Hợp âm đang phát ở **điểm giữa** segment; không có → `N` | Tránh nhãn lẫn ở biên chuyển hợp âm |
+| Taxonomy | `HarteMapper` → 12 root · 5 quality · 15 extension; `LabelStatus` = `ok` / `partial` / `no_chord` / `unmapped` | `unmapped` vẫn lưu, `remap_labels.py` map lại mà không crawl lại |
+| Kiểm tra căn chỉnh | JAAH/ChoCo: lệch thời lượng bài > 3 s → loại · Hooktheory: so độ dài đoạn + thời lượng video lúc tải | Bản YouTube khác bản gốc làm lệch toàn bộ nhãn |
+| Hooktheory | Chỉ tải **đoạn có nhãn ± 3 s** (yt-dlp `download_ranges`); segment ngoài `labelled_range` bị bỏ (không gán `N`) | ~0.3–1.5 MB / clip thay vì cả video; không tạo nhãn `N` giả |
+| Split | `hash(source_url)` → 70/20/10, cố định lúc ingest (Hooktheory bỏ `#ht=` trước khi hash) | Mọi segment/clip của một bài/video nằm cùng một split |
+| Crawl | yt-dlp (+ deno cho YouTube JS challenge, cookies tùy chọn) · 50 URL / 2 giờ · `priority` cao chạy trước | Chạy ổn trên máy cá nhân; ưu tiên nguồn giàu hợp âm hiếm |
+| Idempotent | `ON CONFLICT DO NOTHING` khi seed · `replace_song()` khi ghi · `reset_for_recrawl.py --source` | Chạy lại an toàn, reset đúng một nguồn
 
 ---
 
@@ -1167,7 +1188,22 @@ Bài hát bắt buộc theo từng lớp:
 
 Đây là nguồn để train AI model. Không phụ thuộc API nào.
 
-### Dataset 1: McGill Billboard Dataset ⭐⭐⭐
+> **Cập nhật 2026-10-19 — nguồn thực tế đã tích hợp vào ETL** (chi tiết: `DE/markdown/dataset_sources.md`):
+>
+> | Nguồn | Audio | Nhãn | Giá trị cho model | Số mục trong `crawl_queue` |
+> |-------|-------|------|-------------------|----------------------------|
+> | **Hooktheory (Sheet Sage)** ⭐ | YouTube, đoạn ~20 s | JSON hợp âm giàu | sus, add9, 9/11/13, dim/hdim, aug — **nguồn ưu tiên cao nhất cho lớp hiếm** | 6.084 clip (scope `rare`; 17.855 dùng được) |
+> | JAAH | YouTube search, khớp thời lượng | JAAH JSON | 7th, dim7, aug (jazz) | 113 |
+> | ChoCo (chordify + release) | YouTube search / URL | JAMS | pop/rock + extension | 1.359 |
+> | GuitarSet | file local | JAMS | guitar acoustic, audio sạch | 360 |
+> | SWD | file local | CSV | cổ điển (Schubert Winterreise) | 48 |
+> | Kaggle piano_triads | file local | tên file | triad piano (bổ trợ) | 432 |
+>
+> **Không dùng được / hoãn:** HLSD (lead-sheet-dataset) — link Google Drive hết hạn, crawler TheoryTab hỏng → thay bằng `Hooktheory.json.gz` của Sheet Sage · McGill/RWC chưa có data · Pianoteq cần license · POP909 (synth MIDI) hoãn vì gần như chỉ maj/min (+ sus2/sus4, 7th) · AAM huỷ (chỉ maj/min/N.C.).
+> **License:** Hooktheory là CC BY-NC-SA 3.0 (phi thương mại) — cần ghi nhận khi công bố.
+> Các mô tả dataset bên dưới là kế hoạch ban đầu; số liệu/tên thực tế theo bảng này.
+
+### Dataset 1: McGill Billboard Dataset ⭐⭐⭐ — ⚠️ chưa có data, chưa tích hợp
 
 **URL:** `https://ddmal.music.mcgill.ca/research/The_McGill_Billboard_Project/`
 **License:** Creative Commons (research use)
@@ -1180,7 +1216,7 @@ Format: JAMS (JSON Annotated Music Specification)
 → Chuẩn vàng của ACR research, dùng trong hàng trăm paper quốc tế
 ```
 
-### Dataset 2: RWC Popular Music Database
+### Dataset 2: RWC Popular Music Database — ⚠️ chưa có data, chưa tích hợp
 
 **URL:** `https://staff.aist.go.jp/m.goto/RWC-MDB/`
 **Kích thước:** 100 bài pop Nhật với full chord annotation
@@ -1189,6 +1225,7 @@ Format: JAMS (JSON Annotated Music Specification)
 
 **URL:** `zenodo.org` (CC license)
 **Kích thước:** 113 jazz tracks từ Smithsonian Jazz Collection
+**Thực tế:** repo chỉ có annotation; audio tải từ YouTube, chọn bản khớp thời lượng annotation (lệch > 3 s bị loại)
 ```
 Đặc biệt: Có đầy đủ dominant 7th, maj7, min7, dim7, aug
 → Dataset quan trọng cho Head 2 (Quality) và Head 3 (Extension)
@@ -1198,6 +1235,7 @@ Format: JAMS (JSON Annotated Music Specification)
 
 **URL:** `github.com/smashub/choco`
 **Kích thước:** 20,000 bài từ 18 nguồn khác nhau
+**Thực tế:** chỉ tích hợp phần có audio — chordify 50 bài (link YouTube) + release 1.309 bài (YouTube search theo performer/title)
 ```
 Format: Harte notation chuẩn (C:maj7, G:7, A:min9)
 Bao gồm: JAAH + iReal Book + nhiều jazz standards
@@ -1208,7 +1246,8 @@ Bao gồm: JAAH + iReal Book + nhiều jazz standards
 
 ```
 "Guitar Chord Dataset v3" — kaggle.com/datasets/fabianavinci/guitar-chords-v3
-→ 7,000+ recordings của Am, C, D, Dm, E, Em, F, G
+→ (kế hoạch ban đầu) 7,000+ recordings của Am, C, D, Dm, E, Em, F, G
+→ Thực tế đã dùng: Kaggle piano_triads (432 WAV, piano, 3 loại triad) + GuitarSet (360 clip guitar acoustic, JAMS)
 → Isolated chords → ideal cho real-time recognition
 ```
 
@@ -1261,20 +1300,21 @@ Lưu PostgreSQL: chord_attempts, practice_sessions
 
   MERT encoder (frozen)
          ↓
-    768-dim embedding
-    ┌────┬────┬────┐
-    ↓    ↓    ↓
-  Head 1  Head 2   Head 3
-  Root   Quality  Extension
-  (12)   (6)      (8)
+    1024-dim embedding (MERT-v1-330M)
+         ↓
+  Head 1 — Root (12)
+         ↓ root_logits
+  Head 2 — Quality (5)      ← cascaded: nhận embedding + root_logits
+         ↓ quality_logits
+  Head 3 — Extension (15)   ← cascaded: nhận embedding + root + quality
 
   Head 1 — ROOT (12 classes): C, C#, D, D#, E, F, F#, G, G#, A, A#, B
     → Accuracy target: >95%
 
-  Head 2 — QUALITY (6 classes): major, minor, dominant, diminished, augmented, suspended
+  Head 2 — QUALITY (5 classes): major, minor, dominant, diminished, suspended  (aug → major + #5)
     → Accuracy target: >85%
 
-  Head 3 — EXTENSION (8 classes): none, maj7, min7, dom7, 9th, 11th, 13th, altered
+  Head 3 — EXTENSION (15 classes): none, b5, #5, maj7, min7, dom7, add9, b9, nat9, #9, nat11, #11, nat13, b13, alt
     → Accuracy target: >75% (khó nhất, ít data nhất)
 
   Output cuối: Root + Quality + Extension → kết hợp = chord đầy đủ
@@ -1423,7 +1463,7 @@ CREATE TABLE student_chord_mastery (
 ```
 raw_audio:          Binary audio từ student (TTL: 30 ngày)
 mel_spectrograms:   128×T matrix (TTL: 90 ngày, dùng retrain)
-training_samples:   Processed samples từ McGill/RWC/VN dataset
+training_samples:   (không dùng — dữ liệu train nằm ở PostgreSQL `training_samples` + file .npy; Mongo chỉ giữ staging `raw_audio_jobs`)
 song_audio_cache:   Processed song audio (sau Demucs) — TTL 7 ngày
 ```
 
@@ -1566,27 +1606,32 @@ User lưu bản Custom Chart vào Playlist (BE lưu DB)
 ```
 Layer               Technology              Lý do chọn
 ─────────────────────────────────────────────────────────────────
-Audio Processing    Librosa 0.10+           Standard MIR library
+Audio Processing    Librosa 0.10.2+         Standard MIR library (beat tracking, resample, load)
                     soundfile               WAV decode/encode
-                    Demucs (Meta AI)        Source separation (NEW)
-                    madmom                  Beat tracking (tốt hơn librosa)
-                    yt-dlp                  YouTube download (NEW)
-AI Framework        PyTorch 2.0+            Base framework
-                    HuggingFace MERT        Pre-trained music model
-                    PEFT (LoRA)             Fine-tuning adapter
+                    Demucs 4.x              htdemucs_6s, chạy GPU (CUDA) qua subprocess
+                    (madmom đã bỏ)          Beat tracking dùng librosa.beat_track (madmom ngừng bảo trì)
+                    yt-dlp (+ deno)         YouTube download, tải theo đoạn (download_ranges) cho Hooktheory
+                    numpy / pyarrow         .npy int16 24 kHz (SampleWriter) · export parquet cho Colab
+AI Framework        PyTorch 2.5+            Base framework
+                    HuggingFace MERT        MERT-v1-330M (transformers 4.47+)
+                    PEFT 0.14+ (LoRA)       Fine-tuning adapter
                     Focal Loss              Extended chord class imbalance
-Data Pipeline       Apache Airflow 2.8      DAG orchestration
-                      dag_ingest_raw        Download audio → stage vào MongoDB (mỗi 2h)
-                      dag_process_audio     Demucs → features → PostgreSQL (auto-trigger)
+Data Pipeline       Apache Airflow 2.10.3   DAG orchestration (LocalExecutor, standalone; GPU NVIDIA cho Demucs)
+                      dag_ingest_raw        crawl_queue → download audio → stage vào MongoDB (mỗi 2h, 50 URL/lượt)
+                      dag_process_audio     AlignmentCheck → Demucs → Beat → Segment → Annotation → Label
+                                            → SampleWriter → training_samples + .npy (auto-trigger)
                       dag_analytics_rollup  Daily mastery rollup (23:30 hàng ngày)
 Primary DB          PostgreSQL 16           Structured data
   DB Client         psycopg2-binary         Raw SQL — không ORM (SQLAlchemy/Alembic đã bỏ)
   DB Init           init/init.sql           Tables tự tạo lúc container start
 Raw Storage         MongoDB 7.0             raw_audio_jobs staging (DAG 1 → DAG 2)
-Cache               Redis 7.2               Session, inference cache
+Training Data       PostgreSQL + .npy       training_samples (metadata + nhãn + split) · /data/training/audio/*.npy
+Cache               Redis 7.2               Session, inference cache (chưa dùng trong training ETL)
 API                 FastAPI                 Async, high performance
 Real-time Audio     WebRTC (browser)        Student audio capture
-Container           Docker + Compose        Dev + deploy
+Container           Docker + Compose        Dev + deploy (5 service, Airflow image 2.10.3 / Python 3.11)
+Runtime / Tooling   Python 3.11 · uv        Package manager; pydantic v2, structlog, tenacity
+Testing             pytest                  Unit test ETL (parser, mapper, handler, split)
 Experiment Track    MLflow                  Training experiment logging
 Sheet Render        VexFlow.js              Chord sheet web rendering
 ```
@@ -1603,13 +1648,14 @@ Tháng 1:
              ✔ init/init.sql: auto-create tables khi container start
              ✔ psycopg2 raw SQL (bỏ SQLAlchemy/Alembic cho đơn giản)
   Tuần 3:   DDD src/ architecture: data_ingest, data_processing, song_analysis modules
-  Tuần 4:   Audio processing pipeline (Demucs, yt-dlp, Librosa chroma CQT)
+  Tuần 4:   Audio processing pipeline (Demucs, yt-dlp, librosa beat / segment)
 
 Tháng 2:
-  Tuần 1:   Download datasets thủ công: JAAH (Zenodo), Kaggle piano triads, ChoCo (GitHub)
-  Tuần 1-2: seed_local_datasets.py: seed crawl_queue từ local folders (545 entries)
+  Tuần 1:   Download datasets thủ công: JAAH (Zenodo), Kaggle piano triads, ChoCo (GitHub), Hooktheory (Sheet Sage), GuitarSet, SWD
+  Tuần 1-2: seed_local_datasets.py: seed crawl_queue từ local folders (545 entries ban đầu;
+             sau đó thêm GuitarSet, SWD, ChoCo release, Hooktheory → ~8.400 mục)
   Tuần 3:   dag_ingest_raw: download audio (JAAH YouTube + Kaggle WAV) → MongoDB staging
-             dag_process_audio: Demucs → beat → features → PostgreSQL song_analyses
+             dag_process_audio: Demucs → beat → segment → annotation → label → training_samples + .npy
   Tuần 4:   dag_analytics_rollup: daily mastery per student chord
 
 Tháng 3:
@@ -1629,7 +1675,7 @@ Tháng 4:
 Tháng 5:
   Tuần 1-2: MERT zero-shot evaluation (Baseline C)
              Conformer/Chordformer baseline (Baseline D)
-  Tuần 3-4: Hierarchical LoRA fine-tuning trên McGill+RWC+JAAH
+  Tuần 3-4: Hierarchical LoRA fine-tuning trên Hooktheory + JAAH + ChoCo + GuitarSet
              Experiments: flat vs hierarchical, rank 8/16/32, curriculum learning
 
 Tháng 6:
