@@ -28,6 +28,8 @@ Usage:
     python scripts/seed_local_datasets.py --source kaggle
     python scripts/seed_local_datasets.py --source choco
     python scripts/seed_local_datasets.py           # all sources
+    python scripts/seed_local_datasets.py --source hooktheory --hooktheory-scope rare   # default
+    python scripts/seed_local_datasets.py --source hooktheory --hooktheory-scope all
 """
 from __future__ import annotations
 import argparse
@@ -146,11 +148,21 @@ def scan_kaggle(base: Path) -> list[dict]:
     return entries
 
 
-def scan_choco(base: Path, limit: int = 500) -> list[dict]:
-    """Scan ChoCo partitions — reads YouTube ID from JAMS files.
+def scan_choco(base: Path, limit: int = 0) -> list[dict]:
+    """Scan ChoCo partitions that carry a YouTube link.
 
-    Actual path after clone: choco/choco/choco/partitions/
+    Real layout (git clone smashub/choco):
+        choco/choco/partitions/<partition>/choco/meta.csv
+        choco/choco/partitions/<partition>/choco/jams/<id>.jams
+
+    Only partitions whose meta.csv has a ``youtube_url`` column have audio we can
+    fetch (currently ``chordify`` = Chordify Annotator Subjectivity Dataset).
+    billboard / ireal-pro / biab-internet-corpus are annotation-only (no audio).
+    Several annotators may point at the same video; ``source_url`` is UNIQUE in
+    crawl_queue so the first annotator wins and the rest are skipped.
     """
+    import csv
+
     # Try multiple possible paths (nested git clone structures)
     candidates = [
         base / "choco" / "partitions",
@@ -163,35 +175,227 @@ def scan_choco(base: Path, limit: int = 500) -> list[dict]:
         return []
 
     print(f"  [choco] Using: {partitions_dir}")
-    entries = []
-    for jams_file in sorted(partitions_dir.rglob("ann_audio_chord.jams")):
-        if limit and len(entries) >= limit:
-            break
-        try:
-            data = json.loads(jams_file.read_text(encoding="utf-8"))
-            meta = data.get("file_metadata", {})
-            ids  = meta.get("identifiers", {})
-            yt_id = ids.get("youtube_id") or ids.get("youtube") or ids.get("id_youtube")
-            if not yt_id:
+    entries: list[dict] = []
+    seen: set[str] = set()
+    for meta_csv in sorted(partitions_dir.glob("*/choco/meta.csv")):
+        partition = meta_csv.parent.parent.name
+        with meta_csv.open(encoding="utf-8", newline="") as fh:
+            reader = csv.DictReader(fh)
+            if "youtube_url" not in (reader.fieldnames or []):
+                print(f"  [choco] {partition}: no youtube_url column → annotation-only, skipped")
                 continue
-
-            # Compute container path relative to base
-            try:
-                rel = jams_file.relative_to(base.parent.parent.parent)  # relative to DE/
+            for row in reader:
+                if limit and len(entries) >= limit:
+                    break
+                url = (row.get("youtube_url") or "").strip()
+                tid = (row.get("id") or "").strip()
+                if not url or not tid or url in seen:
+                    continue
+                jams_file = meta_csv.parent / "jams" / f"{tid}.jams"
+                if not jams_file.exists():
+                    continue
+                seen.add(url)
                 container_annot = f"/data/datasets/{jams_file.relative_to(base)}".replace("\\", "/")
-            except ValueError:
-                container_annot = ""
+                entries.append({
+                    "source_url":     url,
+                    "annotation_url": container_annot,
+                    "source_type":    "choco",
+                    "display":        f"ChoCo/{partition}: {row.get('track_title', tid)} — {row.get('track_performer', '')}",
+                })
 
+    print(f"  [choco] Found {len(entries)} tracks with audio link")
+    return entries
+
+
+def _container_path(path: Path, base: Path) -> str:
+    """Host path under data/datasets → path as seen inside the container (/data/datasets/...)."""
+    return f"/data/datasets/{path.relative_to(base).as_posix()}"
+
+
+def scan_guitarset(base: Path) -> list[dict]:
+    """GuitarSet — 360 acoustic-guitar clips (~30 s) with JAMS chords.
+
+    Layout:  guitarset/annotation/<id>.jams   guitarset/audio_mono-mic/<id>_mic.wav
+    JamsParser prefers the 'performed' chord track (rich: sus2/sus4, maj6, omitted notes).
+    Fast to process (clean source: no Demucs) and the main source of *suspended* chords.
+    """
+    root = base / "guitarset"
+    ann_dir, audio_dir = root / "annotation", root / "audio_mono-mic"
+    if not ann_dir.exists() or not audio_dir.exists():
+        print(f"  [guitarset] Not found under {root}")
+        return []
+
+    entries = []
+    for jams in sorted(ann_dir.glob("*.jams")):
+        wav = audio_dir / f"{jams.stem}_mic.wav"
+        if not wav.exists():
+            continue
+        entries.append({
+            "source_url":     _container_path(wav, base),
+            "annotation_url": _container_path(jams, base),
+            "source_type":    "guitarset",
+            "priority":       5,
+            "display":        f"GuitarSet: {jams.stem}",
+        })
+    print(f"  [guitarset] Found {len(entries)} clips")
+    return entries
+
+
+def scan_swd(base: Path) -> list[dict]:
+    """Schubert Winterreise Dataset — only the versions whose audio is shipped (HU33, SC06).
+
+    Layout:  <swd>/01_RawData/audio_wav/Schubert_D911-01_HU33.wav
+             <swd>/02_Annotations/ann_audio_chord/Schubert_D911-01_HU33.csv  (the other 7 versions
+             have annotations but no audio, so they are skipped)
+    """
+    roots = sorted((base / "Schubert_Winterreise").glob("*/01_RawData")) \
+        or sorted(base.glob("Schubert_Winterreise*/**/01_RawData"))
+    if not roots:
+        print(f"  [swd] Not found under {base / 'Schubert_Winterreise'}")
+        return []
+    raw = roots[0]
+    ann_dir = raw.parent / "02_Annotations" / "ann_audio_chord"
+
+    entries = []
+    for wav in sorted((raw / "audio_wav").glob("*.wav")):
+        csv_file = ann_dir / f"{wav.stem}.csv"
+        if not csv_file.exists():
+            continue
+        entries.append({
+            "source_url":     _container_path(wav, base),
+            "annotation_url": _container_path(csv_file, base),
+            "source_type":    "swd",
+            "priority":       4,
+            "display":        f"SWD: {wav.stem}",
+        })
+    print(f"  [swd] Found {len(entries)} recordings")
+    return entries
+
+
+# ChoCo-release audio partitions and their queue priority. Annotation-only / duplicate partitions
+# are deliberately absent: jaah (already seeded from the JAAH repo), casd (chordify, seeded by
+# scan_choco), schubert-winterreise-audio (local SWD audio is used instead), weimar (solo-only
+# excerpts, duration would not match a full YouTube track), and all symbolic partitions.
+CHOCO_RELEASE_PARTITIONS = {
+    "isophonics":      3,
+    "robbie-williams": 3,
+    "rwc-pop":         3,
+    "uspop2002":       3,
+    "billboard":       1,
+}
+
+
+def scan_choco_release(base: Path) -> list[dict]:
+    """ChoCo GitHub release (v1.0.0.zip) — audio partitions that only carry title/performer/duration.
+
+    Audio is found via 'ytsearch1:<performer> <title>' and the candidate whose length matches the
+    JAMS ``file_metadata.duration`` is downloaded (ChocoDownloader → JAAH search logic); wrong
+    versions are rejected by the duration check.
+    """
+    jams_dirs = sorted((base / "choco_release").glob("**/jams"))
+    if not jams_dirs:
+        print(f"  [choco-release] Not found under {base / 'choco_release'}")
+        return []
+    jams_dir = jams_dirs[0]
+
+    entries: list[dict] = []
+    seen: set[str] = set()
+    for partition, priority in CHOCO_RELEASE_PARTITIONS.items():
+        count = 0
+        for jams_file in sorted(jams_dir.glob(f"{partition}_*.jams")):
+            try:
+                data = json.loads(jams_file.read_text(encoding="utf-8"))
+            except Exception as e:
+                print(f"  [choco-release] Skip {jams_file.name}: {e}")
+                continue
+            sandbox = data.get("sandbox") or {}
+            meta = data.get("file_metadata") or {}
+            performers = [p for p in (sandbox.get("performers") or []) if p]
+            title = (meta.get("title") or "").strip()
+            if sandbox.get("type") != "audio" or not title or not performers or not meta.get("duration"):
+                continue
+            source_url = f"ytsearch1:{performers[0]} {title}"
+            if source_url in seen:
+                continue
+            seen.add(source_url)
+            count += 1
             entries.append({
-                "source_url":     f"https://www.youtube.com/watch?v={yt_id}",
-                "annotation_url": container_annot,
+                "source_url":     source_url,
+                "annotation_url": _container_path(jams_file, base),
                 "source_type":    "choco",
-                "display":        f"ChoCo: {meta.get('title', yt_id)} — {yt_id}",
+                "priority":       priority,
+                "display":        f"ChoCo/{partition}: {performers[0]} — {title}",
             })
-        except Exception as e:
-            print(f"  [choco] Skip {jams_file.name}: {e}")
+        print(f"  [choco-release] {partition}: {count} tracks")
+    return entries
 
-    print(f"  [choco] Found {len(entries)} tracks (limit={limit})")
+
+# ChordExtension values that make a chord "rare" in the class distribution (plain triads and
+# 7th chords are already abundant). Suspended chords (quality sus2 / sus4) are rare as well.
+_COMMON_EXTENSIONS = ("none", "maj7", "min7", "dom7")
+HOOKTHEORY_SCOPE = "rare"          # "rare" | "all" — set from --hooktheory-scope
+
+
+def scan_hooktheory(base: Path) -> list[dict]:
+    """Hooktheory (Sheet Sage ``Hooktheory.json.gz``): ~20 s annotated YouTube clips.
+
+    Layout:  hooktheory/Hooktheory.json.gz            (github.com/chrisdonahue/sheetsage-data)
+             hooktheory/annotations/<id>.json         ← written here, one per clip
+    Each clip becomes: source_url = https://www.youtube.com/watch?v=<id>#ht=<clip id>, plus an
+    annotation JSON holding the section to download and the chords in clip time.
+
+    scope ``rare`` seeds only clips with at least one suspended / extended / altered chord
+    (priority 6, or 7 when they contain three or more); ``all`` also seeds the rest at priority 0.
+    """
+    import gzip
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from src.data_processing.application.annotation_parsers.hooktheory import build_annotation
+    from src.data_processing.application.mappers.harte_mapper import LabelStatus, map_harte
+
+    root = base / "hooktheory"
+    gz_path = root / "Hooktheory.json.gz"
+    if not gz_path.exists():
+        print(f"  [hooktheory] Not found: {gz_path}")
+        return []
+    ann_dir = root / "annotations"
+    ann_dir.mkdir(parents=True, exist_ok=True)
+
+    with gzip.open(gz_path, "rt", encoding="utf-8") as fh:
+        dataset = json.load(fh)
+
+    entries: list[dict] = []
+    skipped = rare_clips = 0
+    for key, entry in dataset.items():
+        ann = build_annotation(entry)
+        if ann is None or not ann.get("id"):
+            skipped += 1
+            continue
+
+        rare_events = 0
+        for _, _, label in ann["timeline"]:
+            mapped = map_harte(label)
+            if mapped.status != LabelStatus.OK:
+                continue
+            ext = mapped.extension.name if mapped.extension is not None else "none"
+            if (mapped.quality is not None and mapped.quality.name in ("sus2", "sus4")) or ext not in _COMMON_EXTENSIONS:
+                rare_events += 1
+        if rare_events:
+            rare_clips += 1
+        elif HOOKTHEORY_SCOPE != "all":
+            continue
+
+        ann_file = ann_dir / f"{ann['id']}.json"
+        ann_file.write_text(json.dumps(ann, ensure_ascii=False), encoding="utf-8")
+        entries.append({
+            "source_url":     f"https://www.youtube.com/watch?v={ann['youtube_id']}#ht={ann['id']}",
+            "annotation_url": _container_path(ann_file, base),
+            "source_type":    "hooktheory",
+            "priority":       (7 if rare_events >= 3 else 6) if rare_events else 0,
+            "display":        f"Hooktheory: {ann['artist']} — {ann['song']} ({rare_events} rare chords)",
+        })
+
+    print(f"  [hooktheory] {len(entries)} clips seeded ({rare_clips} with rare chords; "
+          f"{skipped} entries unusable; scope={HOOKTHEORY_SCOPE})")
     return entries
 
 
@@ -223,13 +427,14 @@ def seed_to_db(entries: list[dict], dry_run: bool = False) -> tuple[int, int]:
             cur.execute("""
                 INSERT INTO crawl_queue
                     (id, source_url, annotation_url, source_type, status, priority, created_at)
-                VALUES (%s, %s, %s, %s, 'pending', 0, %s)
+                VALUES (%s, %s, %s, %s, 'pending', %s, %s)
                 ON CONFLICT (source_url) DO NOTHING
             """, (
                 str(uuid.uuid4()),
                 entry["source_url"],
                 entry.get("annotation_url", ""),
                 entry["source_type"],
+                entry.get("priority", 0),
                 now,
             ))
             inserted += 1 if cur.rowcount == 1 else 0
@@ -249,7 +454,11 @@ def seed_to_db(entries: list[dict], dry_run: bool = False) -> tuple[int, int]:
 SCANNERS = {
     "jaah":   scan_jaah,
     "kaggle": scan_kaggle,
-    "choco":  lambda base: scan_choco(base, limit=500),
+    "choco":  scan_choco,
+    "guitarset":     scan_guitarset,
+    "swd":           scan_swd,
+    "choco-release": scan_choco_release,
+    "hooktheory":    scan_hooktheory,
 }
 
 
@@ -258,7 +467,11 @@ def main():
     parser.add_argument("--source",  choices=list(SCANNERS) + ["all"], default="all")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--data-dir", default=str(BASE_DIR))
+    parser.add_argument("--hooktheory-scope", choices=["rare", "all"], default="rare",
+                        help="rare = only clips with sus/extended/altered chords (default); all = every usable clip")
     args = parser.parse_args()
+    global HOOKTHEORY_SCOPE
+    HOOKTHEORY_SCOPE = args.hooktheory_scope
 
     base = Path(args.data_dir)
     if not base.exists():
@@ -274,7 +487,7 @@ def main():
         all_entries.extend(SCANNERS[src](base))
 
     if not all_entries:
-        print("\nNo entries found. Check dataset_download_guide.md")
+        print("\nNo entries found. Check markdown/dataset_sources.md and setup.md section 2")
         sys.exit(0)
 
     print(f"\nTotal: {len(all_entries)} entries")
