@@ -19,6 +19,10 @@ def _unresolvable(reason: str) -> IngestionError:
     return IngestionError(ErrorCode.URL_UNRESOLVABLE, reason)
 
 
+def _discard(path: Path) -> None:
+    path.unlink(missing_ok=True)
+
+
 def _is_audio(content_type: str) -> bool:
     media_type = content_type.split(";")[0].strip().lower()
     return not media_type or media_type.startswith("audio/") or media_type in _AUDIO_TYPES
@@ -49,13 +53,13 @@ class SafeFetcher:
             async with asyncio.timeout(self._timeout_s):
                 return await self._fetch(url, dest)
         except TimeoutError:
-            dest.unlink(missing_ok=True)
+            _discard(dest)
             raise _unresolvable("the server took too long to answer") from None
         except IngestionError:
-            dest.unlink(missing_ok=True)
+            _discard(dest)
             raise
         except (httpx.HTTPError, httpx.InvalidURL):
-            dest.unlink(missing_ok=True)
+            _discard(dest)
             raise _unresolvable("the server could not be reached") from None
 
     async def _fetch(self, url: str, dest: Path) -> Path:
