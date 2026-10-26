@@ -4,7 +4,9 @@
 > Kế hoạch đầy đủ: [implementation-plan.md](implementation-plan.md). Quyết định/quy tắc: [../memory/memory.md](../memory/memory.md).
 
 ## Giai đoạn
-**M1 đang chạy.** Task 1.0 ✅, 1.1 ✅, 1.2 ✅, 1.3 ✅ (2026-10-22), 1.4 ✅ (2026-10-26). Tiếp theo: 1.5 (Workspace Shell).
+**M1 đang chạy.** Task 1.0 ✅, 1.1 ✅, 1.2 ✅, 1.3 ✅ (2026-10-22), 1.4 ✅, 1.5 ✅ (2026-10-26) ⇒ **M1 hoàn tất**. Tiếp theo: M2 (Ingestion + Mock Pipeline).
+
+Task 1.5: Workspace Shell — layout sidebar/header, `QuotaBadge` (tier + còn x/y, skeleton, trạng thái hết lượt/không giới hạn/lỗi), toast, i18n vi/en (lưu localStorage), 3 trang trống có skeleton. `web` 69 test, lint (0 cảnh báo), build xanh; e2e thật (đăng ký → Shell → badge `Free · còn 5/5` → đổi English → reload → đăng xuất) xanh với `E2E_BACKEND=1`.
 
 Task 1.4: `create_app()` (`DE/src/api/app.py`) gắn auth/users thật lên PG, `/healthz`, lỗi chuẩn hoá (422 có `detail`, 404/405/500), `X-Request-ID` + log structlog, CORS cấu hình. `DE` 306 pytest xanh (19 mới, gồm 2 integration trên `chordsense_test`), ruff sạch; smoke bằng uvicorn trên `chordsense_app` ok. FE: `ApiError.fieldErrors/requestId` + `toastFor`; `web` 51 test, lint, build, e2e xanh. Chạy backend: `rtk uv run uvicorn src.api.app:create_app --factory --port 8000` (từ `DE/`).
 
@@ -22,8 +24,8 @@ Baseline 1.0:
 ## Milestone
 | # | Tên | Pri | Trạng thái |
 | :-- | :-- | :-- | :-- |
-| M1 | Foundation, DB, Auth, Workspace Shell | P0 | 🔧 1.0 ✅ · 1.1 ✅ · 1.2 ✅ · 1.3 ✅ · 1.4 ✅ · 1.5 ⏳ |
-| M2 | Ingestion + Mock Pipeline | P0 | ⏳ |
+| M1 | Foundation, DB, Auth, Workspace Shell | P0 | ✅ 1.0 ✅ · 1.1 ✅ · 1.2 ✅ · 1.3 ✅ · 1.4 ✅ · 1.5 ✅ |
+| M2 | Ingestion + Mock Pipeline | P0 | ⏳ (kế tiếp) |
 | M3 | Chord Viewer & Audio Sync | P1 | ⏳ |
 | M4 | Harmony / Jazz Theory | P1 | ⏳ |
 | M5 | Tích hợp AI thật | P2 | ⏳ |
@@ -47,5 +49,5 @@ _(không)_
 - `ChordLabel.display_name` hiển thị `Cmaj9` và `C9` giống nhau ("C9"); từ vựng chưa có `sus4` + extension kiểu `G9sus4`; chưa có `bass` (slash chord). Xem memory.md.
 
 ## Việc kế tiếp
-1. Task 1.5: Workspace Shell (FE): layout (sidebar Library/Workspace/Dictionary), header có badge quota/tier (`GET /users/me/quota`), component toast dùng `toastFor`, i18n vi/en, Playwright smoke đăng ký→đăng nhập→Shell với backend thật.
-2. Sau M1: dọn `InMemoryRevocationStore` (Redis hoặc bảng PG) trước M2.6.
+1. M2 (xem implementation-plan.md §3): upload/link ingestion + mock pipeline. Trước M2.6 phải thay `InMemoryRevocationStore` (Redis native đang chạy ở :6379 hoặc bảng PG) và quyết định Redis/Celery thật.
+2. Dịch nốt Login/Register và `toastFor` sang từ điển i18n chung; sau mỗi lần phân tích gọi `invalidateQueries(['quota', userId])`.

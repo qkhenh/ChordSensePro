@@ -48,6 +48,10 @@
   Lỗi luôn dạng `{code,message}`; 422 thêm `detail:[{field,message}]`; 404/405 → `not_found`/`method_not_allowed`; exception lạ → 500 `internal_error` (không lộ chi tiết, traceback chỉ vào log). Middleware: `X-Request-ID` (chỉ chấp nhận `[A-Za-z0-9._-]{1,64}`, ngược lại sinh mới) + 1 dòng log structlog `request` mỗi request. CORS: `API_CORS_ORIGINS` (JSON list, mặc định 5173/4173), cấm `*`. `/healthz` chỉ báo process sống, chưa ping DB.
   FE: `ApiError.fieldErrors/requestId`; `toastFor(error)` (`web/src/api/errors.ts`) là nguồn duy nhất map mã lỗi → `{kind,message}`; `auth/messages.errorMessage` dùng lại. Component toast thật làm ở 1.5.
 
+- **2026-10-26 · ADR · Workspace Shell (task 1.5)**: `web/src/shell/ShellLayout` (sidebar Thư viện/Workspace/Từ điển → `/library` `/workspace` `/dictionary`, `/` → `/workspace`) + header (`QuotaBadge`, nút ngôn ngữ, email, đăng xuất). Providers gom ở `web/src/Providers.tsx`: I18n → Toast → ApiClientContext → QueryClient (`retry:false`) → Auth. Quota = TanStack Query key `['quota', userId]`, `staleTime` 30s; M2 phải `invalidateQueries` khoá này sau mỗi lần phân tích (hiện `quotaKey` chưa export).
+  i18n tự viết nhẹ (không thêm thư viện): `web/src/i18n/messages.ts` là từ điển `vi`/`en` có kiểu (`en: Messages` ép đủ khoá), lưu `localStorage['chordsense.lang']`, đặt `<html lang>`. **Chưa dịch**: trang Login/Register (`auth/messages.ts`) và `toastFor` (api/errors.ts) vẫn chỉ tiếng Việt ⇒ khi làm tiếp phải chuyển sang từ điển chung.
+  Test: `server.ts` có handler quota mặc định (mọi màn hình sau đăng nhập đều gọi nó); `setup.ts` xoá `localStorage` mỗi test. E2E thật: `E2E_BACKEND=1 npm run test:e2e` (PowerShell: `$env:E2E_BACKEND=1`) tự bật uvicorn ở `../DE`, cần PG như `DE/.env`; không đặt biến ⇒ spec `shell.spec.ts` bị skip.
+
 ## FIX — Lỗi đã gặp & cách xử lý
 
 - **2026-10-22 · FIX · msw 3 đổi tên `onUnhandledRequest` → `onUnhandledFrame`**

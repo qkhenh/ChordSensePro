@@ -1,19 +1,16 @@
-import { Outlet, type RouteObject } from 'react-router'
+import { Navigate, type RouteObject } from 'react-router'
 import type { ApiClient } from './api/http'
-import { AuthProvider } from './auth/AuthProvider'
 import { GuestOnly, RequireAuth } from './auth/guards'
-import HomePage from './pages/HomePage'
+import { Providers } from './Providers'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
+import SectionPage from './pages/SectionPage'
+import { ShellLayout } from './shell/ShellLayout'
 
 export function buildRoutes(client: ApiClient): RouteObject[] {
   return [
     {
-      element: (
-        <AuthProvider client={client}>
-          <Outlet />
-        </AuthProvider>
-      ),
+      element: <Providers client={client} />,
       children: [
         {
           element: <GuestOnly />,
@@ -25,8 +22,15 @@ export function buildRoutes(client: ApiClient): RouteObject[] {
         {
           element: <RequireAuth />,
           children: [
-            { path: '/', element: <HomePage /> },
-            { path: '/workspace', element: <HomePage /> },
+            {
+              element: <ShellLayout />,
+              children: [
+                { path: '/', element: <Navigate to="/workspace" replace /> },
+                { path: '/library', element: <SectionPage section="library" /> },
+                { path: '/workspace', element: <SectionPage section="workspace" /> },
+                { path: '/dictionary', element: <SectionPage section="dictionary" /> },
+              ],
+            },
           ],
         },
       ],

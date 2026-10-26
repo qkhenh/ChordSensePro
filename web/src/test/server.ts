@@ -3,8 +3,14 @@ import { setupServer } from 'msw/node'
 import type { components } from '../api/generated/schema'
 
 type AuthResponse = components['schemas']['AuthResponse']
+type Quota = components['schemas']['QuotaOut']
 
-export const server = setupServer()
+export function quotaOut(overrides: Partial<Quota> = {}): Quota {
+  return { tier: 'free', limit: 5, used: 2, remaining: 3, resets_at: '2026-10-27T00:00:00Z', ...overrides }
+}
+
+// Every signed-in screen shows the quota badge, so it has a default; tests override as needed.
+export const server = setupServer(http.get('*/api/v1/users/me/quota', () => HttpResponse.json(quotaOut())))
 
 export const TEST_USER: AuthResponse['user'] = {
   id: '11111111-1111-4111-8111-111111111111',
