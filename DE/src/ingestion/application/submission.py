@@ -9,6 +9,7 @@ import hashlib
 import re
 import shutil
 from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -19,12 +20,13 @@ import structlog
 from src.analysis_contract.models import ErrorCode, JobError, JobState, SourceKind
 from src.identity.application.quota import ChargeReceipt, QuotaService
 from src.identity.domain.models import User
+from src.ingestion.application.charts import build_chart
 from src.ingestion.application.normalizer import Normalizer
 from src.ingestion.application.ssrf import Resolver, check_url, system_resolver
 from src.ingestion.domain.errors import IngestionError
 from src.ingestion.domain.job import Job, advance, new_job
 from src.ingestion.domain.naming import safe_stem, safe_title
-from src.ingestion.domain.ports import AnalysisCache, JobRepository, JobRunnerPort
+from src.ingestion.domain.ports import AnalysisCache, ChartRepository, JobRepository, JobRunnerPort
 from src.ingestion.domain.upload_rules import check_format, check_limits
 from src.ingestion.settings import IngestSettings
 
@@ -74,6 +76,7 @@ class SubmissionService:
         self,
         *,
         jobs: JobRepository,
+        charts: ChartRepository,
         runner: JobRunnerPort,
         quota: QuotaService,
         normalizer: Normalizer,
@@ -83,6 +86,7 @@ class SubmissionService:
         resolve: Resolver = system_resolver,
     ) -> None:
         self._jobs = jobs
+        self._charts = charts
         self._runner = runner
         self._quota = quota
         self._normalizer = normalizer
@@ -107,6 +111,10 @@ class SubmissionService:
             info = await self._normalizer.probe(path)
             check_format(head, info)
             check_limits(size, info.duration_ms, settings=self._settings)
+            cached = await self._from_cache(user, job_id, filename, fingerprint)
+            if cached is not None:
+                await self._discard(job_id)
+                return cached
             job = await self._accept(
                 user,
                 job_id,
@@ -138,6 +146,35 @@ class SubmissionService:
         finally:
             sink.close()
         return path, size, digest.hexdigest()
+
+    async def _from_cache(
+        self, user: User, job_id: UUID, filename: str, fingerprint: str
+    ) -> Job | None:
+        """The same bytes were analysed before: hand over a finished job, charge nothing.
+
+        Only when the canonical WAV is still kept, so the new chart can really be played.
+        """
+        content_hash = await self._cache.fingerprint_to_hash(fingerprint)
+        result = await self._cache.get(content_hash) if content_hash else None
+        if result is None:
+            return None
+        kept = self._settings.data_dir / "audio" / f"{result.content_hash}.wav"
+        if not await asyncio.to_thread(kept.exists):
+            return None
+        now = self._clock()
+        queued = new_job(
+            owner_id=user.id,
+            job_id=job_id,
+            now=now,
+            source_kind=SourceKind.FILE,
+            title=safe_title(filename),
+            fingerprint=fingerprint,
+            quota_charged=False,
+        )
+        chart = build_chart(queued, result.model_copy(update={"job_id": job_id}), now=now)
+        await self._charts.add(chart)
+        done = advance(queued, state=JobState.DONE, chart_id=chart.id, now=now)
+        return await self._jobs.add(replace(done, content_hash=result.content_hash))
 
     # --- link ------------------------------------------------------------------------
 

@@ -66,6 +66,7 @@ class PgJobRepository:
             charged_on=job.charged_on,
             created_at=job.created_at,
             updated_at=job.updated_at,
+            finished_at=job.updated_at if job.state.value in _FINAL else None,
         )
         async with self._engine.begin() as conn:
             await conn.execute(stmt)

@@ -219,6 +219,7 @@ def build_ingestion(
     runner = InProcessJobRunner(executor)
     submission = SubmissionService(
         jobs=jobs,
+        charts=charts,
         runner=runner,
         quota=quota,
         normalizer=normalizer,

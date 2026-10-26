@@ -77,6 +77,20 @@ class TestPgJobRepository:
         await repo.add(job)
         assert await repo.get(job.id) == job
 
+    async def test_a_cache_hit_job_can_be_added_already_done(self, engine, owner):
+        repo = PgJobRepository(engine)
+        chart = build_chart(queued_job(owner), RESULT, now=NOW)
+        await PgChartRepository(engine).add(chart)
+        done = advance(queued_job(owner), state=JobState.DONE, chart_id=chart.id, now=NOW)
+        await repo.add(done)
+        stored = await repo.get(done.id)
+        assert (stored.state, stored.progress, stored.result_chart_id) == (
+            JobState.DONE,
+            1.0,
+            chart.id,
+        )
+        assert await repo.list_unfinished() == []
+
     async def test_unknown_job_is_none(self, engine):
         assert await PgJobRepository(engine).get(uuid4()) is None
 
