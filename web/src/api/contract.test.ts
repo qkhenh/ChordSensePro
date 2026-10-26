@@ -6,7 +6,7 @@ const results = import.meta.glob<AnalysisResult>('../../../contracts/fixtures/re
   eager: true,
   import: 'default',
 })
-const charts = import.meta.glob<Chart>('../../../contracts/fixtures/charts/*.json', {
+const charts = import.meta.glob<Chart>('../../../contracts/fixtures/charts/*.chart.json', {
   eager: true,
   import: 'default',
 })

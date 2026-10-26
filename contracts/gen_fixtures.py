@@ -41,6 +41,7 @@ from src.analysis_contract import (  # noqa: E402
     PlaybackSource,
     SourceKind,
     TimeSignature,
+    apply_overrides,
     chord_symbol,
 )
 from src.analysis_contract.models import AnalysisOptions  # noqa: E402
@@ -328,6 +329,9 @@ def main() -> None:
         write(FIXTURES / "results" / f"{name}.result.json", result)
     for name, chart in charts().items():
         write(FIXTURES / "charts" / f"{name}.chart.json", chart)
+    edited = charts()["autumn_leaves_gm.edited"]
+    effective = apply_overrides(edited.ai_events, edited.overrides)
+    write(FIXTURES / "charts" / "autumn_leaves_gm.effective.json", [e.model_dump(mode="json") for e in effective])
     for name, req in requests().items():
         write(FIXTURES / "requests" / f"{name}.request.json", req)
     sequence, errors = jobs()

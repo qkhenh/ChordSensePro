@@ -38,7 +38,7 @@ def ids(paths):
 
 
 RESULTS = files("results")
-CHARTS = files("charts")
+CHARTS = files("charts", "*.chart.json")
 REQUESTS = files("requests")
 
 
