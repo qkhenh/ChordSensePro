@@ -44,6 +44,10 @@
   Chưa làm (cố ý): khoá tài khoản sau 5 lần sai (FR-32, thuộc gateway protection), tier Education pooled quota.
 - **2026-10-22 · RULE · Test auth dùng `tests/support/{identity,api}.py`** (container in-memory + app FastAPI nhỏ có route thăm dò cho ma trận role×endpoint, NFR-10). Role quyết định ở `Role`/`PRO_ROLES` (`models.py`); `Guest` không lưu DB.
 
+- **2026-10-26 · ADR · App factory (task 1.4)**: `DE/src/api/app.py::create_app(container=None, settings=None)`; không truyền container ⇒ lifespan tạo engine từ `database_url()` + `build_container` (`src/api/wiring.py`, PG repos; `InMemoryRevocationStore` chỉ cho dev). Chạy: `rtk uv run uvicorn src.api.app:create_app --factory --port 8000` (Vite proxy `/api` → 8000).
+  Lỗi luôn dạng `{code,message}`; 422 thêm `detail:[{field,message}]`; 404/405 → `not_found`/`method_not_allowed`; exception lạ → 500 `internal_error` (không lộ chi tiết, traceback chỉ vào log). Middleware: `X-Request-ID` (chỉ chấp nhận `[A-Za-z0-9._-]{1,64}`, ngược lại sinh mới) + 1 dòng log structlog `request` mỗi request. CORS: `API_CORS_ORIGINS` (JSON list, mặc định 5173/4173), cấm `*`. `/healthz` chỉ báo process sống, chưa ping DB.
+  FE: `ApiError.fieldErrors/requestId`; `toastFor(error)` (`web/src/api/errors.ts`) là nguồn duy nhất map mã lỗi → `{kind,message}`; `auth/messages.errorMessage` dùng lại. Component toast thật làm ở 1.5.
+
 ## FIX — Lỗi đã gặp & cách xử lý
 
 - **2026-10-22 · FIX · msw 3 đổi tên `onUnhandledRequest` → `onUnhandledFrame`**
