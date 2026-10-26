@@ -152,6 +152,28 @@ describe('api client', () => {
     })
   })
 
+  it('keeps the daily limit and reset time of a quota error', async () => {
+    const { client } = newClient()
+    server.use(
+      http.post(`${API}/auth/register`, () =>
+        HttpResponse.json(
+          { code: 'quota_exceeded', message: 'Daily quota used', limit: 5, resets_at: '2026-10-27T00:00:00Z' },
+          { status: 429 },
+        ),
+      ),
+    )
+    const error = (await client.register('ann@example.com', 'secret-pass').catch((e) => e)) as ApiError
+    expect(error.limit).toBe(5)
+    expect(error.resetsAt?.toISOString()).toBe('2026-10-27T00:00:00.000Z')
+  })
+
+  it('has no limit or reset time on other errors', async () => {
+    const { client } = newClient()
+    server.use(http.post(`${API}/auth/register`, () => apiError(409, 'email_taken')))
+    const error = (await client.register('ann@example.com', 'secret-pass').catch((e) => e)) as ApiError
+    expect([error.limit, error.resetsAt]).toEqual([null, null])
+  })
+
   it('has no field errors or request id when the server sent none', async () => {
     const { client } = newClient()
     server.use(http.get(`${API}/users/me`, () => apiError(403, 'forbidden')))

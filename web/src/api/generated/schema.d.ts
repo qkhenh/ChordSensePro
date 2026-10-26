@@ -77,6 +77,11 @@ export interface components {
              */
             schema_version: "1.0";
         };
+        /** AnalyzeUrlRequest */
+        AnalyzeUrlRequest: {
+            /** Url */
+            url: string;
+        };
         /** AuthResponse */
         AuthResponse: {
             /** Access Token */
@@ -223,6 +228,21 @@ export interface components {
             /** Root */
             root: number;
         };
+        /** DemoTrackOut */
+        DemoTrackOut: {
+            /** Artist */
+            artist: string;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Id */
+            id: string;
+            /** Key */
+            key: string;
+            /** Tempo Bpm */
+            tempo_bpm: number;
+            /** Title */
+            title: string;
+        };
         /**
          * ErrorCode
          * @enum {string}
@@ -235,6 +255,14 @@ export interface components {
             /** Event Id */
             event_id: string;
             op: components["schemas"]["OverrideOp"];
+        };
+        /** JobAccepted */
+        JobAccepted: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
         };
         /** JobError */
         JobError: {

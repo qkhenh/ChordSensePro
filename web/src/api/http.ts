@@ -14,6 +14,9 @@ export class ApiError extends Error {
   fieldErrors: FieldError[] = []
   /** `X-Request-ID` of the failed call, to quote when reporting a problem. */
   requestId: string | null = null
+  /** Daily allowance and reset time of a `quota_exceeded` (429) answer. */
+  limit: number | null = null
+  resetsAt: Date | null = null
 
   constructor(status: number, code: string, message: string) {
     super(message)
@@ -91,13 +94,15 @@ export function createApiClient({ baseUrl = '/api/v1', storage = localStorageSto
 
   async function send(path: string, { method = 'GET', body }: RequestOptions, token: string | null) {
     const headers: Record<string, string> = { Accept: 'application/json' }
-    if (body !== undefined) headers['Content-Type'] = 'application/json'
+    // FormData: the browser adds multipart/form-data with its boundary itself.
+    const isForm = body instanceof FormData
+    if (body !== undefined && !isForm) headers['Content-Type'] = 'application/json'
     if (token) headers.Authorization = `Bearer ${token}`
     try {
       return await fetch(url(path), {
         method,
         headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
       })
     } catch {
       throw new ApiError(0, 'network_error', 'Cannot reach the server')
@@ -111,6 +116,10 @@ export function createApiClient({ baseUrl = '/api/v1', storage = localStorageSto
       if (data && typeof data.code === 'string') {
         error = new ApiError(res.status, data.code, typeof data.message === 'string' ? data.message : data.code)
         error.fieldErrors = parseFieldErrors(data.detail)
+        if (typeof data.limit === 'number') error.limit = data.limit
+        if (typeof data.resets_at === 'string' && !Number.isNaN(Date.parse(data.resets_at))) {
+          error.resetsAt = new Date(data.resets_at)
+        }
       }
     } catch {
       /* body was not JSON */
@@ -205,6 +214,12 @@ export function createApiClient({ baseUrl = '/api/v1', storage = localStorageSto
       }
     },
     getAccessToken: () => accessToken,
+    /** Absolute ws(s):// URL of an API path, for WebSocket connections. */
+    socketUrl(path: string): string {
+      const target = url(path)
+      target.protocol = target.protocol === 'https:' ? 'wss:' : 'ws:'
+      return target.toString()
+    },
     onSessionExpired(listener: () => void) {
       expiredListeners.add(listener)
       return () => {
