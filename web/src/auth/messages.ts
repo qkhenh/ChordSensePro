@@ -1,4 +1,4 @@
-import { ApiError } from '../api/http'
+import { toastFor } from '../api/errors'
 
 export const text = {
   brand: 'ChordSense Pro',
@@ -20,19 +20,7 @@ export const text = {
   passwordTooShort: 'Mật khẩu cần ít nhất 8 ký tự',
 }
 
-const byCode: Record<string, string> = {
-  invalid_credentials: 'Email hoặc mật khẩu không đúng',
-  email_taken: 'Email này đã được đăng ký',
-  account_disabled: 'Tài khoản đã bị vô hiệu hoá',
-  network_error: 'Không kết nối được máy chủ',
-}
-
-/** Friendly Vietnamese text for an API failure; falls back to the server's message. */
-export function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    return byCode[error.code] ?? (error.code === 'weak_password' ? error.message : 'Có lỗi xảy ra, vui lòng thử lại')
-  }
-  return 'Có lỗi xảy ra, vui lòng thử lại'
-}
+/** Friendly Vietnamese text for an API failure. */
+export const errorMessage = (error: unknown): string => toastFor(error).message
 
 export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/

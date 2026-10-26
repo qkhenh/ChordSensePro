@@ -130,6 +130,36 @@ describe('api client', () => {
     expect(error).toMatchObject({ status: 409, code: 'email_taken', message: 'taken' })
   })
 
+  it('keeps field-level validation detail and the request id on the error', async () => {
+    const { client } = newClient()
+    server.use(
+      http.post(`${API}/auth/register`, () =>
+        HttpResponse.json(
+          {
+            code: 'validation_error',
+            message: 'Request validation failed',
+            detail: [{ field: 'email', message: 'not an email' }],
+          },
+          { status: 422, headers: { 'X-Request-ID': 'req-42' } },
+        ),
+      ),
+    )
+    const error = await client.register('bad', 'secret-pass').catch((e) => e)
+    expect(error).toMatchObject({
+      code: 'validation_error',
+      requestId: 'req-42',
+      fieldErrors: [{ field: 'email', message: 'not an email' }],
+    })
+  })
+
+  it('has no field errors or request id when the server sent none', async () => {
+    const { client } = newClient()
+    server.use(http.get(`${API}/users/me`, () => apiError(403, 'forbidden')))
+    const error = (await client.request('/users/me').catch((e) => e)) as ApiError
+    expect(error.fieldErrors).toEqual([])
+    expect(error.requestId).toBeNull()
+  })
+
   it('maps a network failure to a network_error ApiError', async () => {
     const { client } = newClient()
     server.use(http.get(`${API}/users/me`, () => HttpResponse.error()))

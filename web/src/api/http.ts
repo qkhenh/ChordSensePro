@@ -2,9 +2,18 @@ import type { components } from './generated/schema'
 
 export type AuthResponse = components['schemas']['AuthResponse']
 
+export interface FieldError {
+  field: string
+  message: string
+}
+
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
+  /** Per-field problems of a `validation_error`. */
+  fieldErrors: FieldError[] = []
+  /** `X-Request-ID` of the failed call, to quote when reporting a problem. */
+  requestId: string | null = null
 
   constructor(status: number, code: string, message: string) {
     super(message)
@@ -12,6 +21,13 @@ export class ApiError extends Error {
     this.status = status
     this.code = code
   }
+}
+
+function parseFieldErrors(detail: unknown): FieldError[] {
+  if (!Array.isArray(detail)) return []
+  return detail.flatMap((d) =>
+    d && typeof d.field === 'string' && typeof d.message === 'string' ? [{ field: d.field, message: d.message }] : [],
+  )
 }
 
 /** Only the refresh token is persisted; the short-lived access token stays in memory. */
@@ -89,15 +105,18 @@ export function createApiClient({ baseUrl = '/api/v1', storage = localStorageSto
   }
 
   async function toApiError(res: Response): Promise<ApiError> {
+    let error = new ApiError(res.status, `http_${res.status}`, res.statusText || `HTTP ${res.status}`)
     try {
       const data = await res.json()
       if (data && typeof data.code === 'string') {
-        return new ApiError(res.status, data.code, typeof data.message === 'string' ? data.message : data.code)
+        error = new ApiError(res.status, data.code, typeof data.message === 'string' ? data.message : data.code)
+        error.fieldErrors = parseFieldErrors(data.detail)
       }
     } catch {
       /* body was not JSON */
     }
-    return new ApiError(res.status, `http_${res.status}`, res.statusText || `HTTP ${res.status}`)
+    error.requestId = res.headers.get('x-request-id')
+    return error
   }
 
   function apply(data: AuthResponse): AuthResponse {
