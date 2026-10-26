@@ -14,6 +14,7 @@ EXPECTED_TABLES = {
     "playlists",
     "playlist_items",
     "chord_dictionary",
+    "source_fingerprints",
 }
 
 
