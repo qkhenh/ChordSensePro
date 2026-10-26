@@ -84,6 +84,10 @@ const vi = {
     },
   },
   demo: { heading: 'Thử một bài demo', hint: 'Không tốn lượt phân tích' },
+  practice: {
+    gridLabel: 'Lưới hợp âm',
+    bar: (n: number, chords: string) => (chords ? `Ô nhịp ${n}: ${chords}` : `Ô nhịp ${n}`),
+  },
   chart: {
     loading: 'Đang tải bài…',
     notFound: 'Không tìm thấy bài này',
@@ -177,6 +181,10 @@ const en: Messages = {
     },
   },
   demo: { heading: 'Try a demo song', hint: 'Costs no analyses' },
+  practice: {
+    gridLabel: 'Chord grid',
+    bar: (n, chords) => (chords ? `Bar ${n}: ${chords}` : `Bar ${n}`),
+  },
   chart: {
     loading: 'Loading the song…',
     notFound: 'This song was not found',

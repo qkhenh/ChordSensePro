@@ -6,11 +6,14 @@ import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import ChartPage from './pages/ChartPage'
 import SectionPage from './pages/SectionPage'
+import SyncSpike from './spike/SyncSpike'
 import WorkspacePage from './pages/WorkspacePage'
 import { ShellLayout } from './shell/ShellLayout'
 
 export function buildRoutes(client: ApiClient): RouteObject[] {
   return [
+    // The NFR-01 measurement harness; the dev server only, absent from production builds.
+    ...(import.meta.env.DEV ? [{ path: '/__spike/sync', element: <SyncSpike /> }] : []),
     {
       element: <Providers client={client} />,
       children: [
