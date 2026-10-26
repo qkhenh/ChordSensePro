@@ -174,3 +174,65 @@ def make_world(
         make_user(role),
         executor,
     )
+
+
+async def public_dns(host: str, port: int) -> list[str]:
+    """Every name resolves to a public address, so tests never touch the network."""
+    return ["93.184.216.34"]
+
+
+def build_ingestion(
+    data_dir: Path,
+    *,
+    quota: QuotaService,
+    clock: FakeClock,
+    normalizer,
+    max_upload_bytes: int | None = None,
+    engine=None,
+):
+    """The in-memory ingestion services behind the HTTP layer (real ffmpeg when asked)."""
+    from src.api.container import IngestionContainer
+    from src.ingestion.application.submission import SubmissionService
+    from src.ingestion.infrastructure.runner import InProcessJobRunner
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    extra = {} if max_upload_bytes is None else {"max_upload_bytes": max_upload_bytes}
+    settings = IngestSettings(data_dir=data_dir, **extra)
+    jobs, charts, cache = (
+        InMemoryJobRepository(),
+        InMemoryChartRepository(),
+        InMemoryAnalysisCache(),
+    )
+    events = RecordingEvents()
+    executor = JobExecutor(
+        jobs=jobs,
+        charts=charts,
+        cache=cache,
+        engine=engine or MockAnalysisEngine(),
+        normalizer=normalizer,
+        resolver=FakeMediaResolver(None),
+        quota=quota,
+        events=events,
+        settings=settings,
+        clock=clock,
+    )
+    runner = InProcessJobRunner(executor)
+    submission = SubmissionService(
+        jobs=jobs,
+        runner=runner,
+        quota=quota,
+        normalizer=normalizer,
+        cache=cache,
+        settings=settings,
+        clock=clock,
+        resolve=public_dns,
+    )
+    return IngestionContainer(
+        submission=submission,
+        jobs=jobs,
+        charts=charts,
+        events=events,
+        runner=runner,
+        executor=executor,
+        settings=settings,
+    )

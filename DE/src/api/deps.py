@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
-from src.api.container import Container
+from src.api.container import Container, IngestionContainer
 from src.identity.domain.errors import Forbidden, InvalidToken, NotAuthenticated
 from src.identity.domain.models import Role, User
 
@@ -14,6 +14,13 @@ def get_container(request: Request) -> Container:
 
 
 ContainerDep = Annotated[Container, Depends(get_container)]
+
+
+def get_ingestion(request: Request) -> IngestionContainer:
+    return request.app.state.ingestion
+
+
+IngestionDep = Annotated[IngestionContainer, Depends(get_ingestion)]
 
 
 def _bearer_token(request: Request) -> str:

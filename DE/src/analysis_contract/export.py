@@ -28,6 +28,8 @@ _EXPORTED = (
     api_schemas.UserOut,
     api_schemas.AuthResponse,
     api_schemas.QuotaOut,
+    api_schemas.JobAccepted,
+    api_schemas.AnalyzeUrlRequest,
 )
 
 

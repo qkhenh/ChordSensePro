@@ -81,3 +81,11 @@ class QuotaOut(_Strict):
             remaining=status.remaining,
             resets_at=status.resets_at,
         )
+
+
+class JobAccepted(_Strict):
+    job_id: UUID
+
+
+class AnalyzeUrlRequest(_Strict):
+    url: str = Field(min_length=1, max_length=2048)

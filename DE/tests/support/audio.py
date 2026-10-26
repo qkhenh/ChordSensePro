@@ -51,3 +51,12 @@ def encode(src: Path, dest: Path) -> Path:
         check=True,
     )
     return dest
+
+
+def exact_size_wav(total_bytes: int, rate: int = 8000, fill: int = 0) -> bytes:
+    """A valid mono 16-bit WAV that is exactly ``total_bytes`` long (even payload)."""
+    payload = total_bytes - 44
+    assert payload >= 0 and payload % 2 == 0, "pick an even size of at least 44 bytes"
+    header = wav_bytes_header_only(payload / 2 / rate, rate)
+    assert len(header) == 44
+    return header + bytes([fill]) * payload

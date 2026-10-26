@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from src.api.container import Container
+from src.api.container import Container, IngestionContainer
 from src.identity.application.auth_service import AuthService
 from src.identity.application.passwords import PasswordHasher
 from src.identity.application.quota import QuotaService, StaticPolicyProvider
@@ -12,6 +12,19 @@ from src.identity.application.tokens import TokenService
 from src.identity.infrastructure.memory import InMemoryRevocationStore
 from src.identity.infrastructure.postgres import PgUsageRepository, PgUserRepository
 from src.identity.settings import AuthSettings
+from src.ingestion.application.executor import JobExecutor
+from src.ingestion.application.submission import SubmissionService
+from src.ingestion.infrastructure.events import InMemoryJobEvents
+from src.ingestion.infrastructure.ffmpeg import FfmpegNormalizer
+from src.ingestion.infrastructure.media import FakeMediaResolver
+from src.ingestion.infrastructure.mock_engine import MockAnalysisEngine
+from src.ingestion.infrastructure.postgres import (
+    PgAnalysisCache,
+    PgChartRepository,
+    PgJobRepository,
+)
+from src.ingestion.infrastructure.runner import InProcessJobRunner
+from src.ingestion.settings import IngestSettings
 
 
 def build_container(settings: AuthSettings, engine: AsyncEngine) -> Container:
@@ -29,4 +42,44 @@ def build_container(settings: AuthSettings, engine: AsyncEngine) -> Container:
         auth=AuthService(users, PasswordHasher(cost=settings.bcrypt_cost), tokens),
         tokens=tokens,
         quota=QuotaService(PgUsageRepository(engine), StaticPolicyProvider()),
+    )
+
+
+def build_ingestion(
+    settings: IngestSettings, engine: AsyncEngine, container: Container
+) -> IngestionContainer:
+    jobs, charts, cache = (
+        PgJobRepository(engine),
+        PgChartRepository(engine),
+        PgAnalysisCache(engine),
+    )
+    normalizer, events = FfmpegNormalizer(), InMemoryJobEvents()
+    executor = JobExecutor(
+        jobs=jobs,
+        charts=charts,
+        cache=cache,
+        engine=MockAnalysisEngine(stage_delay_ms=settings.mock_stage_delay_ms),
+        normalizer=normalizer,
+        resolver=FakeMediaResolver(None),
+        quota=container.quota,
+        events=events,
+        settings=settings,
+    )
+    runner = InProcessJobRunner(executor)
+    submission = SubmissionService(
+        jobs=jobs,
+        runner=runner,
+        quota=container.quota,
+        normalizer=normalizer,
+        cache=cache,
+        settings=settings,
+    )
+    return IngestionContainer(
+        submission=submission,
+        jobs=jobs,
+        charts=charts,
+        events=events,
+        runner=runner,
+        executor=executor,
+        settings=settings,
     )

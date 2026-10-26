@@ -1,7 +1,11 @@
 """Media resolvers and the mapping from a link to how the client plays it."""
 
+import hashlib
+import math
 import re
 import shutil
+import struct
+import wave
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -49,10 +53,25 @@ def playback_for_url(url: str) -> PlaybackSource:
     return PlaybackSource(kind="direct", audio_url=url)
 
 
-class FakeMediaResolver:
-    """M2 stand-in for the yt-dlp resolver: always "downloads" the bundled demo audio."""
+def _write_tone(dest: Path, url: str, seconds: int = 3, rate: int = 44_100) -> None:
+    """A short tone whose pitch depends on the link, so different links give different audio."""
+    freq = 220 + int(hashlib.sha256(url.encode()).hexdigest(), 16) % 440
+    with wave.open(str(dest), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(
+            b"".join(
+                struct.pack("<h", int(9000 * math.sin(2 * math.pi * freq * i / rate)))
+                for i in range(seconds * rate)
+            )
+        )
 
-    def __init__(self, demo_audio: Path) -> None:
+
+class FakeMediaResolver:
+    """M2 stand-in for the yt-dlp resolver: "downloads" the demo audio, or a tone if none."""
+
+    def __init__(self, demo_audio: Path | None) -> None:
         self._demo_audio = demo_audio
 
     async def resolve(self, url: str, dest_dir: Path) -> ResolvedMedia:
@@ -64,5 +83,8 @@ class FakeMediaResolver:
         if title == "Untitled" and parts.hostname:
             title = parts.hostname
         dest = dest_dir / f"{safe_stem(last or title)}.wav"
-        shutil.copyfile(self._demo_audio, dest)
+        if self._demo_audio is not None:
+            shutil.copyfile(self._demo_audio, dest)
+        else:
+            _write_tone(dest, url)
         return ResolvedMedia(path=dest, title=title, artist=None, playback=playback_for_url(url))

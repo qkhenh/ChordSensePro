@@ -66,3 +66,35 @@ async def test_lifespan_disposes_the_engine_on_shutdown(monkeypatch):
     # dispose() swaps in a fresh pool, so nothing is left checked out or idle.
     assert engine.pool.checkedin() == 0
     assert engine.pool.checkedout() == 0
+
+
+async def test_an_uploaded_wav_becomes_a_chart_in_the_real_database(monkeypatch, tmp_path):
+    from tests.support.audio import exact_size_wav
+
+    monkeypatch.setenv("DATABASE_URL", os.environ["TEST_DATABASE_URL"])
+    monkeypatch.setenv("INGEST_DATA_DIR", str(tmp_path))
+    app = create_app()
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            email = f"{uuid4().hex[:8]}@example.com"
+            r = await client.post(
+                "/api/v1/auth/register", json={"email": email, "password": PASSWORD, "name": "Ann"}
+            )
+            headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+            up = await client.post(
+                "/api/v1/analyze/file",
+                headers=headers,
+                files={"file": ("Real Song.wav", exact_size_wav(20_044), "audio/wav")},
+            )
+            assert up.status_code == 202
+            await app.state.ingestion.runner.drain()
+
+            job_id = up.json()["job_id"]
+            status = (await client.get(f"/api/v1/analyze/status/{job_id}", headers=headers)).json()
+            assert status["state"] == "done"
+            chart = await client.get(f"/api/v1/charts/{status['result_chart_id']}", headers=headers)
+            assert chart.status_code == 200 and chart.json()["title"] == "Real Song"
+            quota = (await client.get("/api/v1/users/me/quota", headers=headers)).json()
+            assert quota["used"] == 1

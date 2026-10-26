@@ -161,6 +161,22 @@
         "title": "AnalysisResult",
         "type": "object"
       },
+      "AnalyzeUrlRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "AnalyzeUrlRequest",
+        "type": "object"
+      },
       "AuthResponse": {
         "additionalProperties": false,
         "properties": {
@@ -574,6 +590,21 @@
           "op"
         ],
         "title": "EventOverride",
+        "type": "object"
+      },
+      "JobAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "title": "JobAccepted",
         "type": "object"
       },
       "JobError": {

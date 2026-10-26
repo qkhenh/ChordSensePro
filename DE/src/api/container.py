@@ -6,6 +6,10 @@ from src.identity.application.auth_service import AuthService
 from src.identity.application.quota import QuotaService
 from src.identity.application.tokens import TokenService
 from src.identity.domain.ports import UserRepository
+from src.ingestion.application.executor import JobExecutor
+from src.ingestion.application.submission import SubmissionService
+from src.ingestion.domain.ports import ChartRepository, JobEvents, JobRepository, JobRunnerPort
+from src.ingestion.settings import IngestSettings
 
 
 @dataclass(frozen=True)
@@ -14,3 +18,14 @@ class Container:
     auth: AuthService
     tokens: TokenService
     quota: QuotaService
+
+
+@dataclass(frozen=True)
+class IngestionContainer:
+    submission: SubmissionService
+    jobs: JobRepository
+    charts: ChartRepository
+    events: JobEvents
+    runner: JobRunnerPort
+    executor: JobExecutor
+    settings: IngestSettings

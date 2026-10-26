@@ -89,3 +89,21 @@ async def test_fake_resolver_can_simulate_an_unresolvable_link(tmp_path):
 )
 def test_safe_stem_is_a_short_path_safe_slug(raw, expected):
     assert safe_stem(raw) == expected
+
+
+async def test_without_a_demo_file_the_resolver_synthesises_a_valid_tone_per_link(tmp_path):
+    import wave
+
+    resolver = FakeMediaResolver(None)
+    first = tmp_path / "a"
+    second = tmp_path / "b"
+    first.mkdir()
+    second.mkdir()
+    one = await resolver.resolve("https://example.com/one.mp3", first)
+    again = await resolver.resolve("https://example.com/one.mp3", second)
+    other = await resolver.resolve("https://example.com/two.mp3", second)
+
+    with wave.open(str(one.path)) as w:
+        assert (w.getframerate(), w.getnchannels(), w.getnframes()) == (44100, 1, 3 * 44100)
+    assert one.path.read_bytes() == again.path.read_bytes()  # same link, same audio
+    assert one.path.read_bytes() != other.path.read_bytes()  # different link, different audio
