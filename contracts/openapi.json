@@ -177,6 +177,26 @@
         "title": "AnalyzeUrlRequest",
         "type": "object"
       },
+      "AudioTicketOut": {
+        "additionalProperties": false,
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at"
+        ],
+        "title": "AudioTicketOut",
+        "type": "object"
+      },
       "AuthResponse": {
         "additionalProperties": false,
         "properties": {

@@ -17,6 +17,7 @@ class AuthSettings(BaseSettings):
     access_ttl_minutes: int = Field(default=15, gt=0)
     refresh_ttl_days: int = Field(default=14, gt=0)
     bcrypt_cost: int = MIN_BCRYPT_COST
+    media_ticket_ttl_minutes: int = Field(default=30, gt=0)
 
     @field_validator("jwt_secret")
     @classmethod

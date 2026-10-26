@@ -33,6 +33,7 @@ _EXPORTED = (
     api_schemas.DemoTrackOut,
     api_schemas.ChartSummaryOut,
     api_schemas.ChartPage,
+    api_schemas.AudioTicketOut,
 )
 
 

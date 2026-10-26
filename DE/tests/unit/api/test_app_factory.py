@@ -142,6 +142,11 @@ class TestCors:
         r = await http.get("/healthz", headers={"Origin": ORIGIN})
         assert "x-request-id" in r.headers["access-control-expose-headers"].lower()
 
+    async def test_range_and_validator_headers_are_readable_by_a_cross_origin_player(self, http):
+        r = await http.get("/healthz", headers={"Origin": ORIGIN})
+        exposed = r.headers["access-control-expose-headers"].lower()
+        assert all(h in exposed for h in ("content-range", "accept-ranges", "etag"))
+
 
 class TestSettings:
     def test_defaults_allow_the_vite_dev_server(self):

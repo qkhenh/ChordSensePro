@@ -88,7 +88,7 @@ def create_app(
         allow_origins=settings.cors_origins,
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
         allow_headers=["Authorization", "Content-Type", REQUEST_ID_HEADER],
-        expose_headers=[REQUEST_ID_HEADER, "Retry-After"],
+        expose_headers=[REQUEST_ID_HEADER, "Retry-After", "Content-Range", "Accept-Ranges", "ETag"],
     )
 
     @app.get("/healthz", tags=["ops"])

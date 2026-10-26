@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.api.container import Container, IngestionContainer
 from src.identity.application.auth_service import AuthService
+from src.identity.application.media_tickets import MediaTicketService
 from src.identity.application.passwords import PasswordHasher
 from src.identity.application.quota import QuotaService, StaticPolicyProvider
 from src.identity.application.tokens import TokenService
@@ -43,6 +44,10 @@ def build_container(settings: AuthSettings, engine: AsyncEngine) -> Container:
         auth=AuthService(users, PasswordHasher(cost=settings.bcrypt_cost), tokens),
         tokens=tokens,
         quota=QuotaService(PgUsageRepository(engine), StaticPolicyProvider()),
+        tickets=MediaTicketService(
+            settings.jwt_secret.get_secret_value(),
+            ttl=timedelta(minutes=settings.media_ticket_ttl_minutes),
+        ),
     )
 
 

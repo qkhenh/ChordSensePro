@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from src.api.container import Container
 from src.identity.application.auth_service import AuthService
+from src.identity.application.media_tickets import MediaTicketService
 from src.identity.application.passwords import PasswordHasher
 from src.identity.application.quota import QuotaService, StaticPolicyProvider, SubscriptionPolicy
 from src.identity.application.tokens import TokenService
@@ -44,4 +45,5 @@ def make_container(clock: FakeClock | None = None, free_quota: int = 5) -> Conta
         StaticPolicyProvider(SubscriptionPolicy(free_daily_quota=free_quota)),
         clock=clock,
     )
-    return Container(users=users, auth=auth, tokens=tokens, quota=quota)
+    tickets = MediaTicketService(SECRET, ttl=timedelta(minutes=30), clock=clock)
+    return Container(users=users, auth=auth, tokens=tokens, quota=quota, tickets=tickets)

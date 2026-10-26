@@ -117,3 +117,8 @@ class ChartSummaryOut(_Strict):
 class ChartPage(_Strict):
     items: list[ChartSummaryOut]
     next_cursor: str | None
+
+
+class AudioTicketOut(_Strict):
+    url: str
+    expires_at: datetime

@@ -1,6 +1,7 @@
 """FastAPI dependencies: container access, authentication and role checks."""
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import Depends, Request
 
@@ -39,6 +40,21 @@ async def current_user(request: Request, container: ContainerDep) -> User:
 
 
 CurrentUser = Annotated[User, Depends(current_user)]
+
+
+async def media_user(
+    chart_id: UUID, request: Request, container: ContainerDep, ticket: str | None = None
+) -> User:
+    """Who is asking for a chart's audio: a ``?ticket=`` (media elements) or a Bearer token."""
+    if ticket is None:
+        return await current_user(request, container)
+    user = await container.users.get_by_id(container.tickets.verify(ticket, chart_id))
+    if user is None or not user.is_active:
+        raise InvalidToken
+    return user
+
+
+MediaUser = Annotated[User, Depends(media_user)]
 
 
 def require_roles(*roles: Role):

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from src.identity.application.auth_service import AuthService
+from src.identity.application.media_tickets import MediaTicketService
 from src.identity.application.quota import QuotaService
 from src.identity.application.tokens import TokenService
 from src.identity.domain.ports import UserRepository
@@ -19,6 +20,7 @@ class Container:
     auth: AuthService
     tokens: TokenService
     quota: QuotaService
+    tickets: MediaTicketService
 
 
 @dataclass(frozen=True)
