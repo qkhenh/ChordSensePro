@@ -63,7 +63,8 @@ describe('starting an analysis', () => {
     await user.click(screen.getByRole('button', { name: 'Phân tích bài hát' }))
 
     expect(await screen.findByRole('progressbar')).toBeInTheDocument()
-    expect((form?.get('file') as File).size).toBe(64)
+    const sent = form?.get('file') as File | null | undefined
+    expect(sent?.size).toBe(64)
     expect(readActiveJob()).toBe(JOB)
   })
 

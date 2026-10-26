@@ -1,5 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { analyzeUrl, uploadFile } from '../api/analyze'
 import { useApiClient } from '../api/context'
 import { clearActiveJob, readActiveJob, writeActiveJob } from '../analyze/activeJob'
@@ -14,7 +14,8 @@ export default function WorkspacePage() {
   const { t } = useI18n()
   const [jobId, setJobId] = useState<string | null>(readActiveJob)
   const [source, setSource] = useState<Source | null>(null)
-  const { job, error: watchError } = useJob(jobId)
+  // A remembered job that the server no longer knows (expired, other account) is dropped.
+  const { job } = useJob(jobId, { onMissing: () => forget() })
 
   const start = useMutation({
     mutationFn: (next: Source) =>
@@ -32,11 +33,6 @@ export default function WorkspacePage() {
     setSource(null)
     start.reset()
   }
-
-  // A remembered job that the server no longer knows (expired, other account) is dropped.
-  useEffect(() => {
-    if (watchError?.status === 404) forget()
-  }, [watchError])
 
   return (
     <div className="mx-auto max-w-3xl">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getJob, openJobSocket } from '../api/analyze'
 import { useApiClient } from '../api/context'
 import { ApiError } from '../api/http'
@@ -18,6 +18,9 @@ interface JobWatch {
 }
 
 const IDLE: JobWatch = { job: null, transport: 'idle', error: null }
+
+/** What is known about one job; kept with its id so a different job never inherits it. */
+type Tracked = JobWatch & { id: string | null }
 const isFinal = (job: JobProgress) => job.state === 'done' || job.state === 'failed'
 
 function parse(data: unknown): JobProgress | null {
@@ -35,14 +38,23 @@ function parse(data: unknown): JobProgress | null {
  */
 export function useJob(
   jobId: string | null,
-  { pollMs = POLL_INTERVAL_MS, connectMs = CONNECT_TIMEOUT_MS } = {},
+  {
+    pollMs = POLL_INTERVAL_MS,
+    connectMs = CONNECT_TIMEOUT_MS,
+    onMissing,
+  }: { pollMs?: number; connectMs?: number; onMissing?: () => void } = {},
 ): JobWatch {
   const client = useApiClient()
-  const [watch, setWatch] = useState<JobWatch>(IDLE)
+  const [tracked, setTracked] = useState<Tracked>({ ...IDLE, id: null })
+  const missing = useRef(onMissing)
+  useEffect(() => {
+    missing.current = onMissing
+  })
 
   useEffect(() => {
-    setWatch(IDLE)
     if (!jobId) return
+    const setWatch = (update: (prev: JobWatch) => JobWatch) =>
+      setTracked((prev) => ({ ...update(prev.id === jobId ? prev : IDLE), id: jobId }))
 
     let stopped = false
     let finished = false
@@ -76,6 +88,7 @@ export function useJob(
           if (stopped) return
           if (error instanceof ApiError && FATAL_STATUSES.has(error.status)) {
             setWatch((prev) => ({ ...prev, error }))
+            if (error.status === 404) missing.current?.()
             return
           }
           // network trouble or a server hiccup: ask again on the next round
@@ -117,5 +130,5 @@ export function useJob(
     }
   }, [client, jobId, pollMs, connectMs])
 
-  return watch
+  return tracked.id === jobId && jobId !== null ? tracked : IDLE
 }
