@@ -7,6 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from src.analysis_contract.models import ERROR_HTTP_STATUS
 from src.identity.domain.errors import (
     AccountDisabled,
     EmailTaken,
@@ -20,6 +21,7 @@ from src.identity.domain.errors import (
     TokenRevoked,
     WeakPassword,
 )
+from src.ingestion.domain.errors import IngestionError
 
 # Most specific class first: lookup walks the exception's MRO.
 _STATUS_AND_CODE: dict[type[IdentityError], tuple[int, str]] = {
@@ -93,7 +95,12 @@ async def _handle_http_exception(_: Request, exc: StarletteHTTPException) -> JSO
     return error_response(exc.status_code, code, str(exc.detail), dict(exc.headers or {}))
 
 
+async def _handle_ingestion_error(_: Request, exc: IngestionError) -> JSONResponse:
+    return error_response(ERROR_HTTP_STATUS[exc.code], exc.code.value, exc.message)
+
+
 def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(IdentityError, _handle_identity_error)
+    app.add_exception_handler(IngestionError, _handle_ingestion_error)
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
     app.add_exception_handler(StarletteHTTPException, _handle_http_exception)

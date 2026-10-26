@@ -85,6 +85,25 @@ analyses = Table(
     CheckConstraint(f"content_hash ~ '{SHA256_HEX}'", name="ck_analyses_content_hash"),
 )
 
+# Cheap pre-decode cache key: sha256 of the raw upload -> canonical content_hash.
+source_fingerprints = Table(
+    "source_fingerprints",
+    metadata,
+    Column("fingerprint", CHAR(64), primary_key=True),
+    Column(
+        "content_hash",
+        CHAR(64),
+        ForeignKey(
+            f"{SCHEMA}.analyses.content_hash",
+            ondelete="CASCADE",
+            name="fk_source_fingerprints_content_hash_analyses",
+        ),
+        nullable=False,
+    ),
+    _created(),
+    CheckConstraint(f"fingerprint ~ '{SHA256_HEX}'", name="ck_source_fingerprints_fingerprint"),
+)
+
 charts = Table(
     "charts",
     metadata,
@@ -130,6 +149,9 @@ jobs = Table(
     ),
     Column("source_kind", String(20), nullable=False),
     Column("source_url", Text),
+    Column("title", String(300), nullable=False, server_default="Untitled"),
+    Column("input_path", Text),  # raw upload awaiting normalisation; deleted afterwards
+    Column("fingerprint", CHAR(64)),  # sha256 of the uploaded bytes
     Column("content_hash", CHAR(64)),
     Column("state", String(20), nullable=False, server_default="queued"),
     Column("stage", String(20)),
@@ -144,6 +166,7 @@ jobs = Table(
     ),
     # Quota is charged on acceptance and refunded once on failure/timeout (UC1 EF1).
     Column("quota_charged", Boolean, nullable=False, server_default=text("true")),
+    Column("charged_on", Date),  # UTC day the charge was taken from (refund goes back there)
     _created(),
     _updated(),
     Column("finished_at", DateTime(timezone=True)),
@@ -152,6 +175,9 @@ jobs = Table(
     CheckConstraint("stage IS NULL OR " + _in("stage", JOB_STAGES), name="ck_jobs_stage"),
     CheckConstraint("progress >= 0 AND progress <= 1", name="ck_jobs_progress"),
     CheckConstraint("(state = 'failed') = (error IS NOT NULL)", name="ck_jobs_error_iff_failed"),
+    CheckConstraint(
+        f"fingerprint IS NULL OR fingerprint ~ '{SHA256_HEX}'", name="ck_jobs_fingerprint"
+    ),
     Index("ix_jobs_owner_created", "owner_id", "created_at"),
     Index(
         "ix_jobs_active",

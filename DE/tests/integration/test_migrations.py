@@ -29,6 +29,7 @@ APP_TABLES = {
     "playlists",
     "playlist_items",
     "chord_dictionary",
+    "source_fingerprints",
 }
 
 
@@ -313,3 +314,47 @@ class TestChordDictionary:
                       values ('b', 'Db', 'major', 'piano', '{}')"""
         with pytest.raises(IntegrityError):
             db(bad_root)
+
+
+JOB_COLUMNS = (
+    "select column_name from information_schema.columns "
+    "where table_schema='app' and table_name='jobs'"
+)
+NEW_JOB_COLUMNS = {"title", "input_path", "fingerprint", "charged_on"}
+
+
+class TestIngestionMigration:
+    def test_jobs_gain_the_ingestion_columns(self, db):
+        assert NEW_JOB_COLUMNS <= {r[0] for r in db(JOB_COLUMNS)}
+
+    def test_fingerprint_must_be_sha256_hex(self, db):
+        with pytest.raises(IntegrityError):
+            db(
+                "insert into app.analyses (content_hash, result, model_version, pipeline_version) "
+                f"values ('{'a' * 64}', '{{}}', 'm', 'p')",
+                "insert into app.source_fingerprints (fingerprint, content_hash) "
+                f"values ('NOT-HEX', '{'a' * 64}')",
+            )
+
+    def test_fingerprint_must_point_at_a_cached_analysis(self, db):
+        with pytest.raises(IntegrityError):
+            db(
+                "insert into app.source_fingerprints (fingerprint, content_hash) "
+                f"values ('{'b' * 64}', '{'c' * 64}')"
+            )
+
+    def test_deleting_the_analysis_drops_its_fingerprints(self, db):
+        h = "d" * 64
+        db(
+            "insert into app.analyses (content_hash, result, model_version, pipeline_version) "
+            f"values ('{h}', '{{}}', 'm', 'p')",
+            "insert into app.source_fingerprints (fingerprint, content_hash) "
+            f"values ('{'e' * 64}', '{h}')",
+            f"delete from app.analyses where content_hash = '{h}'",
+        )
+        assert db("select count(*) from app.source_fingerprints")[0][0] == 0
+
+    def test_downgrade_to_0001_restores_the_old_shape(self, db, alembic_cfg):
+        command.downgrade(alembic_cfg, "0001")
+        assert "source_fingerprints" not in table_names(db)
+        assert not (NEW_JOB_COLUMNS & {r[0] for r in db(JOB_COLUMNS)})
