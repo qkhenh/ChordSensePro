@@ -15,6 +15,7 @@ const byCode: Record<string, ToastSpec> = {
   forbidden: { kind: 'error', message: 'Bạn không có quyền thực hiện thao tác này' },
   quota_exceeded: { kind: 'warning', message: 'Bạn đã hết lượt phân tích hôm nay' },
   not_found: { kind: 'error', message: 'Không tìm thấy nội dung yêu cầu' },
+  demo_unavailable: { kind: 'error', message: 'Bài demo chưa sẵn sàng, vui lòng thử lại sau' },
 }
 
 /** What to tell the user about an API failure; the server's own text is used only where it is actionable. */

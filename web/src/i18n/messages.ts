@@ -83,6 +83,7 @@ const vi = {
       upgrade: 'Nâng cấp Pro',
     },
   },
+  demo: { heading: 'Thử một bài demo', hint: 'Không tốn lượt phân tích' },
   chart: {
     loading: 'Đang tải bài…',
     notFound: 'Không tìm thấy bài này',
@@ -175,6 +176,7 @@ const en: Messages = {
       upgrade: 'Upgrade to Pro',
     },
   },
+  demo: { heading: 'Try a demo song', hint: 'Costs no analyses' },
   chart: {
     loading: 'Loading the song…',
     notFound: 'This song was not found',

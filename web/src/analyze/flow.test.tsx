@@ -175,3 +175,26 @@ describe('retry', () => {
     expect(sizes).toEqual([64, 64])
   })
 })
+
+
+describe('demo song', () => {
+  it('opens its chart and does not spend the quota', async () => {
+    const calls = countQuotaCalls([() => quotaOut({ used: 5, remaining: 0 })])
+    server.use(
+      http.get(`${API}/demo-tracks`, () =>
+        HttpResponse.json([
+          { id: 'ii_v_i_c', title: 'ii–V–I in C', artist: 'ChordSense demo', duration_ms: 9000, tempo_bpm: 120, key: 'C major' },
+        ]),
+      ),
+      http.post(`${API}/analyze/demo/ii_v_i_c`, () => HttpResponse.json({ job_id: JOB }, { status: 202 })),
+      http.get(`${API}/analyze/status/${JOB}`, () => HttpResponse.json(finished)),
+    )
+    const { router, user } = renderWorkspace()
+    await waitFor(() => expect(screen.getByTestId('quota-badge')).toHaveTextContent('hết lượt'))
+    await user.click(await screen.findByRole('button', { name: /ii–V–I in C/ }))
+
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/charts/${chart.id}`))
+    expect(calls.n).toBeGreaterThanOrEqual(1)
+    expect(screen.getByTestId('quota-badge')).toHaveTextContent('hết lượt') // still the same allowance
+  })
+})

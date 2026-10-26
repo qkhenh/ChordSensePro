@@ -11,6 +11,10 @@ describe('toastFor', () => {
     expect(toastFor(err(0, 'network_error')).message).toMatch(/kết nối/i)
   })
 
+  it('explains a demo that is not ready', () => {
+    expect(toastFor(err(503, 'demo_unavailable')).message).toMatch(/demo/i)
+  })
+
   it('classifies the toast so the UI can colour it', () => {
     expect(toastFor(err(429, 'quota_exceeded')).kind).toBe('warning')
     expect(toastFor(err(0, 'network_error')).kind).toBe('error')

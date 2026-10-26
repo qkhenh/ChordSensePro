@@ -5,6 +5,7 @@ import { analyzeUrl, uploadFile } from '../api/analyze'
 import { useApiClient } from '../api/context'
 import { ApiError } from '../api/http'
 import { clearActiveJob, readActiveJob, writeActiveJob } from '../analyze/activeJob'
+import { DemoTracks } from '../analyze/DemoTracks'
 import { analyzeErrorText } from '../analyze/errors'
 import { JobTracker } from '../analyze/JobTracker'
 import { QuotaBanner } from '../analyze/QuotaBanner'
@@ -31,13 +32,18 @@ export default function WorkspacePage() {
     mutationFn: (next: Source) =>
       next.kind === 'file' ? uploadFile(client, next.file) : analyzeUrl(client, next.url),
     onSuccess: ({ job_id }, next) => {
-      writeActiveJob(job_id)
+      follow(job_id)
       setSource(next)
-      setJobId(job_id)
     },
     // Accepted jobs spend a lookup, a refused one (429) must show the badge as it really is.
     onSettled: refreshQuota,
   })
+
+  function follow(id: string) {
+    writeActiveJob(id)
+    setSource(null)
+    setJobId(id)
+  }
 
   function forget() {
     clearActiveJob()
@@ -68,11 +74,14 @@ export default function WorkspacePage() {
 
       {refusal && <QuotaBanner error={refusal} />}
       {jobId === null && (
-        <SourceSelector
-          busy={start.isPending}
-          serverError={start.isError && !refusal ? analyzeErrorText(t, start.error) : null}
-          onSubmit={(next) => start.mutate(next)}
-        />
+        <>
+          <SourceSelector
+            busy={start.isPending}
+            serverError={start.isError && !refusal ? analyzeErrorText(t, start.error) : null}
+            onSubmit={(next) => start.mutate(next)}
+          />
+          <DemoTracks onStart={follow} />
+        </>
       )}
       {jobId !== null && job === null && (
         <p role="status" className="text-slate-400">
