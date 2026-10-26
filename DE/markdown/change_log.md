@@ -5,6 +5,23 @@
 
 ---
 
+## 2026-10-26 — Kiểm tra data, vẽ lại sơ đồ luồng data, viết lại phần DE trong báo cáo
+
+### Hiện trạng data (export 2026-10-26, crawl vẫn đang chạy)
+- Export `--stats`: loại 251 / 64.041 hàng tổ hợp không hợp lệ (0,39 %) và 1.595 / 63.790 segment im lặng (2,50 %: Hooktheory 1.355, JAAH 240).
+- **62.195 segment có nhãn** — train 44.266 / val 13.102 / test 4.827; 3.413 bài (2.385 / 718 / 310); không bài nào nằm ở hai split.
+- Nguồn: Hooktheory 48.624, JAAH 13.189, GuitarSet 334, piano local 48. Quality: major 26.489, minor 18.431, dominant 10.198, dim 1.874, sus2 2.173, sus4 2.960.
+- Hàng đợi còn lại: Hooktheory 2.008 pending (170 đang chạy), ChoCo 1.359 chưa chạy, GuitarSet 340, piano local 384, SWD 48.
+- Kết luận: đủ để chạy **baseline** (MERT đóng băng + head); export lại lần cuối sau khi crawl xong. Lớp mỏng (#9, b13, b5, alt) sẽ yếu; piano chỉ 48 clip; Hooktheory chiếm ~78 %; nhãn JAAH yếu nhất (xem `ai_checklist.md`), chưa nghe người kiểm.
+
+### Tài liệu / báo cáo
+- `latex_last_project/diagrams/data_flow.drawio` vẽ lại: trang 1 gồm 13 bước (0 Seed → 12 AI) kèm thẻ cấu trúc data sau mỗi bước; trang 2 so sánh các nguồn. (Chưa mở thử trong draw.io, mới kiểm XML.)
+- `main.tex`: viết lại toàn bộ mục "Data Engineering Pipeline" (tiếng Anh dễ hiểu, sơ đồ TikZ: onion, luồng tổng, luồng data 2 phần; bảng nguồn, taxonomy, kiểm soát chất lượng, số liệu hiện tại). Bỏ DAG 3 (analytics) khỏi chương DE. Thêm `\usetikzlibrary{arrows.meta,fit,calc}` ở preamble. Đã biên dịch sạch (không lỗi, không ref thiếu). Sau đó sửa tiếp các chỗ lệch thiết kế cũ: Introduction (vocabulary 6 quality / 15 extension, nguồn data), Chương 2 (ví dụ nhập nhằng Csus2/Gsus4, tỉ lệ mất cân bằng theo số liệu thật, piano VN còn mỏng), chương AI (3 head 12/6/15, mask 41/90, không lớp N, dataset + split theo bài 71/21/8). Cũng đã sửa: Phase 3 hyperparameter (tùy chọn, chỉ piano), NFR-11 (đo trên test split gộp, báo riêng piano), bỏ "analytics rollup" khỏi mô tả Data Engineering Layer (không có DAG đó). Để lại bàn sau: hàng benchmark hợp âm đảo (cần nhận ra nốt trầm nhất, taxonomy hiện chưa có nhãn bass). Báo cáo không commit lên repo (user gửi nền tảng khác).
+- Sửa comment `quality_id` (0–5) trong `init/init.sql` và `audio_segment.py` (không đổi logic).
+
+---
+
+
 ## 2026-10-23 — Sửa `display_name`, công cụ nghe audio, dọn repo
 
 ### `ChordLabel.display_name` bị trùng tên (đã sửa)

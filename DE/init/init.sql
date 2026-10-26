@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS training_samples (
     label_raw     VARCHAR(64)  NOT NULL,
     label_status  VARCHAR(12)  NOT NULL,   -- ok | partial | no_chord | unmapped
     root_id       SMALLINT,                -- 0-11
-    quality_id    SMALLINT,                -- 0-4
+    quality_id    SMALLINT,                -- 0-5 (major, minor, dominant, dim, sus2, sus4)
     ext_id        SMALLINT,                -- 0-14
     split         VARCHAR(5)   NOT NULL,   -- train | val | test (hash of source_url)
     align_status  VARCHAR(20)  NOT NULL DEFAULT 'n/a',

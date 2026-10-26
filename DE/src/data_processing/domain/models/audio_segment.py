@@ -34,7 +34,7 @@ class AudioSegment(BaseEntity):
     # Set by LabelHandler (training pipeline): class ids for the 3 classification heads
     label_status  : str | None = None           # ok | partial | no_chord | unmapped
     root_id       : int | None = None           # 0-11
-    quality_id    : int | None = None           # 0-4
+    quality_id    : int | None = None           # 0-5 (major, minor, dominant, dim, sus2, sus4)
     ext_id        : int | None = None           # 0-14
     
     @property
