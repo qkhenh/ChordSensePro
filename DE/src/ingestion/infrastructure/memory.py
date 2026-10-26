@@ -1,12 +1,31 @@
 """In-memory adapters for unit tests and the single-process dev server."""
 
 from dataclasses import replace
+from datetime import datetime
 from uuid import UUID
 
 from src.analysis_contract.models import AnalysisResult, Chart, JobState
 from src.ingestion.domain.job import Job
+from src.ingestion.domain.ports import ChartSummary
 
 _FINAL = (JobState.DONE, JobState.FAILED)
+
+
+def _summary(chart: Chart) -> ChartSummary:
+    meta = chart.metadata
+    return ChartSummary(
+        id=chart.id,
+        title=chart.title,
+        artist=chart.artist,
+        source_kind=chart.source.kind,
+        playback_kind=chart.source.playback.kind,
+        duration_ms=meta.duration_ms,
+        tempo_bpm=meta.beat_grid.tempo_bpm,
+        key=f"{meta.key.tonic.value} {meta.key.mode}",
+        is_customized=chart.is_customized,
+        version=chart.version,
+        updated_at=chart.updated_at,
+    )
 
 
 class InMemoryJobRepository:
@@ -47,6 +66,18 @@ class InMemoryChartRepository:
     async def get(self, chart_id: UUID, owner_id: UUID) -> Chart | None:
         chart = self._charts.get(chart_id)
         return chart if chart is not None and chart.owner_id == owner_id else None
+
+    async def list(
+        self, owner_id: UUID, *, limit: int, after: tuple[datetime, UUID] | None
+    ) -> list[ChartSummary]:
+        mine = sorted(
+            (c for c in self._charts.values() if c.owner_id == owner_id),
+            key=lambda c: (c.updated_at, c.id),
+            reverse=True,
+        )
+        if after is not None:
+            mine = [c for c in mine if (c.updated_at, c.id) < after]
+        return [_summary(c) for c in mine[:limit]]
 
 
 class InMemoryAnalysisCache:

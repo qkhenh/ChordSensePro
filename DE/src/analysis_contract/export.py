@@ -31,6 +31,8 @@ _EXPORTED = (
     api_schemas.JobAccepted,
     api_schemas.AnalyzeUrlRequest,
     api_schemas.DemoTrackOut,
+    api_schemas.ChartSummaryOut,
+    api_schemas.ChartPage,
 )
 
 

@@ -98,3 +98,22 @@ class DemoTrackOut(_Strict):
     duration_ms: int
     tempo_bpm: float
     key: str
+
+
+class ChartSummaryOut(_Strict):
+    id: UUID
+    title: str
+    artist: str | None
+    source_kind: str
+    playback_kind: str
+    duration_ms: int
+    tempo_bpm: float
+    key: str
+    is_customized: bool
+    version: int
+    updated_at: datetime
+
+
+class ChartPage(_Strict):
+    items: list[ChartSummaryOut]
+    next_cursor: str | None

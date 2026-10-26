@@ -366,6 +366,35 @@
         "title": "Chart",
         "type": "object"
       },
+      "ChartPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ChartSummaryOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "ChartPage",
+        "type": "object"
+      },
       "ChartSource": {
         "additionalProperties": false,
         "properties": {
@@ -399,6 +428,79 @@
           "playback"
         ],
         "title": "ChartSource",
+        "type": "object"
+      },
+      "ChartSummaryOut": {
+        "additionalProperties": false,
+        "properties": {
+          "artist": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artist"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_customized": {
+            "title": "Is Customized",
+            "type": "boolean"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "playback_kind": {
+            "title": "Playback Kind",
+            "type": "string"
+          },
+          "source_kind": {
+            "title": "Source Kind",
+            "type": "string"
+          },
+          "tempo_bpm": {
+            "title": "Tempo Bpm",
+            "type": "number"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "artist",
+          "source_kind",
+          "playback_kind",
+          "duration_ms",
+          "tempo_bpm",
+          "key",
+          "is_customized",
+          "version",
+          "updated_at"
+        ],
+        "title": "ChartSummaryOut",
         "type": "object"
       },
       "ChordEvent": {

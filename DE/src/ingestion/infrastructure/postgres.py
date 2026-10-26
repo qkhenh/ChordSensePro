@@ -1,8 +1,9 @@
 """PostgreSQL adapters (SQLAlchemy Core, asyncpg) for the ingestion ports."""
 
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import null, select, update
+from sqlalchemy import Float, Integer, cast, null, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -15,6 +16,7 @@ from src.analysis_contract.models import (
     SourceKind,
 )
 from src.ingestion.domain.job import Job
+from src.ingestion.domain.ports import ChartSummary
 from src.persistence.tables import analyses, charts, jobs, source_fingerprints
 
 _FINAL = (JobState.DONE.value, JobState.FAILED.value)
@@ -136,6 +138,51 @@ class PgChartRepository:
         )
         async with self._engine.begin() as conn:
             await conn.execute(stmt)
+
+    async def list(
+        self, owner_id: UUID, *, limit: int, after: tuple[datetime, UUID] | None
+    ) -> list[ChartSummary]:
+        c = charts.c
+        stmt = (
+            select(
+                c.id,
+                c.title,
+                c.artist,
+                c.source["kind"].astext.label("source_kind"),
+                c.source["playback"]["kind"].astext.label("playback_kind"),
+                cast(c.metadata["duration_ms"].astext, Integer).label("duration_ms"),
+                cast(c.metadata["beat_grid"]["tempo_bpm"].astext, Float).label("tempo_bpm"),
+                (c.metadata["key"]["tonic"].astext + " " + c.metadata["key"]["mode"].astext).label(
+                    "key"
+                ),
+                c.is_customized,
+                c.version,
+                c.updated_at,
+            )
+            .where(c.owner_id == owner_id)
+            .order_by(c.updated_at.desc(), c.id.desc())
+            .limit(limit)
+        )
+        if after is not None:
+            stmt = stmt.where(tuple_(c.updated_at, c.id) < tuple_(*after))
+        async with self._engine.connect() as conn:
+            rows = (await conn.execute(stmt)).all()
+        return [
+            ChartSummary(
+                id=r.id,
+                title=r.title,
+                artist=r.artist,
+                source_kind=SourceKind(r.source_kind),
+                playback_kind=r.playback_kind,
+                duration_ms=r.duration_ms,
+                tempo_bpm=r.tempo_bpm,
+                key=r.key,
+                is_customized=r.is_customized,
+                version=r.version,
+                updated_at=r.updated_at,
+            )
+            for r in rows
+        ]
 
     async def get(self, chart_id: UUID, owner_id: UUID) -> Chart | None:
         stmt = select(charts).where(charts.c.id == chart_id, charts.c.owner_id == owner_id)

@@ -3,11 +3,18 @@
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
-from src.analysis_contract.models import AnalysisResult, Chart, JobProgress, PlaybackSource
+from src.analysis_contract.models import (
+    AnalysisResult,
+    Chart,
+    JobProgress,
+    PlaybackSource,
+    SourceKind,
+)
 from src.ingestion.domain.job import Job
 
 
@@ -27,8 +34,31 @@ class JobRepository(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class ChartSummary:
+    """What a library card needs: everything but the chord events."""
+
+    id: UUID
+    title: str
+    artist: str | None
+    source_kind: SourceKind
+    playback_kind: str
+    duration_ms: int
+    tempo_bpm: float
+    key: str
+    is_customized: bool
+    version: int
+    updated_at: datetime
+
+
 class ChartRepository(Protocol):
     async def add(self, chart: Chart) -> None: ...
+
+    async def list(
+        self, owner_id: UUID, *, limit: int, after: tuple[datetime, UUID] | None
+    ) -> list[ChartSummary]:
+        """The owner's charts, newest first (ties by id, descending), strictly after the cursor."""
+        ...
 
     async def get(self, chart_id: UUID, owner_id: UUID) -> Chart | None:
         """None when the chart does not exist *or* belongs to someone else."""

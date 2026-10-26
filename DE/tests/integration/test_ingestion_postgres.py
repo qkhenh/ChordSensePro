@@ -197,3 +197,56 @@ class TestPgAnalysisCache:
         await cache.remember_fingerprint("c" * 64, RESULT.content_hash)
         await cache.remember_fingerprint("c" * 64, RESULT.content_hash)  # idempotent
         assert await cache.fingerprint_to_hash("c" * 64) == RESULT.content_hash
+
+
+class TestPgChartList:
+    async def _add(self, repo, owner, n, *, age_s=0, result=RESULT):
+        from datetime import timedelta
+
+        job = queued_job(owner)
+        chart = build_chart(job, result, now=NOW).model_copy(
+            update={"title": f"s{n}", "updated_at": NOW - timedelta(seconds=age_s)}
+        )
+        await repo.add(chart)
+        return chart
+
+    async def test_summaries_carry_the_numbers_read_from_the_jsonb_document(self, engine, owner):
+        repo = PgChartRepository(engine)
+        blues = AnalysisResult.model_validate_json(
+            (FIXTURES_DIR / "blues_f.result.json").read_text(encoding="utf-8")
+        )
+        chart = await self._add(repo, owner, 1, result=blues)
+        (summary,) = await repo.list(owner.id, limit=10, after=None)
+        assert (summary.id, summary.title, summary.duration_ms) == (chart.id, "s1", 30150)
+        assert (summary.tempo_bpm, summary.key) == (100.0, "F major")
+        assert (summary.source_kind, summary.playback_kind) == (SourceKind.FILE, "file")
+        assert (summary.version, summary.is_customized, summary.updated_at) == (1, False, NOW)
+
+    async def test_pages_walk_every_chart_once_newest_first_even_with_equal_timestamps(
+        self, engine, owner
+    ):
+        repo = PgChartRepository(engine)
+        made = [await self._add(repo, owner, i, age_s=0 if i < 6 else i) for i in range(23)]
+
+        seen, after = [], None
+        while True:
+            page = await repo.list(owner.id, limit=7, after=after)
+            seen += [s.id for s in page]
+            if len(page) < 7:
+                break
+            after = (page[-1].updated_at, page[-1].id)
+        assert len(seen) == len(set(seen)) == 23 and set(seen) == {c.id for c in made}
+        stamps = [(s.updated_at, s.id) for s in [await _one(repo, owner, i) for i in seen[:3]]]
+        assert stamps == sorted(stamps, reverse=True)
+
+    async def test_only_the_owners_charts_are_listed(self, engine, owner):
+        repo = PgChartRepository(engine)
+        other = await PgUserRepository(engine).add(make_user())
+        await self._add(repo, owner, 1)
+        await self._add(repo, other, 2)
+        assert [s.title for s in await repo.list(owner.id, limit=10, after=None)] == ["s1"]
+
+
+async def _one(repo, owner, chart_id):
+    page = await repo.list(owner.id, limit=100, after=None)
+    return next(s for s in page if s.id == chart_id)
