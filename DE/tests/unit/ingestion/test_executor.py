@@ -7,6 +7,7 @@ import structlog
 
 from src.analysis_contract.models import (
     ErrorCode,
+    JobError,
     JobStage,
     JobState,
     SourceKind,
@@ -195,7 +196,7 @@ class TestCacheHit:
 
 class TestRecovery:
     async def test_stale_unfinished_jobs_are_failed_and_refunded(self, tmp_path):
-        world = make_world(tmp_path, job_timeout_s=90)
+        world = make_world(tmp_path, job_deadline_s=90)
         stale = await world.submit()
         world.clock.advance(seconds=200)
         fresh = await world.submit()
@@ -208,7 +209,7 @@ class TestRecovery:
         assert world.events.published[-1].state == JobState.FAILED
 
     async def test_a_processing_job_is_recovered_too_and_its_work_dir_removed(self, tmp_path):
-        world = make_world(tmp_path)
+        world = make_world(tmp_path, job_deadline_s=90)
         job = await world.submit()
         await world.jobs.save(
             replace(job, state=JobState.PROCESSING, stage=JobStage.SEPARATING, progress=0.45)
@@ -244,3 +245,150 @@ class TestEdges:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+class TestNeverStuck:
+    """Review focus 3: whatever goes wrong, a job ends failed and its charge comes back."""
+
+    async def test_after_a_restart_every_unfinished_job_is_failed_at_once(self, tmp_path):
+        world = make_world(tmp_path)  # deadline 300 s: the default would still wait
+        job = await world.submit()
+        await world.jobs.save(
+            replace(job, state=JobState.PROCESSING, stage=JobStage.SEPARATING, progress=0.45)
+        )
+        world.clock.advance(seconds=5)  # restarted five seconds after the crash
+
+        assert await world.executor.recover_orphans() == 0  # not yet old enough for a live worker
+        assert await world.executor.recover_orphans(older_than_s=0) == 1
+        failed = await final(world, job)
+        assert (failed.state, failed.error.code) == (JobState.FAILED, ErrorCode.AI_FAILURE)
+        assert await world.used() == 0
+
+    async def test_a_failure_that_cannot_be_recorded_does_not_escape_and_is_recovered_later(
+        self, tmp_path
+    ):
+        world = make_world(tmp_path)
+        job = await world.submit(name="fail-ai.mp3")
+        real_save = world.jobs.save
+
+        async def database_down(saved):
+            if saved.state == JobState.FAILED:
+                raise ConnectionError("database unreachable")
+            await real_save(saved)
+
+        world.jobs.save = database_down
+        with structlog.testing.capture_logs() as logs:
+            await world.executor.run(job.id)  # must not raise
+        assert any(e["log_level"] == "error" for e in logs)
+        assert (await final(world, job)).state == JobState.PROCESSING
+        assert not (tmp_path / "tmp" / str(job.id)).exists()
+
+        world.jobs.save = real_save  # the database is back
+        assert await world.executor.recover_orphans(older_than_s=0) == 1
+        assert (await final(world, job)).state == JobState.FAILED
+        assert await world.used() == 0
+
+    async def test_a_whole_job_deadline_catches_a_hang_outside_the_analysis(self, tmp_path):
+        world = make_world(tmp_path, job_deadline_s=0.05)
+
+        async def hang(src, dest_dir, stem):
+            await asyncio.sleep(3600)
+
+        world.normalizer.normalize = hang
+        job = await world.submit()
+        await world.executor.run(job.id)
+
+        failed = await final(world, job)
+        assert failed.error.code == ErrorCode.ANALYSIS_TIMEOUT
+        assert await world.used() == 0
+        assert not (tmp_path / "tmp" / str(job.id)).exists()
+
+    async def test_fail_job_ends_a_job_once_whoever_asks(self, tmp_path):
+        world = make_world(tmp_path)
+        job = await world.submit()
+        error = JobError(code=ErrorCode.ANALYSIS_TIMEOUT, message="killed by the worker limit")
+        await world.executor.fail_job(job.id, error)
+        await world.executor.fail_job(job.id, error)
+        assert (await final(world, job)).error.code == ErrorCode.ANALYSIS_TIMEOUT
+        assert await world.used() == 0
+        assert [p.state for p in world.events.published].count(JobState.FAILED) == 1
+        await world.executor.fail_job(uuid4(), error)  # unknown id: nothing happens
+
+    async def test_recovery_keeps_running_in_the_background_and_survives_a_bad_pass(self, tmp_path):
+        world = make_world(tmp_path)
+        real_list = world.jobs.list_unfinished
+        calls = {"n": 0}
+
+        async def flaky():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ConnectionError("database hiccup")
+            return await real_list()
+
+        world.jobs.list_unfinished = flaky
+        task = asyncio.create_task(world.executor.run_recovery_forever(0.01, older_than_s=0))
+        try:
+            job = await world.submit()  # crashes "later": born after the loop started
+            for _ in range(100):
+                if (await final(world, job)).state == JobState.FAILED:
+                    break
+                await asyncio.sleep(0.02)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert (await final(world, job)).state == JobState.FAILED
+        assert calls["n"] >= 2
+
+
+class TestRefundBeforeAnnouncing:
+    """A client reacts to a final event by re-reading its quota: the refund must already be in."""
+
+    @staticmethod
+    def spy(world):
+        seen = []
+
+        class Spy:
+            async def publish(self, progress):
+                if progress.state in (JobState.DONE, JobState.FAILED):
+                    seen.append((progress.state, await world.used()))
+
+        world.executor._events = Spy()
+        return seen
+
+    async def test_a_failure_is_announced_only_after_the_charge_came_back(self, tmp_path):
+        world = make_world(tmp_path)
+        seen = self.spy(world)
+        job = await world.submit(name="fail-ai.mp3")
+        await world.executor.run(job.id)
+        assert seen == [(JobState.FAILED, 0)]
+
+    async def test_a_cache_hit_is_announced_only_after_the_charge_came_back(self, tmp_path):
+        first = make_world(tmp_path / "a")
+        seed = await first.submit()
+        await first.executor.run(seed.id)
+        cached = await first.cache.get((await final(first, seed)).content_hash)
+
+        world = make_world(tmp_path / "b")
+        await world.cache.put(cached)
+        seen = self.spy(world)
+        job = await world.submit()
+        await world.executor.run(job.id)
+        assert seen == [(JobState.DONE, 0)]
+
+    async def test_a_recorded_refund_survives_a_failure_that_could_not_be_saved(self, tmp_path):
+        world = make_world(tmp_path)
+        job = await world.submit(name="fail-ai.mp3")
+        real_save = world.jobs.save
+
+        async def down(saved):
+            if saved.state == JobState.FAILED:
+                raise ConnectionError("database unreachable")
+            await real_save(saved)
+
+        world.jobs.save = down
+        await world.executor.run(job.id)
+        world.jobs.save = real_save
+        assert await world.used() == 0  # refunded already ...
+        assert await world.executor.recover_orphans(older_than_s=0) == 1
+        assert await world.used() == 0  # ... and recovery does not refund it a second time

@@ -101,22 +101,43 @@ class JobExecutor:
         if job is None or job.state in _FINAL:
             return
         try:
-            await self._execute(job)
+            async with asyncio.timeout(self._settings.job_deadline_s):
+                await self._execute(job)
         except Exception as exc:
-            await self._fail(job_id, self._error_for(job_id, exc))
+            await self._fail_safely(job_id, self._error_for(job_id, exc))
         finally:
             await asyncio.to_thread(shutil.rmtree, self._work_dir(job_id), True)
 
-    async def recover_orphans(self) -> int:
-        """Fail jobs left ``queued``/``processing`` by a dead worker (restart, crash)."""
-        cutoff = self._clock() - timedelta(seconds=self._settings.job_timeout_s)
+    async def fail_job(self, job_id: UUID, error: JobError) -> None:
+        """End a job from outside the run (a worker limit, recovery); at most once."""
+        await self._fail_safely(job_id, error)
+        await asyncio.to_thread(shutil.rmtree, self._work_dir(job_id), True)
+
+    async def recover_orphans(self, older_than_s: float | None = None) -> int:
+        """Fail jobs left ``queued``/``processing`` by a dead worker (restart, crash).
+
+        Only jobs untouched for ``older_than_s`` (default: the whole-job deadline, i.e. nobody
+        can still be working on them). A process that owns every job it ever started passes 0."""
+        age = self._settings.job_deadline_s if older_than_s is None else older_than_s
+        cutoff = self._clock() - timedelta(seconds=age)
         recovered = 0
         for job in await self._jobs.list_unfinished():
             if job.updated_at <= cutoff:
-                await self._fail(job.id, _INTERRUPTED)
-                await asyncio.to_thread(shutil.rmtree, self._work_dir(job.id), True)
+                await self.fail_job(job.id, _INTERRUPTED)
                 recovered += 1
         return recovered
+
+    async def run_recovery_forever(
+        self, interval_s: float, older_than_s: float | None = None
+    ) -> None:
+        """Keep failing jobs that nobody is working on any more (a worker died mid-task)."""
+        while True:
+            await asyncio.sleep(interval_s)
+            try:
+                if recovered := await self.recover_orphans(older_than_s):
+                    log.warning("orphan_jobs_failed", count=recovered)
+            except Exception:
+                log.exception("orphan_recovery_failed")  # the next pass tries again
 
     # --- the happy path --------------------------------------------------------------
 
@@ -159,9 +180,9 @@ class JobExecutor:
         if job.fingerprint:
             await self._cache.remember_fingerprint(job.fingerprint, audio.content_hash)
 
-        done = await self._advance(job, JobState.DONE, chart_id=chart.id)
         if cached is not None:  # same content as an earlier analysis: no quota spent
-            await self._refund(done)
+            await self._refund(job)
+        await self._advance(job, JobState.DONE, chart_id=chart.id)
 
     async def _analyze(self, job: Job, content_hash: str, audio_path: Path):
         latest = job
@@ -198,8 +219,19 @@ class JobExecutor:
         job = await self._jobs.get(job_id)
         if job is None or job.state in _FINAL:
             return
-        failed = await self._advance(job, JobState.FAILED, error=error)
-        await self._refund(failed)
+        # Give the charge back before announcing the end: a client that reacts to the final
+        # event by re-reading its quota must see the refund. If the save then fails, the refund
+        # stays recorded and the later recovery does not repeat it.
+        await self._refund(job)
+        await self._advance(job, JobState.FAILED, error=error)
+
+    async def _fail_safely(self, job_id: UUID, error: JobError) -> None:
+        """Record a failure without ever raising: if even that cannot be saved (database down)
+        the job stays unfinished and the periodic recovery picks it up."""
+        try:
+            await self._fail(job_id, error)
+        except Exception:
+            log.exception("job_failure_not_recorded", job_id=str(job_id))
 
     async def _refund(self, job: Job) -> None:
         """Give the charge back at most once, to the day it was taken from."""

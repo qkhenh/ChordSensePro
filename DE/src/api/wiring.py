@@ -82,7 +82,7 @@ def build_ingestion(
         from src.ingestion.infrastructure.celery_app import CeleryJobRunner, make_celery
 
         runner = CeleryJobRunner(
-            make_celery(settings.redis_url, job_timeout_s=settings.job_timeout_s)
+            make_celery(settings.redis_url, job_deadline_s=settings.job_deadline_s)
         )
     else:
         runner = InProcessJobRunner(executor)

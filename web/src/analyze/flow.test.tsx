@@ -177,6 +177,74 @@ describe('retry', () => {
 })
 
 
+describe('retry safety', () => {
+  const failedJob: JobProgress = {
+    ...finished,
+    state: 'failed',
+    stage: 'recognizing',
+    progress: 0.9,
+    result_chart_id: null,
+    error: { code: 'ai_failure', message: 'x', retryable: true },
+  }
+
+  it('a double click on "Thử lại" sends the file once, not twice', async () => {
+    let posts = 0
+    server.use(
+      http.post(`${API}/analyze/file`, async () => {
+        posts += 1
+        await new Promise((r) => setTimeout(r, 40))
+        return HttpResponse.json({ job_id: JOB }, { status: 202 })
+      }),
+      http.get(`${API}/analyze/status/${JOB}`, () => HttpResponse.json(failedJob)),
+    )
+    const { user } = renderWorkspace()
+    await pickAndAnalyze(user)
+    await user.dblClick(await screen.findByRole('button', { name: 'Thử lại' }))
+    await new Promise((r) => setTimeout(r, 150))
+    expect(posts).toBe(2) // the first attempt plus ONE retry
+  })
+
+  it('shows why a retry could not even be sent', async () => {
+    let posts = 0
+    server.use(
+      http.post(`${API}/analyze/file`, () => {
+        posts += 1
+        return posts === 1
+          ? HttpResponse.json({ job_id: JOB }, { status: 202 })
+          : apiError(413, 'file_too_large')
+      }),
+      http.get(`${API}/analyze/status/${JOB}`, () => HttpResponse.json(failedJob)),
+    )
+    const { user } = renderWorkspace()
+    await pickAndAnalyze(user)
+    await user.click(await screen.findByRole('button', { name: 'Thử lại' }))
+    await waitFor(() => expect(posts).toBe(2))
+    const alerts = await screen.findAllByRole('alert')
+    expect(alerts.some((a) => /lớn hơn 100 MB/.test(a.textContent ?? ''))).toBe(true)
+    expect(screen.getByRole('button', { name: 'Thử lại' })).toBeEnabled() // and it can be tried again
+  })
+
+  it('shows the quota banner when a retry is refused for quota', async () => {
+    let posts = 0
+    server.use(
+      http.post(`${API}/analyze/file`, () => {
+        posts += 1
+        return posts === 1
+          ? HttpResponse.json({ job_id: JOB }, { status: 202 })
+          : HttpResponse.json(
+              { code: 'quota_exceeded', message: 'x', limit: 5, resets_at: '2026-10-27T00:00:00Z' },
+              { status: 429 },
+            )
+      }),
+      http.get(`${API}/analyze/status/${JOB}`, () => HttpResponse.json(failedJob)),
+    )
+    const { user } = renderWorkspace()
+    await pickAndAnalyze(user)
+    await user.click(await screen.findByRole('button', { name: 'Thử lại' }))
+    expect(await screen.findByText('Bạn đã dùng hết 5 lượt phân tích hôm nay')).toBeInTheDocument()
+  })
+})
+
 describe('demo song', () => {
   it('opens its chart and does not spend the quota', async () => {
     const calls = countQuotaCalls([() => quotaOut({ used: 5, remaining: 0 })])

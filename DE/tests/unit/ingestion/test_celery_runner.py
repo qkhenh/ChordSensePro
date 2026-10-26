@@ -34,8 +34,8 @@ def use_executor(executor):
     configure(factory)
 
 
-def eager_app(job_timeout_s: float = 90):
-    return make_celery("memory://", job_timeout_s=job_timeout_s, eager=True)
+def eager_app(job_deadline_s: float = 300):
+    return make_celery("memory://", job_deadline_s=job_deadline_s, eager=True)
 
 
 async def test_enqueue_runs_the_executor_once_with_the_job_id():
@@ -78,8 +78,8 @@ async def test_a_celery_time_limit_fails_the_job_as_a_timeout_and_refunds(tmp_pa
     assert await world.used() == 0
 
 
-def test_celery_limits_follow_the_analysis_timeout():
-    task = eager_app(job_timeout_s=90).tasks["ingestion.run_job"]
+def test_celery_limits_sit_above_the_whole_job_deadline():
+    task = eager_app(job_deadline_s=90).tasks["ingestion.run_job"]
     assert (task.soft_time_limit, task.time_limit) == (95, 105)
 
 
@@ -113,3 +113,21 @@ class TestWiring:
 def _reset_factory():
     yield
     configure(None)
+
+
+async def test_a_limit_that_escapes_the_event_loop_still_fails_and_refunds_the_job(tmp_path):
+    """Celery raises its soft limit from a signal handler, i.e. outside the executor."""
+    world = make_world(tmp_path)
+    job = await world.submit()
+
+    async def killed_from_outside(job_id):
+        raise SoftTimeLimitExceeded
+
+    world.executor.run = killed_from_outside
+    use_executor(world.executor)
+    await CeleryJobRunner(eager_app()).enqueue(job.id)
+
+    failed = await world.jobs.get(job.id)
+    assert failed.state == JobState.FAILED
+    assert failed.error.code == ErrorCode.ANALYSIS_TIMEOUT
+    assert await world.used() == 0

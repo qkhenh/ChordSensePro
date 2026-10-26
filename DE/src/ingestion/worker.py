@@ -36,5 +36,5 @@ async def open_executor() -> AsyncIterator[JobExecutor]:
 
 
 _settings = IngestSettings()
-app = make_celery(_settings.redis_url, job_timeout_s=_settings.job_timeout_s)
+app = make_celery(_settings.redis_url, job_deadline_s=_settings.job_deadline_s)
 configure(open_executor)

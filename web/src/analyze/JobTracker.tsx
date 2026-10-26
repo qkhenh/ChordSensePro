@@ -11,6 +11,8 @@ interface Props {
   /** Only offered when the source is still known and the failure is worth retrying. */
   onRetry?: () => void
   onDismiss: () => void
+  /** A retry is on its way: do not offer to send it again. */
+  busy?: boolean
 }
 
 function stepState(job: JobProgress, steps: JobStage[], index: number): StepState {
@@ -29,7 +31,7 @@ const DOT: Record<StepState, string> = {
 }
 
 /** The stepper of an analysis: where it is, what went wrong, what the user can do next. */
-export function JobTracker({ job, withFetch = false, onRetry, onDismiss }: Props) {
+export function JobTracker({ job, withFetch = false, onRetry, onDismiss, busy = false }: Props) {
   const { t } = useI18n()
   const steps = STAGES.filter((stage) => withFetch || stage !== 'fetching')
   const final = job.state === 'done' || job.state === 'failed'
@@ -83,9 +85,10 @@ export function JobTracker({ job, withFetch = false, onRetry, onDismiss }: Props
             <button
               type="button"
               onClick={onRetry}
-              className="rounded-lg bg-brand-purple px-4 py-2 font-semibold text-white hover:bg-brand-purple-light"
+              disabled={busy}
+              className="rounded-lg bg-brand-purple px-4 py-2 font-semibold text-white hover:bg-brand-purple-light disabled:opacity-60"
             >
-              {t.analyze.tracker.retry}
+              {busy ? t.analyze.sending : t.analyze.tracker.retry}
             </button>
           )}
           <button

@@ -18,6 +18,7 @@ def test_defaults_follow_the_spec_limits():
     assert s.max_upload_bytes == 100 * 1024 * 1024
     assert s.max_duration_ms == 600_000
     assert s.job_timeout_s == 90
+    assert s.job_deadline_s == 300  # fetch 30 s + decode + analysis 90 s, with room to spare
     assert s.job_runner == "inprocess"
 
 

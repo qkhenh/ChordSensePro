@@ -132,13 +132,16 @@ def make_world(
     engine=None,
     resolver=None,
     job_timeout_s: float = 90,
+    job_deadline_s: float = 300,
     free_quota: int = 5,
     role: Role = Role.FREE,
     timeout_errors: tuple[type[BaseException], ...] = (TimeoutError,),
 ) -> World:
     tmp_path.mkdir(parents=True, exist_ok=True)
     clock = FakeClock()
-    settings = IngestSettings(data_dir=tmp_path, job_timeout_s=job_timeout_s)
+    settings = IngestSettings(
+        data_dir=tmp_path, job_timeout_s=job_timeout_s, job_deadline_s=job_deadline_s
+    )
     demo = tmp_path / "resolver-demo.wav"
     demo.write_bytes(b"demo-audio")
     jobs, charts, cache = (

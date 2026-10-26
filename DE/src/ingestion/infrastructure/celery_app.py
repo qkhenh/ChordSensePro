@@ -12,11 +12,13 @@ from contextlib import AbstractAsyncContextManager
 from uuid import UUID
 
 from celery import Celery
+from celery.exceptions import SoftTimeLimitExceeded
 
+from src.analysis_contract.models import ErrorCode, JobError
 from src.ingestion.application.executor import JobExecutor
 
 TASK_NAME = "ingestion.run_job"
-# Hard limits sit above the executor's own asyncio timeout, as a backstop.
+# Hard limits sit above the executor's whole-job deadline, as a backstop.
 SOFT_LIMIT_MARGIN_S = 5
 HARD_LIMIT_MARGIN_S = 15
 
@@ -40,7 +42,18 @@ async def _run(job_id: str) -> None:
         await executor.run(UUID(job_id))
 
 
-def make_celery(broker_url: str, *, job_timeout_s: float, eager: bool = False) -> Celery:
+async def _abort(job_id: str) -> None:
+    """A Celery limit stopped the task from outside: end the job and give the charge back."""
+    if _factory is None:
+        raise RuntimeError("no executor factory configured: call celery_app.configure() first")
+    error = JobError(
+        code=ErrorCode.ANALYSIS_TIMEOUT, message="The analysis took too long", retryable=True
+    )
+    async with _factory() as executor:
+        await executor.fail_job(UUID(job_id), error)
+
+
+def make_celery(broker_url: str, *, job_deadline_s: float, eager: bool = False) -> Celery:
     app = Celery("chordsense", broker=broker_url)
     app.conf.update(
         task_ignore_result=True,
@@ -53,11 +66,17 @@ def make_celery(broker_url: str, *, job_timeout_s: float, eager: bool = False) -
 
     @app.task(
         name=TASK_NAME,
-        soft_time_limit=job_timeout_s + SOFT_LIMIT_MARGIN_S,
-        time_limit=job_timeout_s + HARD_LIMIT_MARGIN_S,
+        shared=False,  # belongs to this app only, so its limits are its own
+        soft_time_limit=job_deadline_s + SOFT_LIMIT_MARGIN_S,
+        time_limit=job_deadline_s + HARD_LIMIT_MARGIN_S,
     )
     def run_job(job_id: str) -> None:
-        asyncio.run(_run(job_id))
+        try:
+            asyncio.run(_run(job_id))
+        except SoftTimeLimitExceeded:
+            # Celery raises this from a signal handler: it leaves the event loop from the
+            # outside, so the executor never saw it. Fail the job in a fresh loop.
+            asyncio.run(_abort(job_id))
 
     return app
 

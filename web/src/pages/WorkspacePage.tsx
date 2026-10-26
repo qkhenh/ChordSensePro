@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { analyzeUrl, uploadFile } from '../api/analyze'
 import { useApiClient } from '../api/context'
@@ -26,6 +26,10 @@ export default function WorkspacePage() {
   // A remembered job that the server no longer knows (expired, other account) is dropped.
   const { job } = useJob(jobId, { onMissing: () => forget() })
 
+  // One submission at a time: a second click lands before React has re-rendered the button
+  // as disabled, and each submission spends a quota unit.
+  const sending = useRef(false)
+
   const refreshQuota = () => queryClient.invalidateQueries({ queryKey: quotaKey(user?.id) })
 
   const start = useMutation({
@@ -36,8 +40,17 @@ export default function WorkspacePage() {
       setSource(next)
     },
     // Accepted jobs spend a lookup, a refused one (429) must show the badge as it really is.
-    onSettled: refreshQuota,
+    onSettled: () => {
+      sending.current = false
+      return refreshQuota()
+    },
   })
+
+  function submit(next: Source) {
+    if (sending.current) return
+    sending.current = true
+    start.mutate(next)
+  }
 
   function follow(id: string) {
     writeActiveJob(id)
@@ -78,7 +91,7 @@ export default function WorkspacePage() {
           <SourceSelector
             busy={start.isPending}
             serverError={start.isError && !refusal ? analyzeErrorText(t, start.error) : null}
-            onSubmit={(next) => start.mutate(next)}
+            onSubmit={submit}
           />
           <DemoTracks onStart={follow} />
         </>
@@ -92,9 +105,15 @@ export default function WorkspacePage() {
         <JobTracker
           job={job}
           withFetch={source?.kind === 'url' || job.stage === 'fetching'}
-          onRetry={source ? () => start.mutate(source) : undefined}
+          onRetry={source ? () => submit(source) : undefined}
           onDismiss={forget}
+          busy={start.isPending}
         />
+      )}
+      {jobId !== null && start.isError && !refusal && (
+        <p role="alert" className="mt-4 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-300">
+          {analyzeErrorText(t, start.error)}
+        </p>
       )}
     </div>
   )

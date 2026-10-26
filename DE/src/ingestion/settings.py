@@ -18,7 +18,10 @@ class IngestSettings(BaseSettings):
     # NFR-12. "100 MB" is taken as 100 MiB (ruling D6 in the M2 plan).
     max_upload_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
     max_duration_ms: int = Field(default=600_000, gt=0)
-    job_timeout_s: float = Field(default=90, gt=0)  # UC1 EF1
+    job_timeout_s: float = Field(default=90, gt=0)  # UC1 EF1: the analysis itself
+    # The whole job, from fetching to the saved chart: a link (30 s) plus decoding plus the
+    # analysis. Celery's limits sit above it and orphan recovery waits for it.
+    job_deadline_s: float = Field(default=300, gt=0)
     mock_stage_delay_ms: int = Field(default=0, ge=0)
     engine: Literal["mock"] = "mock"
     media_resolver: Literal["fake"] = "fake"

@@ -37,7 +37,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if ingestion is None:  # an identity-only app (tests): nothing to recover or sweep
         yield
         return
-    await ingestion.executor.recover_orphans()
+    # In-process, this process started every job there is, so any unfinished one is dead.
+    # With Celery workers some may still be running: wait for the whole-job deadline.
+    own_every_job = ingestion.settings.job_runner == "inprocess"
+    await ingestion.executor.recover_orphans(0 if own_every_job else None)
     sweeper = TempSweeper(
         ingestion.settings.data_dir / "tmp", ingestion.settings.temp_ttl_s, ingestion.jobs
     )
@@ -45,12 +48,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.sweeper = asyncio.create_task(
         sweeper.run_forever(max(ingestion.settings.temp_ttl_s / 4, 1))
     )
+    app.state.recovery = asyncio.create_task(
+        ingestion.executor.run_recovery_forever(max(ingestion.settings.job_deadline_s / 4, 1))
+    )
     try:
         yield
     finally:
-        app.state.sweeper.cancel()
-        with suppress(asyncio.CancelledError):
-            await app.state.sweeper
+        for background in (app.state.sweeper, app.state.recovery):
+            background.cancel()
+            with suppress(asyncio.CancelledError):
+                await background
         await ingestion.runner.drain()
         if engine is not None:
             await engine.dispose()

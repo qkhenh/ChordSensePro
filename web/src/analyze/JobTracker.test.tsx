@@ -94,6 +94,11 @@ describe('failures', () => {
     expect(onRetry).toHaveBeenCalledOnce()
   })
 
+  it('locks the retry button while a retry is already being sent', () => {
+    setup(failed('ai_failure', true), { busy: true })
+    expect(screen.getByRole('button', { name: /thử lại|đang gửi/i })).toBeDisabled()
+  })
+
   it('has no retry for a failure that retrying cannot fix', () => {
     setup(failed('unsupported_format', false))
     expect(screen.queryByRole('button', { name: 'Thử lại' })).not.toBeInTheDocument()
