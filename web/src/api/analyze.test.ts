@@ -3,6 +3,7 @@ import {
   analyzeDemo,
   analyzeUrl,
   getChart,
+  getAudioTicket,
   getJob,
   listDemoTracks,
   openJobSocket,
@@ -134,6 +135,32 @@ describe('other calls', () => {
     const track = { id: 'ii_v_i_c', title: 'ii–V–I', artist: 'ChordSense demo', duration_ms: 9000, tempo_bpm: 120, key: 'C major' }
     server.use(http.get(`${API}/demo-tracks`, () => HttpResponse.json([track])))
     expect(await listDemoTracks(client)).toEqual([track])
+  })
+})
+
+describe('getAudioTicket', () => {
+  it('asks for a ticket for that chart and returns a usable url and its expiry as a Date', async () => {
+    const client = await signedIn()
+    let path = ''
+    server.use(
+      http.post(`${API}/charts/:id/audio-ticket`, ({ params }) => {
+        path = String(params.id)
+        return HttpResponse.json({
+          url: `/api/v1/charts/${params.id}/audio?ticket=abc`,
+          expires_at: '2026-10-26T12:30:00Z',
+        })
+      }),
+    )
+    const ticket = await getAudioTicket(client, 'chart-1')
+    expect(path).toBe('chart-1')
+    expect(ticket.url).toBe('/api/v1/charts/chart-1/audio?ticket=abc')
+    expect(ticket.expiresAt.toISOString()).toBe('2026-10-26T12:30:00.000Z')
+  })
+
+  it('surfaces a 404 for a chart without stored audio', async () => {
+    const client = await signedIn()
+    server.use(http.post(`${API}/charts/:id/audio-ticket`, () => apiError(404, 'not_found')))
+    await expect(getAudioTicket(client, 'chart-1')).rejects.toMatchObject({ status: 404 })
   })
 })
 

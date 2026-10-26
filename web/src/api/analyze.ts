@@ -1,5 +1,5 @@
 import { ApiError, type ApiClient } from './http'
-import type { Chart, DemoTrack, JobAccepted, JobProgress } from './types'
+import type { AudioTicketWire, Chart, DemoTrack, JobAccepted, JobProgress } from './types'
 
 export function uploadFile(client: ApiClient, file: File): Promise<JobAccepted> {
   const body = new FormData()
@@ -33,4 +33,18 @@ export function openJobSocket(client: ApiClient, id: string): WebSocket {
   const token = client.getAccessToken()
   if (!token) throw new ApiError(401, 'not_authenticated', 'Not signed in')
   return new WebSocket(client.socketUrl(`/ws/jobs/${encodeURIComponent(id)}`), ['bearer', token])
+}
+
+export interface AudioTicket {
+  /** A URL an `<audio>` element can load without credentials. */
+  url: string
+  expiresAt: Date
+}
+
+export async function getAudioTicket(client: ApiClient, chartId: string): Promise<AudioTicket> {
+  const wire = await client.request<AudioTicketWire>(
+    `/charts/${encodeURIComponent(chartId)}/audio-ticket`,
+    { method: 'POST' },
+  )
+  return { url: wire.url, expiresAt: new Date(wire.expires_at) }
 }

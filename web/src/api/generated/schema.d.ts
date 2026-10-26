@@ -82,6 +82,16 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** AudioTicketOut */
+        AudioTicketOut: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Url */
+            url: string;
+        };
         /** AuthResponse */
         AuthResponse: {
             /** Access Token */
@@ -167,6 +177,13 @@ export interface components {
             /** Version */
             version: number;
         };
+        /** ChartPage */
+        ChartPage: {
+            /** Items */
+            items: components["schemas"]["ChartSummaryOut"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
         /** ChartSource */
         ChartSource: {
             /** Content Hash */
@@ -178,6 +195,37 @@ export interface components {
              * @default null
              */
             url: string | null;
+        };
+        /** ChartSummaryOut */
+        ChartSummaryOut: {
+            /** Artist */
+            artist: string | null;
+            /** Duration Ms */
+            duration_ms: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Customized */
+            is_customized: boolean;
+            /** Key */
+            key: string;
+            /** Playback Kind */
+            playback_kind: string;
+            /** Source Kind */
+            source_kind: string;
+            /** Tempo Bpm */
+            tempo_bpm: number;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Version */
+            version: number;
         };
         /** ChordEvent */
         ChordEvent: {
