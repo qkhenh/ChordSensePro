@@ -45,3 +45,18 @@ for (let run = 1; run <= RUNS; run++) {
     expect(stats?.meanFps ?? 0).toBeGreaterThanOrEqual(50)
   })
 }
+
+test('a chart of 400+ bars keeps the frame rate and the sync', async ({ page, browserName }) => {
+  test.setTimeout(90_000)
+  await page.goto('/__spike/sync?seconds=810&play=12') // 405 bars, only the first 12 s are played
+  await expect(page.locator('[data-bar]')).toHaveCount(405)
+  await page.getByRole('button', { name: 'Start' }).click()
+  await page.waitForFunction(() => (globalThis as unknown as Spike).__syncStats !== undefined, null, {
+    timeout: 60_000,
+  })
+  const stats = await page.evaluate(() => (globalThis as unknown as Spike).__syncStats)
+  console.log(`[NFR-01] ${browserName} 405 bars: ${JSON.stringify(stats)}`) // eslint-disable-line no-console
+  expect(stats?.meanFps ?? 0).toBeGreaterThanOrEqual(50)
+  expect(stats?.p95 ?? Infinity).toBeLessThanOrEqual(100)
+  expect(stats?.lagP95 ?? Infinity).toBeLessThanOrEqual(100)
+})

@@ -95,7 +95,10 @@ function clickTrack(seconds: number): Blob {
 }
 
 export default function SyncSpike() {
-  const seconds = Math.min(Math.max(Number(new URLSearchParams(location.search).get('seconds')) || 30, 5), 600)
+  const query = new URLSearchParams(location.search)
+  const seconds = Math.min(Math.max(Number(query.get('seconds')) || 30, 5), 1200)
+  // `play` stops the run early: a 400-bar chart does not need 13 minutes of audio to be measured.
+  const playFor = Math.min(Number(query.get('play')) || seconds, seconds)
   const grid = useMemo(() => buildGrid(metadata(seconds), chordsFor(seconds)), [seconds])
   const root = useRef<HTMLDivElement>(null)
   const [transport, setTransport] = useState<HtmlAudioTransport | null>(null)
@@ -116,7 +119,7 @@ export default function SyncSpike() {
       const lit = root.current?.querySelector('[data-current="true"]')
       const shown = lit ? Number(lit.getAttribute('data-bar')) : -1
       samples.push({ at, audioMs, shown, offset: offsetMs(grid, audioMs, shown) })
-      if (audioMs >= seconds * 1000 - 300 || player.state === 'ended') {
+      if (audioMs >= playFor * 1000 - 300 || player.state === 'ended') {
         const result = summarize(samples, flipLags(grid, samples))
         window.__syncStats = result
         setStats(result)
@@ -130,7 +133,7 @@ export default function SyncSpike() {
 
   return (
     <main className="p-6">
-      <h1 className="mb-4 text-xl font-bold text-white">NFR-01 sync spike ({seconds} s)</h1>
+      <h1 className="mb-4 text-xl font-bold text-white">NFR-01 sync spike ({playFor} of {seconds} s)</h1>
       <button type="button" onClick={() => void start()} className="mb-4 rounded bg-brand-purple px-4 py-2 text-white">
         Start
       </button>

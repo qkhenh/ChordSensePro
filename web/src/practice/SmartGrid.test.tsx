@@ -154,12 +154,11 @@ describe('staying cheap', () => {
     expect(vi.mocked(formatChord).mock.calls.length).toBeGreaterThan(calls)
   })
 
-  it('draws 400 bars quickly', () => {
+  it('draws a 400-bar chart in full (its speed is measured in a real browser: e2e/sync.perf)', () => {
     const grid = buildGrid(meta(800_000), [])
     expect(grid.bars.length).toBeGreaterThanOrEqual(400)
-    const started = performance.now()
     show({ grid })
-    expect(performance.now() - started).toBeLessThan(400) // generous: jsdom is far slower than a browser
+    expect(screen.getAllByRole('button').length).toBe(grid.bars.length)
   })
 })
 
