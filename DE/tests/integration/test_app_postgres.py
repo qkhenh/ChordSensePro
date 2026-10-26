@@ -98,3 +98,14 @@ async def test_an_uploaded_wav_becomes_a_chart_in_the_real_database(monkeypatch,
             assert chart.status_code == 200 and chart.json()["title"] == "Real Song"
             quota = (await client.get("/api/v1/users/me/quota", headers=headers)).json()
             assert quota["used"] == 1
+
+
+async def test_the_celery_worker_builds_an_executor_from_the_environment(monkeypatch, tmp_path):
+    from src.ingestion.application.executor import JobExecutor
+    from src.ingestion.worker import open_executor
+
+    monkeypatch.setenv("DATABASE_URL", os.environ["TEST_DATABASE_URL"])
+    monkeypatch.setenv("INGEST_DATA_DIR", str(tmp_path))
+    async with open_executor() as executor:
+        assert isinstance(executor, JobExecutor)
+        assert await executor.recover_orphans() == 0  # it can really reach the database

@@ -134,6 +134,7 @@ def make_world(
     job_timeout_s: float = 90,
     free_quota: int = 5,
     role: Role = Role.FREE,
+    timeout_errors: tuple[type[BaseException], ...] = (TimeoutError,),
 ) -> World:
     tmp_path.mkdir(parents=True, exist_ok=True)
     clock = FakeClock()
@@ -161,6 +162,7 @@ def make_world(
         events=events,
         settings=settings,
         clock=clock,
+        timeout_errors=timeout_errors,
     )
     return World(
         settings,

@@ -24,3 +24,4 @@ class IngestSettings(BaseSettings):
     media_resolver: Literal["fake"] = "fake"
     job_runner: Literal["inprocess", "celery"] = "inprocess"
     temp_ttl_s: int = Field(default=3600, gt=0)
+    redis_url: str = "redis://127.0.0.1:6379/0"  # Celery broker and job events

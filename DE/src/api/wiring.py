@@ -15,7 +15,9 @@ from src.identity.settings import AuthSettings
 from src.ingestion.application.demo import DemoCatalog
 from src.ingestion.application.executor import JobExecutor
 from src.ingestion.application.submission import SubmissionService
+from src.ingestion.infrastructure.celery_app import CeleryJobRunner, make_celery
 from src.ingestion.infrastructure.events import InMemoryJobEvents
+from src.ingestion.infrastructure.events_redis import RedisJobEvents
 from src.ingestion.infrastructure.ffmpeg import FfmpegNormalizer
 from src.ingestion.infrastructure.media import FakeMediaResolver
 from src.ingestion.infrastructure.mock_engine import FIXTURES_DIR, MockAnalysisEngine
@@ -54,7 +56,9 @@ def build_ingestion(
         PgChartRepository(engine),
         PgAnalysisCache(engine),
     )
-    normalizer, events = FfmpegNormalizer(), InMemoryJobEvents()
+    normalizer = FfmpegNormalizer()
+    distributed = settings.job_runner == "celery"
+    events = RedisJobEvents(settings.redis_url) if distributed else InMemoryJobEvents()
     executor = JobExecutor(
         jobs=jobs,
         charts=charts,
@@ -66,7 +70,11 @@ def build_ingestion(
         events=events,
         settings=settings,
     )
-    runner = InProcessJobRunner(executor)
+    runner = (
+        CeleryJobRunner(make_celery(settings.redis_url, job_timeout_s=settings.job_timeout_s))
+        if distributed
+        else InProcessJobRunner(executor)
+    )
     demo = DemoCatalog(settings.data_dir / "demo", FIXTURES_DIR)
     submission = SubmissionService(
         jobs=jobs,

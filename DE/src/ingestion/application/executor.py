@@ -77,6 +77,7 @@ class JobExecutor:
         events: JobEvents,
         settings: IngestSettings,
         clock: Callable[[], datetime] = _utcnow,
+        timeout_errors: tuple[type[BaseException], ...] = (TimeoutError,),
     ) -> None:
         self._jobs = jobs
         self._charts = charts
@@ -88,6 +89,7 @@ class JobExecutor:
         self._events = events
         self._settings = settings
         self._clock = clock
+        self._timeout_errors = timeout_errors
 
     def _work_dir(self, job_id: UUID) -> Path:
         return self._settings.data_dir / "tmp" / str(job_id)
@@ -206,11 +208,10 @@ class JobExecutor:
         if await self._jobs.try_mark_refunded(job.id):
             await self._quota.refund(ChargeReceipt(job.owner_id, job.charged_on, charged=True))
 
-    @staticmethod
-    def _error_for(job_id: UUID, exc: Exception) -> JobError:
+    def _error_for(self, job_id: UUID, exc: Exception) -> JobError:
         if isinstance(exc, IngestionError | AnalysisError):
             return JobError(code=exc.code, message=exc.message, retryable=exc.retryable)
-        if isinstance(exc, TimeoutError):
+        if isinstance(exc, self._timeout_errors):
             return JobError(
                 code=ErrorCode.ANALYSIS_TIMEOUT,
                 message="The analysis took too long",
