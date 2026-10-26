@@ -14,6 +14,7 @@ from src.ingestion.application.executor import JobExecutor
 from src.ingestion.application.normalizer import NormalizedAudio
 from src.ingestion.domain.job import Job, new_job
 from src.ingestion.domain.naming import safe_stem
+from src.ingestion.infrastructure.events import InMemoryJobEvents
 from src.ingestion.infrastructure.media import FakeMediaResolver
 from src.ingestion.infrastructure.memory import (
     InMemoryAnalysisCache,
@@ -203,7 +204,7 @@ def build_ingestion(
         InMemoryChartRepository(),
         InMemoryAnalysisCache(),
     )
-    events = RecordingEvents()
+    events = InMemoryJobEvents()
     executor = JobExecutor(
         jobs=jobs,
         charts=charts,

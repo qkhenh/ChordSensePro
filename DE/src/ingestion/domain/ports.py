@@ -1,6 +1,7 @@
 """Ports of the ingestion context (adapters live in ``infrastructure``)."""
 
 from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -65,4 +66,6 @@ class JobRunnerPort(Protocol):
 class JobEvents(Protocol):
     async def publish(self, progress: JobProgress) -> None: ...
 
-    def subscribe(self, job_id: UUID) -> AsyncIterator[JobProgress]: ...
+    def subscribe(self, job_id: UUID) -> AbstractAsyncContextManager[AsyncIterator[JobProgress]]:
+        """Register now, receive everything published from here on; unregisters on exit."""
+        ...

@@ -11,7 +11,7 @@ from src.api.container import Container, IngestionContainer
 from src.api.errors import install_error_handlers
 from src.api.limits import BodySizeLimit
 from src.api.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
-from src.api.routers import analyze, auth, charts, users
+from src.api.routers import analyze, auth, charts, jobs_ws, users
 from src.api.settings import ApiSettings
 from src.api.wiring import build_container, build_ingestion
 from src.identity.settings import AuthSettings
@@ -78,4 +78,5 @@ def create_app(
     app.include_router(users.router, prefix="/api/v1")
     app.include_router(analyze.router, prefix="/api/v1")
     app.include_router(charts.router, prefix="/api/v1")
+    app.include_router(jobs_ws.router, prefix="/api/v1")
     return app
