@@ -1,7 +1,8 @@
 """Application factory: ``uvicorn src.api.app:create_app --factory``."""
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +16,7 @@ from src.api.routers import analyze, auth, charts, demo, jobs_ws, users
 from src.api.settings import ApiSettings
 from src.api.wiring import build_container, build_ingestion
 from src.identity.settings import AuthSettings
+from src.ingestion.application.cleanup import TempSweeper
 from src.ingestion.settings import IngestSettings
 from src.persistence import database_url
 
@@ -25,21 +27,33 @@ _ENVELOPE_BYTES = 64 * 1024
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Build the PostgreSQL-backed services unless they were injected (tests)."""
-    if hasattr(app.state, "container"):
-        if hasattr(app.state, "ingestion"):
-            await app.state.ingestion.executor.recover_orphans()
+    engine = None
+    if not hasattr(app.state, "container"):
+        engine = create_async_engine(database_url(), pool_pre_ping=True)
+        app.state.engine = engine
+        app.state.container = build_container(AuthSettings(), engine)
+        app.state.ingestion = build_ingestion(IngestSettings(), engine, app.state.container)
+    ingestion = getattr(app.state, "ingestion", None)
+    if ingestion is None:  # an identity-only app (tests): nothing to recover or sweep
         yield
         return
-    engine = create_async_engine(database_url(), pool_pre_ping=True)
-    app.state.engine = engine
-    app.state.container = build_container(AuthSettings(), engine)
-    app.state.ingestion = build_ingestion(IngestSettings(), engine, app.state.container)
+    await ingestion.executor.recover_orphans()
+    sweeper = TempSweeper(
+        ingestion.settings.data_dir / "tmp", ingestion.settings.temp_ttl_s, ingestion.jobs
+    )
+    await sweeper.sweep()
+    app.state.sweeper = asyncio.create_task(
+        sweeper.run_forever(max(ingestion.settings.temp_ttl_s / 4, 1))
+    )
     try:
-        await app.state.ingestion.executor.recover_orphans()
         yield
     finally:
-        await app.state.ingestion.runner.drain()
-        await engine.dispose()
+        app.state.sweeper.cancel()
+        with suppress(asyncio.CancelledError):
+            await app.state.sweeper
+        await ingestion.runner.drain()
+        if engine is not None:
+            await engine.dispose()
 
 
 def create_app(
