@@ -59,6 +59,9 @@
   Hạ tầng: Celery+Redis là tuỳ chọn (`INGEST_JOB_RUNNER=celery`, extra `jobs`); `redis` ghim `<8` vì kombu không có tuỳ chọn protocol và Redis 5.0 không nói RESP3; mỗi task Celery tự dựng executor mới (NullPool) vì mỗi task có event loop riêng. Windows: gọi `localhost` chậm ~2,1 s khi uvicorn chỉ nghe IPv4 ⇒ dùng `127.0.0.1` (Vite proxy, Playwright, README).
   FE: `web/src/analyze/` — `useJob` (WS → polling 2 s; bỏ socket không mở trong 5 s; bỏ qua cập nhật cũ), job đang theo dõi lưu ở `sessionStorage['chordsense.activeJob']` để F5 không mất; tất cả chuỗi mới nằm trong từ điển i18n (`analyze.*`, `demo`, `chart`).
 
+- **2026-10-26 · RULE · Job không bao giờ kẹt (review M2)**: `IngestSettings.job_deadline_s` (300 s) bọc toàn bộ `JobExecutor._execute` (job_timeout_s 90 s chỉ bọc phần phân tích); giới hạn Celery = deadline + 5/+15; `SoftTimeLimitExceeded` do tín hiệu Celery ném từ *ngoài* event loop nên `run_job` bắt nó và chạy `executor.fail_job` trong loop mới; `_fail_safely` không ném (DB sập ⇒ job còn dở, vòng `run_recovery_forever` xử lý sau). Hoàn quota luôn xảy ra **trước** khi publish trạng thái cuối (FE đọc lại quota ngay khi nhận sự kiện). `@app.task(shared=False)` để mỗi Celery app giữ giới hạn riêng.
+- **2026-10-26 · RULE · e2e không hermetic nếu âm thanh lặp**: cache nội dung dùng chung mọi user/mọi lần chạy ⇒ audio trùng được phục vụ miễn phí và làm lệch số quota; WAV trong e2e phải ngẫu nhiên.
+
 ## FIX — Lỗi đã gặp & cách xử lý
 
 - **2026-10-22 · FIX · msw 3 đổi tên `onUnhandledRequest` → `onUnhandledFrame`**

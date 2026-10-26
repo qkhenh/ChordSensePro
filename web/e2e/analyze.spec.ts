@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { expect, test, type Page } from '@playwright/test'
 
 // Needs the real backend + PostgreSQL + ffmpeg: run with E2E_BACKEND=1 (the config starts uvicorn).
@@ -6,15 +7,13 @@ test.describe.configure({ mode: 'serial', timeout: 90_000 })
 
 let counter = 0
 
-/** A short mono WAV whose pitch is unique per call, so every run analyses "new" music. */
+/**
+ * A short mono WAV of random noise: the content cache is shared by every user and every earlier
+ * run, so any repeated sound would be served from it (free) and skew the quota counts.
+ */
 function wav(seconds = 1): Buffer {
   const rate = 8000
-  const frames = rate * seconds
-  const data = Buffer.alloc(frames * 2)
-  const freq = 200 + ((Date.now() + counter++ * 37) % 600)
-  for (let i = 0; i < frames; i++) {
-    data.writeInt16LE(Math.round(8000 * Math.sin((2 * Math.PI * freq * i) / rate)), i * 2)
-  }
+  const data = randomBytes(rate * seconds * 2)
   const header = Buffer.alloc(44)
   header.write('RIFF', 0)
   header.writeUInt32LE(36 + data.length, 4)

@@ -48,7 +48,7 @@ _(không)_
 
 ## Rủi ro đang mở
 - **Engine là mock**: kết quả lấy từ 7 fixture theo `hash % 7` (hoặc theo tên file `demo-*`/`fail-ai`/`fail-timeout`/`slow`). Toàn bộ 'phân tích' ở M2 là giả cho tới M5; `FakeMediaResolver` cũng chưa tải gì từ URL (yt-dlp thật hoãn đến 5.3).
-- Job chỉ được phục hồi khi API khởi động (`recover_orphans`, tuổi > `job_timeout_s`): worker chết giữa chừng thì job treo tới lần khởi động kế tiếp.
+- Job treo: `recover_orphans` chạy lúc khởi động (in-process: fail mọi job chưa xong; Celery: chỉ job quá `INGEST_JOB_DEADLINE_S` = 300 s) và định kỳ mỗi deadline/4; `JobExecutor.run` có deadline toàn job và không bao giờ ném lỗi; hoàn quota diễn ra **trước** khi công bố `done|failed`.
 - Celery trên Windows chỉ chạy `--pool=solo`; giới hạn thời gian cứng của Celery không có tác dụng ở đó, chỉ `asyncio.timeout` của executor bảo vệ.
 - Cache theo byte upload chỉ đúng khi WAV chuẩn hoá còn trong `DATA_DIR/audio/` (xoá thư mục này ⇒ lần upload lại đi qua hàng đợi, trừ rồi hoàn quota).
 - `InMemoryRevocationStore`: refresh token đã thu hồi **hợp lệ trở lại sau khi server khởi động lại**, và không chia sẻ giữa nhiều worker. Phải thay bằng Redis (M2.6) hoặc bảng PG trước khi chạy thật; `build_container` hiện vẫn dùng nó (chỉ dev).
