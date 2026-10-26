@@ -16,9 +16,12 @@ export default defineConfig({
     ...(process.env.E2E_BACKEND
       ? [
           {
-            command: 'uv run uvicorn src.api.app:create_app --factory --port 8000',
+            // Demo audio is rendered once (kept if present); then the API on IPv4 loopback.
+            command:
+              'uv run python scripts/gen_demo_audio.py && uv run uvicorn src.api.app:create_app --factory --host 127.0.0.1 --port 8000',
             cwd: '../DE',
-            url: 'http://localhost:8000/healthz',
+            url: 'http://127.0.0.1:8000/healthz',
+            timeout: 180_000,
             reuseExistingServer: true,
           },
         ]

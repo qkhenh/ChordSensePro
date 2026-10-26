@@ -108,12 +108,18 @@ def render(result: AnalysisResult) -> bytes:
     return pcm.tobytes()
 
 
-def generate_demo_audio(catalog: DemoCatalog, ids: list[str] | None = None) -> list[Path]:
-    """Write ``demo-<id>.wav`` for the given ids (default: all) and return the paths."""
+def generate_demo_audio(
+    catalog: DemoCatalog, ids: list[str] | None = None, *, overwrite: bool = True
+) -> list[Path]:
+    """Write ``demo-<id>.wav`` for the given ids (default: all) and return the paths written.
+
+    With ``overwrite=False`` a file that already exists is kept and not reported."""
     written = []
     for demo_id in ids or [t.id for t in catalog.tracks()]:
         result = catalog.result(demo_id)  # KeyError for an unknown id
         path = catalog.audio_path(demo_id)
+        if not overwrite and path.exists():
+            continue
         path.parent.mkdir(parents=True, exist_ok=True)
         with wave.open(str(path), "wb") as out:
             out.setnchannels(1)

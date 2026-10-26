@@ -118,3 +118,17 @@ class TestGeneratedAudio:
     def test_unknown_ids_are_refused(self, tmp_path):
         with pytest.raises(KeyError):
             generate_demo_audio(catalog(tmp_path), ["nope"])
+
+
+class TestKeepingExistingAudio:
+    def test_without_overwrite_files_that_exist_are_left_alone(self, tmp_path):
+        cat = catalog(tmp_path)
+        (first,) = generate_demo_audio(cat, ["compound_6_8_e"])
+        first.write_bytes(b"edited by hand")
+        assert generate_demo_audio(cat, ["compound_6_8_e"], overwrite=False) == []
+        assert first.read_bytes() == b"edited by hand"
+
+    def test_without_overwrite_missing_files_are_still_written(self, tmp_path):
+        cat = catalog(tmp_path)
+        written = generate_demo_audio(cat, ["compound_6_8_e"], overwrite=False)
+        assert written == [cat.audio_path("compound_6_8_e")] and written[0].exists()

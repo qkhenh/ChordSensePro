@@ -91,3 +91,18 @@ async def test_stage_delay_slows_each_step():
 def test_fixture_files_are_valid_json_documents():
     for path in FIXTURES_DIR.glob("*.json"):
         assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == "1.0"
+
+
+async def test_files_named_slow_take_longer_per_step_than_the_rest():
+    engine = MockAnalysisEngine(FIXTURES_DIR, slow_step_ms=40)
+
+    started = time.perf_counter()
+    await engine.analyze(request("slow-song"), ignore)
+    slow = time.perf_counter() - started
+
+    started = time.perf_counter()
+    await engine.analyze(request("song"), ignore)
+    normal = time.perf_counter() - started
+
+    assert slow >= 3 * 0.04 - 0.02
+    assert normal < 0.08

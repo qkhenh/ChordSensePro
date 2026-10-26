@@ -4,7 +4,13 @@
 > Kế hoạch đầy đủ: [implementation-plan.md](implementation-plan.md). Quyết định/quy tắc: [../memory/memory.md](../memory/memory.md).
 
 ## Giai đoạn
-**M1 đang chạy.** Task 1.0 ✅, 1.1 ✅, 1.2 ✅, 1.3 ✅ (2026-10-22), 1.4 ✅, 1.5 ✅ (2026-10-26) ⇒ **M1 hoàn tất**. Tiếp theo: M2 (Ingestion + Mock Pipeline).
+**M2 hoàn tất (2026-10-26)** — upload / link / bài demo → stepper realtime → chart mock lưu vào thư viện. Tiếp theo: **M3** (Chord Viewer & Audio Sync). Kế hoạch chi tiết đã chạy: [docs/superpowers/plans/2026-10-26-m2-ingestion-mock-pipeline.md](../../docs/superpowers/plans/2026-10-26-m2-ingestion-mock-pipeline.md).
+
+M2 gồm: `DE/src/ingestion/` (state machine job, SSRF guard, SafeFetcher, Normalizer ffmpeg, MockAnalysisEngine, JobExecutor, Submission, demo catalog, dọn file tạm, Celery+Redis), `DE/src/api/routers/{analyze,charts,demo,jobs_ws}.py`, migration `0002`; FE `web/src/analyze/` (Source Selector, useJob WS→polling, JobTracker, QuotaBanner, DemoTracks), `web/src/pages/{WorkspacePage,ChartPage}.tsx`. Kiểm chứng: `DE` pytest xanh (680+), `web` vitest 220 + lint + build, Playwright 9 e2e với backend thật (`E2E_BACKEND=1`).
+
+**Chạy thử tay:** `rtk uv run python scripts/gen_demo_audio.py` (một lần, từ `DE/`) → `rtk uv run uvicorn src.api.app:create_app --factory --host 127.0.0.1 --port 8000` + `rtk npm run dev` (từ `web/`). Chế độ Celery: đặt `INGEST_JOB_RUNNER=celery`, chạy thêm `rtk uv run celery -A src.ingestion.worker worker --pool=solo` (cần `uv sync --extra jobs` và Redis; bản Redis 5.0 trên máy này → redis-py ghim `<8`).
+
+(M1 — lịch sử) Task 1.0 ✅, 1.1 ✅, 1.2 ✅, 1.3 ✅ (2026-10-22), 1.4 ✅, 1.5 ✅ (2026-10-26) ⇒ **M1 hoàn tất**. Tiếp theo: M2 (Ingestion + Mock Pipeline).
 
 Task 1.5: Workspace Shell — layout sidebar/header, `QuotaBadge` (tier + còn x/y, skeleton, trạng thái hết lượt/không giới hạn/lỗi), toast, i18n vi/en (lưu localStorage), 3 trang trống có skeleton. `web` 69 test, lint (0 cảnh báo), build xanh; e2e thật (đăng ký → Shell → badge `Free · còn 5/5` → đổi English → reload → đăng xuất) xanh với `E2E_BACKEND=1`.
 
@@ -25,22 +31,26 @@ Baseline 1.0:
 | # | Tên | Pri | Trạng thái |
 | :-- | :-- | :-- | :-- |
 | M1 | Foundation, DB, Auth, Workspace Shell | P0 | ✅ 1.0 ✅ · 1.1 ✅ · 1.2 ✅ · 1.3 ✅ · 1.4 ✅ · 1.5 ✅ |
-| M2 | Ingestion + Mock Pipeline | P0 | ⏳ (kế tiếp) |
-| M3 | Chord Viewer & Audio Sync | P1 | ⏳ |
+| M2 | Ingestion + Mock Pipeline | P0 | ✅ 2.1–2.8 |
+| M3 | Chord Viewer & Audio Sync | P1 | ⏳ (kế tiếp) |
 | M4 | Harmony / Jazz Theory | P1 | ⏳ |
 | M5 | Tích hợp AI thật | P2 | ⏳ |
 
 ## Endpoint đã xong
-`GET /healthz`, `POST /api/v1/auth/{register,login,refresh,logout}`, `GET /api/v1/users/me`, `GET /api/v1/users/me/quota` (chạy được trên PG thật qua `create_app()`).
+`GET /healthz` · `POST /api/v1/auth/{register,login,refresh,logout}` · `GET /api/v1/users/me`, `/users/me/quota` · `POST /api/v1/analyze/file` (multipart `file`, 202 `{job_id}`), `/analyze/url` (`{url}`), `/analyze/demo/{id}` (không trừ quota) · `GET /api/v1/analyze/status/{id}` · `WS /api/v1/ws/jobs/{id}` (subprotocol `bearer`, token) · `GET /api/v1/charts/{id}` (chỉ chủ sở hữu; M3.1 mở rộng) · `GET /api/v1/demo-tracks`. Mã lỗi: 413 `file_too_large`/`duration_too_long`, 415 `unsupported_format`, 422 `ssrf_blocked`/`url_unresolvable`, 429 `quota_exceeded`, 502 `ai_failure`, 503 `demo_unavailable`.
 
 ## Đang làm dở
 _(không)_
 
 ## Blockers
-1. Docker Desktop đã cài (2026-10-26) nhưng `docker` chưa trên PATH của session Claude; máy đã có `redis-server` native ở 127.0.0.1:6379 — có thể dùng cho M2.6, chưa kiểm tra phiên bản. Cổng 5432: không bật compose `postgres:16` của DE cùng lúc với PG18 native.
+1. Docker Desktop đã cài nhưng `docker` chưa trên PATH của session Claude; không cần Docker cho M2 vì Redis native chạy ở `127.0.0.1:6379` (5.0.14). Cổng 5432: không bật compose `postgres:16` của DE cùng lúc với PG18 native.
 2. `openapi-typescript@7` yêu cầu TypeScript 5 (web dùng TS 6) ⇒ chạy qua `npx` trong script `gen:api`, không cài vào devDependencies.
 
 ## Rủi ro đang mở
+- **Engine là mock**: kết quả lấy từ 7 fixture theo `hash % 7` (hoặc theo tên file `demo-*`/`fail-ai`/`fail-timeout`/`slow`). Toàn bộ 'phân tích' ở M2 là giả cho tới M5; `FakeMediaResolver` cũng chưa tải gì từ URL (yt-dlp thật hoãn đến 5.3).
+- Job chỉ được phục hồi khi API khởi động (`recover_orphans`, tuổi > `job_timeout_s`): worker chết giữa chừng thì job treo tới lần khởi động kế tiếp.
+- Celery trên Windows chỉ chạy `--pool=solo`; giới hạn thời gian cứng của Celery không có tác dụng ở đó, chỉ `asyncio.timeout` của executor bảo vệ.
+- Cache theo byte upload chỉ đúng khi WAV chuẩn hoá còn trong `DATA_DIR/audio/` (xoá thư mục này ⇒ lần upload lại đi qua hàng đợi, trừ rồi hoàn quota).
 - `InMemoryRevocationStore`: refresh token đã thu hồi **hợp lệ trở lại sau khi server khởi động lại**, và không chia sẻ giữa nhiều worker. Phải thay bằng Redis (M2.6) hoặc bảng PG trước khi chạy thật; `build_container` hiện vẫn dùng nó (chỉ dev).
 - Refresh token nằm trong `localStorage` ⇒ lộ nếu có XSS. Chấp nhận cho MVP (access token ở bộ nhớ, rotate mỗi lần dùng); cân nhắc cookie `httpOnly` khi triển khai thật.
 - `AUTH_JWT_SECRET` dev nằm trong `DE/.env` (gitignored). Môi trường thật phải đặt biến riêng ≥ 32 ký tự.
@@ -49,5 +59,6 @@ _(không)_
 - `ChordLabel.display_name` hiển thị `Cmaj9` và `C9` giống nhau ("C9"); từ vựng chưa có `sus4` + extension kiểu `G9sus4`; chưa có `bass` (slash chord). Xem memory.md.
 
 ## Việc kế tiếp
-1. M2 (xem implementation-plan.md §3): upload/link ingestion + mock pipeline. Trước M2.6 phải thay `InMemoryRevocationStore` (Redis native đang chạy ở :6379 hoặc bảng PG) và quyết định Redis/Celery thật.
-2. Dịch nốt Login/Register và `toastFor` sang từ điển i18n chung; sau mỗi lần phân tích gọi `invalidateQueries(['quota', userId])`.
+1. **M3** (xem implementation-plan.md §3): Chart API đầy đủ (list, ETag, `GET /charts/{id}/audio` hỗ trợ Range), Smart Grid, player đồng bộ, spike 3.2 (độ lệch < 100 ms). Trang `/charts/:id` hiện chỉ là bảng hợp âm tạm.
+2. Thay `InMemoryRevocationStore` (Redis hoặc bảng PG) trước khi chạy thật; dịch nốt Login/Register và `toastFor` sang từ điển i18n chung.
+3. Khi có team AI: thêm adapter thật vào `ENGINES` của `DE/tests/contract/test_analysis_engine_contract.py` (tiêu chí nghiệm thu).

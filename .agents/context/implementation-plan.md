@@ -241,6 +241,8 @@ Phạm vi iteration này (✅) và hoãn (⏸):
 
 ### MILESTONE 2 — Audio & Link Ingestion + Mock Pipeline (P0)
 
+> ✅ **Hoàn thành 2026-10-26.** Kế hoạch chi tiết và các quyết định D1–D7: [docs/superpowers/plans/2026-10-26-m2-ingestion-mock-pipeline.md](../../docs/superpowers/plans/2026-10-26-m2-ingestion-mock-pipeline.md). Khác bảng dưới: chưa có nút huỷ job (D2); `GET /charts/{id}` đã làm sớm (D3).
+
 | ID | Pri | Task | Backend | Frontend |
 | :-- | :-- | :-- | :-- | :-- |
 | 2.1 | P0 | Upload file | `POST /analyze/file`: multipart, kiểm MIME+magic bytes+`ffprobe` (≤100 MB, ≤10 phút → 413; định dạng lạ → 415), Normalizer → WAV 44.1k mono, tính `content_hash` | Source Selector (tab Upload; tab Record/Link hiển thị trước nhưng Record disabled), dropzone, kiểm tra kích thước phía client |
