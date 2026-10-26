@@ -76,6 +76,23 @@ const vi = {
       ai_failure: 'Mô hình không phân tích được bài này. Lượt phân tích đã được hoàn lại.',
       unknown: 'Có lỗi xảy ra khi phân tích, vui lòng thử lại.',
     } satisfies Record<ErrorCode | 'unknown', string>,
+    quotaBanner: {
+      title: (limit: number | null) =>
+        limit === null ? 'Bạn đã hết lượt phân tích hôm nay' : `Bạn đã dùng hết ${limit} lượt phân tích hôm nay`,
+      resets: (when: string) => `Lượt mới sẽ có lúc ${when}`,
+      upgrade: 'Nâng cấp Pro',
+    },
+  },
+  chart: {
+    loading: 'Đang tải bài…',
+    notFound: 'Không tìm thấy bài này',
+    unavailable: 'Không tải được bài này, vui lòng thử lại',
+    back: 'Về Thư viện',
+    key: 'Giọng',
+    tempo: 'Nhịp độ',
+    bpm: 'BPM',
+    time: 'Thời điểm',
+    chord: 'Hợp âm',
   },
 }
 
@@ -151,6 +168,23 @@ const en: Messages = {
       ai_failure: 'The model could not analyze this song. Your analysis has been given back.',
       unknown: 'Something went wrong during the analysis, please try again.',
     },
+    quotaBanner: {
+      title: (limit) =>
+        limit === null ? "You have used all of today's analyses" : `You have used all ${limit} analyses for today`,
+      resets: (when) => `New ones arrive at ${when}`,
+      upgrade: 'Upgrade to Pro',
+    },
+  },
+  chart: {
+    loading: 'Loading the song…',
+    notFound: 'This song was not found',
+    unavailable: 'Could not load this song, please try again',
+    back: 'Back to Library',
+    key: 'Key',
+    tempo: 'Tempo',
+    bpm: 'BPM',
+    time: 'Time',
+    chord: 'Chord',
   },
 }
 

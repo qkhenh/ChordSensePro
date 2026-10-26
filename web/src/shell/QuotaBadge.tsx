@@ -1,24 +1,8 @@
-import { useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
-import { useApiClient } from '../api/context'
 import { toastFor } from '../api/errors'
-import type { Quota } from '../api/types'
-import { useAuth } from '../auth/context'
 import { useI18n } from '../i18n/context'
+import { useQuota } from './quota'
 import { useToast } from './context'
-
-const quotaKey = (userId: string | undefined) => ['quota', userId] as const
-
-function useQuota() {
-  const client = useApiClient()
-  const { user } = useAuth()
-  return useQuery({
-    queryKey: quotaKey(user?.id),
-    queryFn: () => client.request<Quota>('/users/me/quota'),
-    enabled: !!user,
-    staleTime: 30_000,
-  })
-}
 
 /** Tier and remaining daily analyses (FR-18). */
 export function QuotaBadge() {

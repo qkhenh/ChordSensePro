@@ -4,6 +4,7 @@ import { GuestOnly, RequireAuth } from './auth/guards'
 import { Providers } from './Providers'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
+import ChartPage from './pages/ChartPage'
 import SectionPage from './pages/SectionPage'
 import WorkspacePage from './pages/WorkspacePage'
 import { ShellLayout } from './shell/ShellLayout'
@@ -27,6 +28,7 @@ export function buildRoutes(client: ApiClient): RouteObject[] {
               element: <ShellLayout />,
               children: [
                 { path: '/', element: <Navigate to="/workspace" replace /> },
+                { path: '/charts/:id', element: <ChartPage /> },
                 { path: '/library', element: <SectionPage section="library" /> },
                 { path: '/workspace', element: <WorkspacePage /> },
                 { path: '/dictionary', element: <SectionPage section="dictionary" /> },
