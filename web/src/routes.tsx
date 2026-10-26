@@ -5,6 +5,7 @@ import { Providers } from './Providers'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import SectionPage from './pages/SectionPage'
+import WorkspacePage from './pages/WorkspacePage'
 import { ShellLayout } from './shell/ShellLayout'
 
 export function buildRoutes(client: ApiClient): RouteObject[] {
@@ -27,7 +28,7 @@ export function buildRoutes(client: ApiClient): RouteObject[] {
               children: [
                 { path: '/', element: <Navigate to="/workspace" replace /> },
                 { path: '/library', element: <SectionPage section="library" /> },
-                { path: '/workspace', element: <SectionPage section="workspace" /> },
+                { path: '/workspace', element: <WorkspacePage /> },
                 { path: '/dictionary', element: <SectionPage section="dictionary" /> },
               ],
             },

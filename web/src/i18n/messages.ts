@@ -1,4 +1,4 @@
-import type { Quota } from '../api/types'
+import type { ErrorCode, JobStage, Quota } from '../api/types'
 import type { FileProblem, UrlProblem } from '../analyze/validate'
 
 export type ProblemKey = FileProblem | UrlProblem
@@ -48,6 +48,34 @@ const vi = {
       urlPrivate: 'Không nhận địa chỉ nội bộ hoặc localhost',
       urlPort: 'Chỉ nhận cổng 80 hoặc 443',
     } satisfies Record<ProblemKey, string>,
+    stages: {
+      fetching: 'Tải từ liên kết',
+      normalizing: 'Chuẩn hoá âm thanh',
+      separating: 'Tách nhạc cụ',
+      beat_tracking: 'Dò nhịp',
+      recognizing: 'Nhận diện hợp âm',
+    } satisfies Record<JobStage, string>,
+    tracker: {
+      steps: 'Các bước phân tích',
+      queued: 'Đang xếp hàng',
+      running: 'Đang phân tích',
+      done: 'Hoàn tất',
+      stop: 'Dừng theo dõi',
+      close: 'Đóng',
+      retry: 'Thử lại',
+      loading: 'Đang tải…',
+    },
+    errors: {
+      unsupported_format: 'Tệp không phải âm thanh hợp lệ (MP3, WAV, FLAC, M4A hoặc OGG).',
+      file_too_large: 'Tệp lớn hơn 100 MB.',
+      duration_too_long: 'Bài nhạc dài hơn 10 phút.',
+      url_unresolvable: 'Không lấy được âm thanh từ liên kết này. Hãy thử tải tệp lên.',
+      ssrf_blocked: 'Liên kết này không được chấp nhận vì lý do an toàn.',
+      quota_exceeded: 'Bạn đã hết lượt phân tích hôm nay.',
+      analysis_timeout: 'Phân tích mất quá nhiều thời gian. Lượt phân tích đã được hoàn lại.',
+      ai_failure: 'Mô hình không phân tích được bài này. Lượt phân tích đã được hoàn lại.',
+      unknown: 'Có lỗi xảy ra khi phân tích, vui lòng thử lại.',
+    } satisfies Record<ErrorCode | 'unknown', string>,
   },
 }
 
@@ -94,6 +122,34 @@ const en: Messages = {
       urlCredentials: 'Links with a user name or password are not accepted',
       urlPrivate: 'Internal addresses and localhost are not accepted',
       urlPort: 'Only ports 80 and 443 are accepted',
+    },
+    stages: {
+      fetching: 'Fetching from the link',
+      normalizing: 'Normalizing audio',
+      separating: 'Separating instruments',
+      beat_tracking: 'Tracking beats',
+      recognizing: 'Recognizing chords',
+    },
+    tracker: {
+      steps: 'Analysis steps',
+      queued: 'Waiting in the queue',
+      running: 'Analyzing',
+      done: 'Done',
+      stop: 'Stop watching',
+      close: 'Close',
+      retry: 'Try again',
+      loading: 'Loading…',
+    },
+    errors: {
+      unsupported_format: 'This is not a valid audio file (MP3, WAV, FLAC, M4A or OGG).',
+      file_too_large: 'The file is larger than 100 MB.',
+      duration_too_long: 'The song is longer than 10 minutes.',
+      url_unresolvable: 'Could not get audio from this link. Try uploading the file instead.',
+      ssrf_blocked: 'This link is not accepted for safety reasons.',
+      quota_exceeded: 'You have used all of today\'s analyses.',
+      analysis_timeout: 'The analysis took too long. Your analysis has been given back.',
+      ai_failure: 'The model could not analyze this song. Your analysis has been given back.',
+      unknown: 'Something went wrong during the analysis, please try again.',
     },
   },
 }

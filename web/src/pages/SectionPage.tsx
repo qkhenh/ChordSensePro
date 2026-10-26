@@ -1,6 +1,6 @@
 import { useI18n } from '../i18n/context'
 
-type Section = 'library' | 'workspace' | 'dictionary'
+type Section = 'library' | 'dictionary'
 
 /** Empty state for a section whose real content arrives in a later milestone. */
 export default function SectionPage({ section }: { section: Section }) {
