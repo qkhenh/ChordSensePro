@@ -21,7 +21,7 @@ from src.identity.domain.errors import (
     TokenRevoked,
     WeakPassword,
 )
-from src.ingestion.domain.errors import IngestionError
+from src.ingestion.domain.errors import DemoUnavailable, IngestionError
 
 # Most specific class first: lookup walks the exception's MRO.
 _STATUS_AND_CODE: dict[type[IdentityError], tuple[int, str]] = {
@@ -99,8 +99,13 @@ async def _handle_ingestion_error(_: Request, exc: IngestionError) -> JSONRespon
     return error_response(ERROR_HTTP_STATUS[exc.code], exc.code.value, exc.message)
 
 
+async def _handle_demo_unavailable(_: Request, __: DemoUnavailable) -> JSONResponse:
+    return error_response(503, "demo_unavailable", "The demo audio has not been generated yet")
+
+
 def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(IdentityError, _handle_identity_error)
     app.add_exception_handler(IngestionError, _handle_ingestion_error)
+    app.add_exception_handler(DemoUnavailable, _handle_demo_unavailable)
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
     app.add_exception_handler(StarletteHTTPException, _handle_http_exception)

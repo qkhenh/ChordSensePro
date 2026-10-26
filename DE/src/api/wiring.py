@@ -12,12 +12,13 @@ from src.identity.application.tokens import TokenService
 from src.identity.infrastructure.memory import InMemoryRevocationStore
 from src.identity.infrastructure.postgres import PgUsageRepository, PgUserRepository
 from src.identity.settings import AuthSettings
+from src.ingestion.application.demo import DemoCatalog
 from src.ingestion.application.executor import JobExecutor
 from src.ingestion.application.submission import SubmissionService
 from src.ingestion.infrastructure.events import InMemoryJobEvents
 from src.ingestion.infrastructure.ffmpeg import FfmpegNormalizer
 from src.ingestion.infrastructure.media import FakeMediaResolver
-from src.ingestion.infrastructure.mock_engine import MockAnalysisEngine
+from src.ingestion.infrastructure.mock_engine import FIXTURES_DIR, MockAnalysisEngine
 from src.ingestion.infrastructure.postgres import (
     PgAnalysisCache,
     PgChartRepository,
@@ -66,6 +67,7 @@ def build_ingestion(
         settings=settings,
     )
     runner = InProcessJobRunner(executor)
+    demo = DemoCatalog(settings.data_dir / "demo", FIXTURES_DIR)
     submission = SubmissionService(
         jobs=jobs,
         charts=charts,
@@ -74,6 +76,7 @@ def build_ingestion(
         normalizer=normalizer,
         cache=cache,
         settings=settings,
+        demo=demo,
     )
     return IngestionContainer(
         submission=submission,
@@ -82,5 +85,6 @@ def build_ingestion(
         events=events,
         runner=runner,
         executor=executor,
+        demo=demo,
         settings=settings,
     )

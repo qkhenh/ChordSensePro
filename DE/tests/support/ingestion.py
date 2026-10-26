@@ -21,7 +21,7 @@ from src.ingestion.infrastructure.memory import (
     InMemoryChartRepository,
     InMemoryJobRepository,
 )
-from src.ingestion.infrastructure.mock_engine import MockAnalysisEngine
+from src.ingestion.infrastructure.mock_engine import FIXTURES_DIR, MockAnalysisEngine
 from src.ingestion.settings import IngestSettings
 from tests.support.identity import FakeClock
 
@@ -193,6 +193,7 @@ def build_ingestion(
 ):
     """The in-memory ingestion services behind the HTTP layer (real ffmpeg when asked)."""
     from src.api.container import IngestionContainer
+    from src.ingestion.application.demo import DemoCatalog
     from src.ingestion.application.submission import SubmissionService
     from src.ingestion.infrastructure.runner import InProcessJobRunner
 
@@ -218,6 +219,7 @@ def build_ingestion(
         clock=clock,
     )
     runner = InProcessJobRunner(executor)
+    demo = DemoCatalog(data_dir / "demo", FIXTURES_DIR)
     submission = SubmissionService(
         jobs=jobs,
         charts=charts,
@@ -226,6 +228,7 @@ def build_ingestion(
         normalizer=normalizer,
         cache=cache,
         settings=settings,
+        demo=demo,
         clock=clock,
         resolve=public_dns,
     )
@@ -236,5 +239,6 @@ def build_ingestion(
         events=events,
         runner=runner,
         executor=executor,
+        demo=demo,
         settings=settings,
     )

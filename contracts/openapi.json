@@ -548,6 +548,45 @@
         "title": "Confidence",
         "type": "object"
       },
+      "DemoTrackOut": {
+        "additionalProperties": false,
+        "properties": {
+          "artist": {
+            "title": "Artist",
+            "type": "string"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "tempo_bpm": {
+            "title": "Tempo Bpm",
+            "type": "number"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "artist",
+          "duration_ms",
+          "tempo_bpm",
+          "key"
+        ],
+        "title": "DemoTrackOut",
+        "type": "object"
+      },
       "ErrorCode": {
         "enum": [
           "unsupported_format",

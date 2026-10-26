@@ -16,3 +16,5 @@ data/tmp/
 .idea/
 .vscode/
 *.iml
+data/demo/
+data/audio/

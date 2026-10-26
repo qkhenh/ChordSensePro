@@ -13,3 +13,11 @@ class IngestionError(Exception):
 
 class InvalidTransition(ValueError):
     """A job state change the lifecycle does not allow."""
+
+
+class DemoNotFound(LookupError):
+    """The id is not in the demo catalog."""
+
+
+class DemoUnavailable(RuntimeError):
+    """The demo audio has not been generated yet (run scripts/gen_demo_audio.py)."""

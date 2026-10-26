@@ -21,9 +21,10 @@ from src.analysis_contract.models import ErrorCode, JobError, JobState, SourceKi
 from src.identity.application.quota import ChargeReceipt, QuotaService
 from src.identity.domain.models import User
 from src.ingestion.application.charts import build_chart
+from src.ingestion.application.demo import DemoCatalog
 from src.ingestion.application.normalizer import Normalizer
 from src.ingestion.application.ssrf import Resolver, check_url, system_resolver
-from src.ingestion.domain.errors import IngestionError
+from src.ingestion.domain.errors import DemoNotFound, DemoUnavailable, IngestionError
 from src.ingestion.domain.job import Job, advance, new_job
 from src.ingestion.domain.naming import safe_stem, safe_title
 from src.ingestion.domain.ports import AnalysisCache, ChartRepository, JobRepository, JobRunnerPort
@@ -59,6 +60,14 @@ def _read_head(path: Path) -> bytes:
         return handle.read(_HEAD_BYTES)
 
 
+def _copy_if_exists(source: Path, dest: Path) -> bool:
+    if not source.exists():
+        return False
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, dest)
+    return True
+
+
 def _suffix_of(filename: str) -> str:
     suffix = Path(filename.replace("\\", "/")).suffix.lower()
     return suffix if _SUFFIX.fullmatch(suffix) else ".bin"
@@ -82,6 +91,7 @@ class SubmissionService:
         normalizer: Normalizer,
         cache: AnalysisCache,
         settings: IngestSettings,
+        demo: DemoCatalog,
         clock: Callable[[], datetime] = _utcnow,
         resolve: Resolver = system_resolver,
     ) -> None:
@@ -92,6 +102,7 @@ class SubmissionService:
         self._normalizer = normalizer
         self._cache = cache
         self._settings = settings
+        self._demo = demo
         self._clock = clock
         self._resolve = resolve
 
@@ -189,6 +200,34 @@ class SubmissionService:
                 title=_title_for_url(url),
                 source_url=url,
             )
+        except BaseException:
+            await self._discard(job_id)
+            raise
+        return await self._start(job)
+
+    # --- demo ------------------------------------------------------------------------
+
+    async def submit_demo(self, user: User, demo_id: str) -> Job:
+        """Analyse a catalog song. Free of charge: the golden result is the answer."""
+        track = self._demo.get(demo_id)
+        if track is None:
+            raise DemoNotFound(demo_id)
+        source = self._demo.audio_path(demo_id)
+        job_id = uuid4()
+        staged = self._work_dir(job_id) / source.name  # keeps the demo-<id> stem
+        try:
+            if not await asyncio.to_thread(_copy_if_exists, source, staged):
+                raise DemoUnavailable(demo_id)
+            job = new_job(
+                owner_id=user.id,
+                job_id=job_id,
+                now=self._clock(),
+                source_kind=SourceKind.DEMO,
+                title=track.title,
+                input_path=str(staged),
+                quota_charged=False,
+            )
+            await self._jobs.add(job)
         except BaseException:
             await self._discard(job_id)
             raise

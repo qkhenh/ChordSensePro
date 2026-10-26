@@ -6,6 +6,7 @@ from src.identity.application.auth_service import AuthService
 from src.identity.application.quota import QuotaService
 from src.identity.application.tokens import TokenService
 from src.identity.domain.ports import UserRepository
+from src.ingestion.application.demo import DemoCatalog
 from src.ingestion.application.executor import JobExecutor
 from src.ingestion.application.submission import SubmissionService
 from src.ingestion.domain.ports import ChartRepository, JobEvents, JobRepository, JobRunnerPort
@@ -28,4 +29,5 @@ class IngestionContainer:
     events: JobEvents
     runner: JobRunnerPort
     executor: JobExecutor
+    demo: DemoCatalog
     settings: IngestSettings

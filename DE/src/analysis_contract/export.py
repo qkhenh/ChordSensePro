@@ -30,6 +30,7 @@ _EXPORTED = (
     api_schemas.QuotaOut,
     api_schemas.JobAccepted,
     api_schemas.AnalyzeUrlRequest,
+    api_schemas.DemoTrackOut,
 )
 
 

@@ -89,3 +89,12 @@ class JobAccepted(_Strict):
 
 class AnalyzeUrlRequest(_Strict):
     url: str = Field(min_length=1, max_length=2048)
+
+
+class DemoTrackOut(_Strict):
+    id: str
+    title: str
+    artist: str
+    duration_ms: int
+    tempo_bpm: float
+    key: str
