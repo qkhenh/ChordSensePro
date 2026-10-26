@@ -106,6 +106,7 @@ class TestWiring:
         ingestion = build_ingestion(settings, self.engine(), self.container())
         assert isinstance(ingestion.runner, CeleryJobRunner)
         assert isinstance(ingestion.events, RedisJobEvents)
+        assert SoftTimeLimitExceeded in ingestion.executor._timeout_errors
 
 
 @pytest.fixture(autouse=True)
