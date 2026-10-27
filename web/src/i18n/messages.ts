@@ -102,6 +102,14 @@ const vi = {
     chordMode: 'Kiểu hợp âm',
     basic: 'Cơ bản',
     precise: 'Chi tiết',
+    upgrade: {
+      speed: 'Đổi tốc độ phát (0.5× và 0.75×) có trong gói Pro.',
+      songSync: 'Metronome đồng bộ theo bài có trong gói Pro.',
+      countIn: 'Đếm nhịp vào bài có trong gói Pro.',
+      cta: 'Nâng cấp lên Pro',
+      dismiss: 'Đóng',
+      badge: 'Pro',
+    },
     metronome: {
       title: 'Metronome',
       mode: 'Chế độ metronome',
@@ -236,6 +244,14 @@ const en: Messages = {
     chordMode: 'Chord style',
     basic: 'Basic',
     precise: 'Precise',
+    upgrade: {
+      speed: 'Changing the playback speed (0.5× and 0.75×) is part of the Pro plan.',
+      songSync: 'A metronome that follows the song is part of the Pro plan.',
+      countIn: 'The count-in is part of the Pro plan.',
+      cta: 'Upgrade to Pro',
+      dismiss: 'Dismiss',
+      badge: 'Pro',
+    },
     metronome: {
       title: 'Metronome',
       mode: 'Metronome mode',

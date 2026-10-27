@@ -13,6 +13,8 @@ interface Props {
   rate: Rate
   onToggle: () => void
   onRate: (rate: Rate) => void
+  /** Free plan: 0.5× and 0.75× are marked as Pro (choosing one is up to the page to refuse). */
+  speedLocked?: boolean
 }
 
 /** `m:ss / m:ss`, written straight into the element: the clock never re-renders React. */
@@ -33,7 +35,7 @@ function useClock(transport: Transport | null, durationMs: number) {
   return ref
 }
 
-export function TransportBar({ transport, playing, canPlay, durationMs, rate, onToggle, onRate }: Props) {
+export function TransportBar({ transport, playing, canPlay, durationMs, rate, onToggle, onRate, speedLocked = false }: Props) {
   const { t } = useI18n()
   const clock = useClock(transport, durationMs)
   const canChangeRate = transport?.capabilities.rate ?? false
@@ -60,6 +62,11 @@ export function TransportBar({ transport, playing, canPlay, durationMs, rate, on
             className="rounded-md border border-white/10 px-2 py-1 text-sm text-slate-200 hover:bg-white/10 disabled:opacity-40 aria-pressed:border-brand-purple-light aria-pressed:bg-brand-purple/40"
           >
             {r}×
+            {speedLocked && r !== 1 && (
+              <span aria-hidden="true" className="ml-1 text-xs text-amber-200">
+                {t.practice.upgrade.badge}
+              </span>
+            )}
           </button>
         ))}
       </div>

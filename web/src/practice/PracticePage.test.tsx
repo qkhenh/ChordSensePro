@@ -4,7 +4,7 @@ import { createMemoryRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApiClient, memoryStorage } from '../api/http'
-import type { Chart } from '../api/types'
+import type { Chart, Role } from '../api/types'
 import { formatChord } from '../format/chord'
 import { applyOverrides } from '../grid/effective'
 import { buildGrid } from '../grid/grid'
@@ -12,7 +12,7 @@ import { buildRoutes } from '../routes'
 import { createFakeYouTube } from '../test/fakeEmbeds'
 import { FakeAudio } from '../test/fakeMedia'
 import { resetAudioContext } from './audio'
-import { apiError, authResponse, http, HttpResponse, server } from '../test/server'
+import { apiError, authResponse, http, HttpResponse, server, TEST_USER } from '../test/server'
 
 const youtube = vi.hoisted(() => ({ api: null as unknown }))
 vi.mock('../transport/loaders', async (original) => {
@@ -70,8 +70,10 @@ afterEach(() => {
   resetAudioContext()
 })
 
-function renderChart(id: string) {
-  server.use(http.post(`${API}/auth/refresh`, () => HttpResponse.json(authResponse())))
+function renderChart(id: string, role: Role = 'free') {
+  server.use(
+    http.post(`${API}/auth/refresh`, () => HttpResponse.json(authResponse({ user: { ...TEST_USER, role } }))),
+  )
   const client = createApiClient({ storage: memoryStorage('refresh-stored') })
   const router = createMemoryRouter(buildRoutes(client), { initialEntries: [`/charts/${id}`] })
   const view = render(<RouterProvider router={router} />)
@@ -210,9 +212,9 @@ describe('practice page', () => {
 
 describe('practice controls', () => {
   const grid = buildGrid(edited.metadata, applyOverrides(edited.ai_events, edited.overrides))
-  const open = async () => {
+  const open = async (role: Role = 'free') => {
     serve(edited)
-    renderChart(edited.id)
+    renderChart(edited.id, role)
     await screen.findByRole('group', { name: 'Lưới hợp âm' })
     return loadedAudio(edited.metadata.duration_ms)
   }
@@ -233,7 +235,7 @@ describe('practice controls', () => {
   })
 
   it('changes the speed and keeps the pitch', async () => {
-    const audio = await open()
+    const audio = await open('paid')
     await userEvent.click(screen.getByRole('button', { name: '0.75×' }))
     expect(audio.playbackRate).toBe(0.75)
     expect(audio.preservesPitch).toBe(true)
@@ -290,5 +292,63 @@ describe('chord style and metronome', () => {
     serve(plain)
     renderChart(plain.id)
     expect(await screen.findByRole('switch', { name: 'Metronome' })).not.toBeChecked()
+  })
+})
+
+describe('plans', () => {
+  const open = async (role: Role) => {
+    serve(edited)
+    renderChart(edited.id, role)
+    await screen.findByRole('group', { name: 'Lưới hợp âm' })
+    return loadedAudio(edited.metadata.duration_ms)
+  }
+  const upgrade = () => screen.findByRole('link', { name: 'Nâng cấp lên Pro' })
+
+  it('keeps speed behind Pro for a free user and says so', async () => {
+    const audio = await open('free')
+    await userEvent.click(screen.getByRole('button', { name: '0.75×' }))
+    expect(await upgrade()).toHaveAttribute('href', '#upgrade')
+    expect(audio.playbackRate).toBe(1)
+    expect(screen.getByRole('button', { name: '1×' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('keeps the song-synced metronome and the count-in behind Pro, but not the manual one', async () => {
+    await open('free')
+    await userEvent.click(screen.getByRole('radio', { name: 'Đồng bộ bài' }))
+    expect(await upgrade()).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Thủ công' })).toBeChecked()
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Đếm nhịp vào bài' }))
+    expect(screen.getByRole('checkbox', { name: 'Đếm nhịp vào bài' })).not.toBeChecked()
+    await userEvent.click(screen.getByRole('switch', { name: 'Metronome' }))
+    expect(screen.getByRole('switch', { name: 'Metronome' })).toBeChecked()
+  })
+
+  it('still lets a free user loop a section at normal speed', async () => {
+    await open('free')
+    const user = userEvent.setup()
+    const cell = (n: number) => screen.getByRole('button', { name: new RegExp(`^Ô nhịp ${n}(:|$)`) })
+    await user.pointer([{ keys: '[MouseLeft>]', target: cell(3) }, { target: cell(5) }, { keys: '[/MouseLeft]', target: cell(5) }])
+    expect(await screen.findByText(/ô nhịp 3–5/i)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Nâng cấp lên Pro' })).not.toBeInTheDocument()
+  })
+
+  it.each<Role>(['paid', 'teacher', 'student'])('opens everything for %s, and writes nothing to the server', async (role) => {
+    const writes: string[] = []
+    const record = ({ request }: { request: Request }) => {
+      if (request.method !== 'GET' && !request.url.includes('/audio-ticket') && !request.url.includes('/auth/')) {
+        writes.push(`${request.method} ${request.url}`)
+      }
+    }
+    server.events.on('request:start', record)
+    const audio = await open(role)
+    await userEvent.click(screen.getByRole('button', { name: '0.75×' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'Đồng bộ bài' }))
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Đếm nhịp vào bài' }))
+    server.events.removeListener('request:start', record)
+    expect(audio.playbackRate).toBe(0.75)
+    expect(screen.getByRole('radio', { name: 'Đồng bộ bài' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'Đếm nhịp vào bài' })).toBeChecked()
+    expect(screen.queryByRole('link', { name: 'Nâng cấp lên Pro' })).not.toBeInTheDocument()
+    expect(writes).toEqual([])
   })
 })

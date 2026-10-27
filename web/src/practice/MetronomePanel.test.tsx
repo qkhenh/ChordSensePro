@@ -79,7 +79,7 @@ function Harness({ rate = 1 }: { rate?: 0.5 | 0.75 | 1 }) {
   const metronome = useMetronome({ transport: transport as unknown as Transport, grid, controller, rate, tempoBpm: 120, beatsPerBar: 4 })
   return (
     <I18nProvider>
-      <MetronomePanel metronome={metronome} />
+      <MetronomePanel metronome={metronome} entitlements={{ speed: true, songSyncMetronome: true, countIn: true, loopSpeed: true }} onLocked={() => {}} />
       <button
         type="button"
         onClick={() => {

@@ -1,10 +1,20 @@
 import { useState } from 'react'
 import { useI18n } from '../i18n/context'
 import type { Timbre } from '../metronome/click'
+import type { Entitlements, Feature } from './entitlements'
 import type { MetronomeMode, MetronomeState } from './useMetronome'
 
 const MODES: readonly MetronomeMode[] = ['manual', 'song']
 const TIMBRES: readonly Timbre[] = ['woodblock', 'beep']
+
+function ProBadge() {
+  const { t } = useI18n()
+  return (
+    <span aria-hidden="true" className="rounded bg-amber-400/20 px-1 text-xs text-amber-200">
+      {t.practice.upgrade.badge}
+    </span>
+  )
+}
 
 /** A numeric text box that only accepts a value when it parses; anything else snaps back. */
 function NumberField({
@@ -42,7 +52,13 @@ function NumberField({
   )
 }
 
-export function MetronomePanel({ metronome: m }: { metronome: MetronomeState }) {
+interface PanelProps {
+  metronome: MetronomeState
+  entitlements: Entitlements
+  onLocked: (feature: Feature) => void
+}
+
+export function MetronomePanel({ metronome: m, entitlements, onLocked }: PanelProps) {
   const { t } = useI18n()
   return (
     <section aria-label={t.practice.metronome.title} className="space-y-3 rounded-xl border border-white/10 p-4">
@@ -64,9 +80,13 @@ export function MetronomePanel({ metronome: m }: { metronome: MetronomeState }) 
                 type="radio"
                 name="metronome-mode"
                 checked={m.mode === mode}
-                onChange={() => m.setMode(mode)}
+                onChange={() => {
+                  if (mode === 'song' && !entitlements.songSyncMetronome) onLocked('songSync')
+                  else m.setMode(mode)
+                }}
               />
               {t.practice.metronome[mode]}
+              {mode === 'song' && !entitlements.songSyncMetronome && <ProBadge />}
             </label>
           ))}
         </div>
@@ -113,8 +133,16 @@ export function MetronomePanel({ metronome: m }: { metronome: MetronomeState }) 
           />
         </label>
         <label className="flex items-center gap-2">
-          <input type="checkbox" checked={m.countInOn} onChange={(event) => m.setCountInOn(event.target.checked)} />
+          <input
+            type="checkbox"
+            checked={m.countInOn}
+            onChange={(event) => {
+              if (event.target.checked && !entitlements.countIn) onLocked('countIn')
+              else m.setCountInOn(event.target.checked)
+            }}
+          />
           {t.practice.metronome.countIn}
+          {!entitlements.countIn && <ProBadge />}
         </label>
       </div>
     </section>

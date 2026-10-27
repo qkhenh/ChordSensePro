@@ -13,11 +13,14 @@ import { useTransport } from '../transport/useTransport'
 import { ensureAudioContext } from './audio'
 import { PracticeController } from './controller'
 import { ChordModeToggle } from './ChordModeToggle'
+import { entitlementsFor, type Feature } from './entitlements'
 import { LoopControls } from './LoopControls'
 import { MetronomePanel } from './MetronomePanel'
 import { SmartGrid } from './SmartGrid'
 import { TransportBar } from './TransportBar'
 import { UnlockModal } from './UnlockModal'
+import { UpgradePrompt } from './UpgradePrompt'
+import { useAuth } from '../auth/context'
 import { useChordMode } from './useChordMode'
 import { useMetronome } from './useMetronome'
 import { usePlayhead } from './usePlayhead'
@@ -78,6 +81,9 @@ function Practice({ chart }: { chart: Chart }) {
   usePlayhead(transport, grid, gridRef, { onFrame: (ms) => controller?.frame(ms) })
   const [rate, setRate] = useState<Rate>(1)
   const [mode, setMode] = useChordMode()
+  const { user } = useAuth()
+  const entitlements = entitlementsFor(user?.role ?? 'guest')
+  const [locked, setLocked] = useState<Feature | null>(null)
   const metronome = useMetronome({
     transport,
     grid,
@@ -114,6 +120,11 @@ function Practice({ chart }: { chart: Chart }) {
     setLoopBars(null)
   }
   const changeRate = (next: Rate) => {
+    if (next !== 1 && !entitlements.speed) {
+      setLocked('speed')
+      return
+    }
+    setLocked(null)
     transport?.setRate(next)
     setRate(next)
   }
@@ -159,6 +170,7 @@ function Practice({ chart }: { chart: Chart }) {
           rate={rate}
           onToggle={toggle}
           onRate={changeRate}
+          speedLocked={!entitlements.speed}
         />
         <LoopControls range={loopBars} onClear={clearLoop} />
         <ChordModeToggle mode={mode} onChange={setMode} />
@@ -176,7 +188,8 @@ function Practice({ chart }: { chart: Chart }) {
       </div>
 
       <div className="mt-6">
-        <MetronomePanel metronome={metronome} />
+        <MetronomePanel metronome={metronome} entitlements={entitlements} onLocked={setLocked} />
+        {locked && <UpgradePrompt feature={locked} onDismiss={() => setLocked(null)} />}
       </div>
 
       {error?.code === 'autoplay_blocked' && error !== answered && (
