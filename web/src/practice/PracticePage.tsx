@@ -9,12 +9,16 @@ import type { ChordMode } from '../format/chord'
 import { applyOverrides } from '../grid/effective'
 import { buildGrid } from '../grid/grid'
 import { useI18n } from '../i18n/context'
-import type { TransportError } from '../transport/types'
+import type { Rate, TransportError } from '../transport/types'
 import { useTransport } from '../transport/useTransport'
 import { ensureAudioContext } from './audio'
+import { PracticeController } from './controller'
+import { LoopControls } from './LoopControls'
 import { SmartGrid } from './SmartGrid'
+import { TransportBar } from './TransportBar'
 import { UnlockModal } from './UnlockModal'
 import { usePlayhead } from './usePlayhead'
+import { useShortcuts } from './useShortcuts'
 
 const MODE: ChordMode = 'precise'
 
@@ -69,7 +73,10 @@ function Practice({ chart }: { chart: Chart }) {
     [chart],
   )
   const { transport, state, error } = useTransport({ id: chart.id, playback: chart.source.playback }, mount)
-  usePlayhead(transport, grid, gridRef)
+  const controller = useMemo(() => (transport ? new PracticeController(transport, grid) : null), [transport, grid])
+  usePlayhead(transport, grid, gridRef, { onFrame: (ms) => controller?.frame(ms) })
+  const [rate, setRate] = useState<Rate>(1)
+  const [loopBars, setLoopBars] = useState<{ from: number; to: number } | null>(null)
 
   const start = useCallback(async () => {
     if (!transport) return
@@ -82,6 +89,22 @@ function Practice({ chart }: { chart: Chart }) {
   const toggle = () => {
     if (state === 'playing') transport?.pause()
     else void start()
+  }
+
+  useShortcuts(controller, toggle)
+
+  const selectLoop = (a: number, b: number) => {
+    if (!controller?.loop.setFromBars(grid, a, b)) return
+    const last = grid.bars.length - 1
+    setLoopBars({ from: Math.max(Math.min(a, b), 0), to: Math.min(Math.max(a, b), last) })
+  }
+  const clearLoop = () => {
+    controller?.loop.clear()
+    setLoopBars(null)
+  }
+  const changeRate = (next: Rate) => {
+    transport?.setRate(next)
+    setRate(next)
   }
 
   const { key, beat_grid: beats } = chart.metadata
@@ -116,19 +139,28 @@ function Practice({ chart }: { chart: Chart }) {
         </p>
       ) : null}
 
-      <div className="mt-4">
-        <button
-          type="button"
-          disabled={!canPlay}
-          onClick={toggle}
-          className="rounded-lg bg-brand-purple px-4 py-2 font-semibold text-white hover:opacity-90 disabled:opacity-40"
-        >
-          {state === 'playing' ? t.practice.pause : t.practice.play}
-        </button>
+      <div className="mt-4 space-y-2">
+        <TransportBar
+          transport={transport}
+          playing={state === 'playing'}
+          canPlay={canPlay}
+          durationMs={transport?.durationMs() ?? chart.metadata.duration_ms}
+          rate={rate}
+          onToggle={toggle}
+          onRate={changeRate}
+        />
+        <LoopControls range={loopBars} onClear={clearLoop} />
       </div>
 
       <div className="mt-6">
-        <SmartGrid grid={grid} mode={MODE} rootRef={gridRef} onSeek={(ms) => transport?.seek(ms)} />
+        <SmartGrid
+          grid={grid}
+          mode={MODE}
+          rootRef={gridRef}
+          loop={loopBars}
+          onSeek={(ms) => controller?.seek(ms)}
+          onSelect={selectLoop}
+        />
       </div>
 
       {error?.code === 'autoplay_blocked' && error !== answered && (

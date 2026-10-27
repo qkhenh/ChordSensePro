@@ -94,6 +94,11 @@ const vi = {
     embedBlocked: 'Video không khả dụng để phát tại đây.',
     uploadInstead: 'Tải tệp lên thay thế',
     playbackFailed: 'Không phát được bài này, vui lòng thử lại.',
+    speed: 'Tốc độ',
+    rateUnsupported: 'Nguồn SoundCloud không hỗ trợ đổi tốc độ.',
+    loopHint: 'Kéo qua các ô nhịp, hoặc Shift+bấm hai ô, để lặp một đoạn.',
+    loopLabel: (from: number, to: number) => `Vòng lặp: ô nhịp ${from}–${to}`,
+    clearLoop: 'Xoá loop',
     bar: (n: number, chords: string) => (chords ? `Ô nhịp ${n}: ${chords}` : `Ô nhịp ${n}`),
   },
   library: {
@@ -207,6 +212,11 @@ const en: Messages = {
     embedBlocked: 'This video is not available to play here.',
     uploadInstead: 'Upload a file instead',
     playbackFailed: 'This song could not be played, please try again.',
+    speed: 'Speed',
+    rateUnsupported: 'SoundCloud does not support changing the speed.',
+    loopHint: 'Drag across bars, or Shift+click two bars, to loop a section.',
+    loopLabel: (from, to) => `Loop: bars ${from}–${to}`,
+    clearLoop: 'Clear loop',
     bar: (n, chords) => (chords ? `Bar ${n}: ${chords}` : `Bar ${n}`),
   },
   library: {

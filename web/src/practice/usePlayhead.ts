@@ -1,10 +1,12 @@
-import { useEffect, type RefObject } from 'react'
+import { useEffect, useRef, type RefObject } from 'react'
 import type { Grid } from '../grid/grid'
 import type { Transport } from '../transport/types'
 
 export interface PlayheadOptions {
   raf?: (callback: FrameRequestCallback) => number
   cancel?: (handle: number) => void
+  /** Called with the playback position on every frame, including those painting skips. */
+  onFrame?: (positionMs: number) => void
 }
 
 const WINDOW = 30 // frames the speed estimate looks back over
@@ -32,6 +34,10 @@ export function usePlayhead(
 ): void {
   const raf = options.raf ?? defaultRaf
   const cancel = options.cancel ?? defaultCancel
+  const frameHook = useRef(options.onFrame)
+  useEffect(() => {
+    frameHook.current = options.onFrame
+  })
 
   useEffect(() => {
     const container = root.current
@@ -69,6 +75,7 @@ export function usePlayhead(
     const frame: FrameRequestCallback = (now) => {
       handle = raf(frame)
       adapt(now)
+      frameHook.current?.(transport.currentTimeMs())
       skipped += 1
       if (skipped < stride) return
       skipped = 0

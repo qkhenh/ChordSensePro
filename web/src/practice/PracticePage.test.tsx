@@ -207,3 +207,63 @@ describe('practice page', () => {
     expect(within(second).getAllByRole('button')).toHaveLength(bars(other).length)
   })
 })
+
+describe('practice controls', () => {
+  const grid = buildGrid(edited.metadata, applyOverrides(edited.ai_events, edited.overrides))
+  const open = async () => {
+    serve(edited)
+    renderChart(edited.id)
+    await screen.findByRole('group', { name: 'Lưới hợp âm' })
+    return loadedAudio(edited.metadata.duration_ms)
+  }
+  const cell = (n: number) => screen.getByRole('button', { name: new RegExp(`^Ô nhịp ${n}(:|$)`) })
+
+  it('jumps to the start of a bar that is clicked', async () => {
+    const audio = await open()
+    await userEvent.click(cell(9))
+    expect(audio.currentTime * 1000).toBeCloseTo(grid.barStartMs(8), 0)
+  })
+
+  it('plays and pauses with Space', async () => {
+    const audio = await open()
+    await userEvent.keyboard(' ')
+    await waitFor(() => expect(audio.paused).toBe(false))
+    await userEvent.keyboard(' ')
+    await waitFor(() => expect(audio.paused).toBe(true))
+  })
+
+  it('changes the speed and keeps the pitch', async () => {
+    const audio = await open()
+    await userEvent.click(screen.getByRole('button', { name: '0.75×' }))
+    expect(audio.playbackRate).toBe(0.75)
+    expect(audio.preservesPitch).toBe(true)
+    expect(screen.getByRole('button', { name: '0.75×' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('loops a dragged selection: past its end the playhead returns to its start', async () => {
+    const audio = await open()
+    const user = userEvent.setup()
+    await user.pointer([{ keys: '[MouseLeft>]', target: cell(3) }, { target: cell(5) }, { keys: '[/MouseLeft]', target: cell(5) }])
+    expect(await screen.findByText(/ô nhịp 3–5/i)).toBeInTheDocument()
+    const start = grid.barStartMs(2)
+    const end = grid.barEndMs(4)
+    audio.currentTime = (end - 30) / 1000
+    await new Promise((r) => setTimeout(r, 60)) // a few frames see the playhead inside the loop
+    audio.currentTime = (end + 10) / 1000
+    await waitFor(() => expect(audio.currentTime * 1000).toBeCloseTo(start, 0))
+  })
+
+  it('leaves the loop and plays on when it is cleared', async () => {
+    const audio = await open()
+    const user = userEvent.setup()
+    await user.pointer([{ keys: '[MouseLeft>]', target: cell(3) }, { target: cell(5) }, { keys: '[/MouseLeft]', target: cell(5) }])
+    await user.click(await screen.findByRole('button', { name: 'Xoá loop' }))
+    expect(screen.queryByText(/ô nhịp 3–5/i)).not.toBeInTheDocument()
+    const end = grid.barEndMs(4)
+    audio.currentTime = (end - 30) / 1000
+    await new Promise((r) => setTimeout(r, 60))
+    audio.currentTime = (end + 10) / 1000
+    await new Promise((r) => setTimeout(r, 60))
+    expect(audio.currentTime * 1000).toBeCloseTo(end + 10, 0)
+  })
+})
