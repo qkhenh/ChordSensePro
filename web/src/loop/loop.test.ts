@@ -205,3 +205,20 @@ describe('wrapping around', () => {
     expect(loop.tick(14_050)).toBe(10_000)
   })
 })
+
+describe('jumps made outside the app', () => {
+  it('does not wrap when the playhead leaps past B in one step (a scrub in an embedded player)', () => {
+    const loop = new LoopController()
+    loop.set(8000, 16000)
+    loop.tick(10_000)
+    expect(loop.tick(30_000)).toBeNull()
+    expect(loop.tick(30_016)).toBeNull()
+  })
+
+  it('still wraps after a throttled gap of a second or two', () => {
+    const loop = new LoopController()
+    loop.set(8000, 16000)
+    loop.tick(15_000)
+    expect(loop.tick(16_900)).toBe(8000)
+  })
+})

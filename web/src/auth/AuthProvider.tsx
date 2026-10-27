@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ApiClient } from '../api/http'
 import { AuthContext, type AuthContextValue, type AuthStatus, type AuthUser } from './context'
@@ -5,10 +6,12 @@ import { AuthContext, type AuthContextValue, type AuthStatus, type AuthUser } fr
 export function AuthProvider({ client, children }: { client: ApiClient; children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading')
   const [user, setUser] = useState<AuthUser | null>(null)
+  const queries = useQueryClient() // what was fetched for one person must not outlive their session
 
   useEffect(() => {
     let active = true
     const signedOut = () => {
+      queries.clear()
       setUser(null)
       setStatus('anonymous')
     }
@@ -26,7 +29,7 @@ export function AuthProvider({ client, children }: { client: ApiClient; children
       active = false
       unsubscribe()
     }
-  }, [client])
+  }, [client, queries])
 
   const value = useMemo<AuthContextValue>(() => {
     const signIn = (session: { user: AuthUser }) => {
@@ -40,11 +43,12 @@ export function AuthProvider({ client, children }: { client: ApiClient; children
       register: async (email, password, name) => signIn(await client.register(email, password, name)),
       logout: async () => {
         await client.logout()
+        queries.clear()
         setUser(null)
         setStatus('anonymous')
       },
     }
-  }, [client, status, user])
+  }, [client, queries, status, user])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

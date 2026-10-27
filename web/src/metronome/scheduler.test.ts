@@ -202,3 +202,16 @@ describe('running on a timer', () => {
     scheduler.stop()
   })
 })
+
+describe('a jump backwards that the app did not make', () => {
+  it('starts scheduling again from the new position instead of waiting for the song to catch up', () => {
+    const { scheduler, state, clicks } = setup()
+    state.songMs = 60_000
+    scheduler.tick()
+    clicks.length = 0
+    state.songMs = 10_000 // scrubbed back inside an embedded player
+    state.ctxTime = 10.5
+    scheduler.tick()
+    expect(clicks.length).toBeGreaterThan(0)
+  })
+})

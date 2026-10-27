@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { getChart } from '../api/analyze'
 import { useApiClient } from '../api/context'
@@ -44,7 +44,8 @@ export default function PracticePage() {
       </p>
     )
   }
-  if (error instanceof ApiError && error.status === 404) {
+  // A failed background refresh keeps the chart that is already on screen: only a missing one is an error.
+  if (!chart && error instanceof ApiError && error.status === 404) {
     return (
       <div className="text-slate-300">
         <p>{t.chart.notFound}</p>
@@ -54,7 +55,7 @@ export default function PracticePage() {
       </div>
     )
   }
-  if (error || !chart) {
+  if (!chart) {
     return (
       <p role="alert" className="rounded-lg bg-red-500/10 px-3 py-2 text-red-300">
         {t.chart.unavailable}
@@ -76,7 +77,24 @@ function Practice({ chart }: { chart: Chart }) {
     () => buildGrid(chart.metadata, applyOverrides(chart.ai_events, chart.overrides)),
     [chart],
   )
-  const { transport, state, error } = useTransport({ id: chart.id, playback: chart.source.playback }, mount)
+  const [attempt, setAttempt] = useState(0)
+  const resumeAt = useRef<number | null>(null)
+  const { transport, state, error } = useTransport(
+    { id: chart.id, playback: chart.source.playback },
+    mount,
+    undefined,
+    attempt,
+  )
+  useEffect(() => {
+    if (transport && state === 'ready' && resumeAt.current !== null) {
+      transport.seek(resumeAt.current) // a retry picks the song up where it stopped
+      resumeAt.current = null
+    }
+  }, [transport, state])
+  const retry = () => {
+    resumeAt.current = transport?.currentTimeMs() ?? 0
+    setAttempt((n) => n + 1)
+  }
   const controller = useMemo(() => (transport ? new PracticeController(transport, grid) : null), [transport, grid])
   usePlayhead(transport, grid, gridRef, { onFrame: (ms) => controller?.frame(ms) })
   const [rate, setRate] = useState<Rate>(1)
@@ -156,9 +174,12 @@ function Practice({ chart }: { chart: Chart }) {
           </Link>
         </div>
       ) : error && error.code !== 'autoplay_blocked' ? (
-        <p role="alert" className="mt-4 rounded-lg bg-red-500/10 px-3 py-2 text-red-300">
-          {t.practice.playbackFailed}
-        </p>
+        <div role="alert" className="mt-4 rounded-lg bg-red-500/10 px-3 py-2 text-red-300">
+          <p>{t.practice.playbackFailed}</p>
+          <button type="button" onClick={retry} className="mt-1 underline">
+            {t.practice.retry}
+          </button>
+        </div>
       ) : null}
 
       <div className="mt-4 space-y-2">

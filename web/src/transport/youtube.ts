@@ -59,7 +59,7 @@ export class YouTubeTransport extends EmbedTransport implements Transport {
       this.waiter = { resolve, reject }
       this.player = new api.Player(this.host, {
         videoId: this.videoId,
-        playerVars: { playsinline: 1, rel: 0, modestbranding: 1 },
+        playerVars: { playsinline: 1, rel: 0, modestbranding: 1, controls: 0, disablekb: 1 },
         events: {
           onReady: () => this.onReady(),
           onStateChange: (event) => this.onState(event.data),

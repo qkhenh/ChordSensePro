@@ -18,6 +18,7 @@ function setup() {
         <div aria-label="editable" contentEditable suppressContentEditableWarning tabIndex={0} />
         <button type="button">press</button>
         <a href="#x">link</a>
+        <button type="button" data-bar="3">bar</button>
       </div>
     )
   }
@@ -76,5 +77,15 @@ describe('keyboard shortcuts', () => {
     view.unmount()
     fireEvent.keyDown(document.body, { key: ' ' })
     expect(toggle).not.toHaveBeenCalled()
+  })
+})
+
+describe('Space after clicking a bar', () => {
+  it('plays and pauses even though the bar cell has focus, and the cell does not click again', () => {
+    const { toggle } = setup()
+    const cell = document.querySelector('[data-bar]') as HTMLElement
+    fireEvent.keyDown(cell, { key: ' ' })
+    expect(toggle).toHaveBeenCalledTimes(1)
+    expect(fireEvent.keyUp(cell, { key: ' ' })).toBe(false) // default prevented: no synthetic click
   })
 })

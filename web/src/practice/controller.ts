@@ -2,7 +2,10 @@ import type { Grid } from '../grid/grid'
 import { LoopController } from '../loop/loop'
 import type { Transport } from '../transport/types'
 
-type Seekable = Pick<Transport, 'seek' | 'currentTimeMs'>
+type Seekable = Pick<Transport, 'seek' | 'currentTimeMs'> & Partial<Pick<Transport, 'state' | 'play'>>
+
+// A loop that touches the end of the song: the audio may stop a hair before the loop's end.
+const END_SLACK_MS = 250
 
 /**
  * What the person does to the playhead in the practice workspace: jump, step by bar, skip by
@@ -52,9 +55,16 @@ export class PracticeController {
 
   /** Called with the playhead position on every frame; true when the loop wrapped. */
   frame(positionMs: number): boolean {
-    const back = this.loop.tick(positionMs)
+    const ended = this.transport.state === 'ended'
+    let back = this.loop.tick(positionMs)
+    const range = this.loop.range
+    if (back === null && ended && range && positionMs >= range.startMs && range.endMs >= this.grid.durationMs - END_SLACK_MS) {
+      back = range.startMs // the song ended inside a loop that runs to its end
+      this.loop.noteSeek(back)
+    }
     if (back === null) return false
     this.transport.seek(back)
+    if (ended) void this.transport.play?.().catch(() => {}) // an ended element does not play on by itself
     this.announce(this.wrapListeners)
     this.announce(this.jumpListeners)
     return true

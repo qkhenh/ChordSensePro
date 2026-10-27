@@ -40,6 +40,8 @@ export function useTransport(
   chart: { id: string; playback: Chart['source']['playback'] },
   mount: HTMLElement | null,
   loaders?: TransportDeps['loaders'],
+  /** Bump to throw the transport away and build a new one (a retry after a failure). */
+  attempt = 0,
 ): TransportView {
   const client = useApiClient()
   const [store] = useState(() => new ViewStore())
@@ -57,8 +59,11 @@ export function useTransport(
       { kind, embed_id: embedId, audio_url: audioUrl },
       { chartId, client, mount, loaders: loadersRef.current },
     )
-    const publish = (error: TransportError | null) =>
-      store.set({ transport, state: transport.state, error: error ?? store.snapshot.error })
+    const publish = (error: TransportError | null) => {
+      // A failure stays on show until the transport is healthy again.
+      const healthy = transport.state === 'playing' || transport.state === 'ready'
+      store.set({ transport, state: transport.state, error: error ?? (healthy ? null : store.snapshot.error) })
+    }
     store.set({ transport, state: transport.state, error: null })
     const offState = transport.on('state', () => publish(null))
     const offError = transport.on('error', (error) => publish(error))
@@ -71,7 +76,7 @@ export function useTransport(
       transport.destroy()
       store.set(IDLE)
     }
-  }, [store, client, mount, chartId, kind, embedId, audioUrl])
+  }, [store, client, mount, chartId, kind, embedId, audioUrl, attempt])
 
   return useSyncExternalStore(store.subscribe, store.getSnapshot)
 }

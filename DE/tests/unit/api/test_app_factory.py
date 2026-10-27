@@ -147,6 +147,18 @@ class TestCors:
         exposed = r.headers["access-control-expose-headers"].lower()
         assert all(h in exposed for h in ("content-range", "accept-ranges", "etag"))
 
+    async def test_a_cross_origin_page_may_revalidate_with_if_none_match(self, http):
+        r = await http.options(
+            "/api/v1/charts/00000000-0000-4000-8000-000000000001",
+            headers={
+                "Origin": ORIGIN,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization,if-none-match",
+            },
+        )
+        assert r.status_code == 200
+        assert "if-none-match" in r.headers["access-control-allow-headers"].lower()
+
 
 class TestSettings:
     def test_defaults_allow_the_vite_dev_server(self):

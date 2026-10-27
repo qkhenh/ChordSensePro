@@ -61,3 +61,17 @@ describe('onFrame', () => {
     expect(onFrame).toHaveBeenLastCalledWith(100 + 70 * 12)
   })
 })
+
+describe('a window that gets no animation frames', () => {
+  it('keeps reporting the position from a timer, so a loop still wraps', () => {
+    vi.useFakeTimers()
+    const transport = { currentTimeMs: () => 100 } as unknown as Transport
+    const onFrame = vi.fn()
+    render(<Harness transport={transport} onFrame={onFrame} raf={{ raf: () => 1, step: () => {} }} />)
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+    expect(onFrame.mock.calls.length).toBeGreaterThanOrEqual(3)
+    vi.useRealTimers()
+  })
+})

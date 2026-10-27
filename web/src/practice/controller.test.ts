@@ -149,3 +149,50 @@ describe('jumps', () => {
     expect(jumped).not.toHaveBeenCalled()
   })
 })
+
+describe('a loop that reaches the end of the song', () => {
+  function atEnd(state: string, startMs = 59_000) {
+    const position = { ms: startMs }
+    const seek = vi.fn((ms: number) => {
+      position.ms = ms
+    })
+    const play = vi.fn(async () => {})
+    const transport = { seek, currentTimeMs: () => position.ms, state, play }
+    const controller = new PracticeController(transport as never, grid)
+    return { controller, seek, play, position, transport }
+  }
+
+  it('goes back to A and keeps playing when the element has already ended', () => {
+    const { controller, seek, play, position, transport } = atEnd('playing')
+    controller.loop.setFromBars(grid, 27, 29) // 55 000 .. 60 000, the end of the song
+    controller.frame(59_000)
+    transport.state = 'ended'
+    position.ms = 60_000
+    expect(controller.frame(60_000)).toBe(true)
+    expect(seek).toHaveBeenCalledWith(55_000)
+    expect(play).toHaveBeenCalledTimes(1)
+  })
+
+  it('also wraps when the audio is a few ms shorter than the loop end', () => {
+    const { controller, seek, play, position, transport } = atEnd('playing')
+    controller.loop.setFromBars(grid, 27, 29)
+    controller.frame(59_000)
+    transport.state = 'ended'
+    position.ms = 59_990
+    expect(controller.frame(59_990)).toBe(true)
+    expect(seek).toHaveBeenCalledWith(55_000)
+    expect(play).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a song that ends outside a mid-song loop alone', () => {
+    const { controller, seek, play, position, transport } = atEnd('playing')
+    controller.loop.setFromBars(grid, 8, 15)
+    controller.seek(40_000)
+    seek.mockClear()
+    transport.state = 'ended'
+    position.ms = 60_000
+    expect(controller.frame(60_000)).toBe(false)
+    expect(seek).not.toHaveBeenCalled()
+    expect(play).not.toHaveBeenCalled()
+  })
+});

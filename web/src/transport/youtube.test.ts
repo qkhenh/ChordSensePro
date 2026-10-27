@@ -36,7 +36,7 @@ runTransportContract(
 describe('creating the player', () => {
   it('embeds the right video in the host element', async () => {
     const { created, host } = await loaded()
-    expect(created).toEqual([{ host, videoId: 'dQw4w9WgXcQ' }])
+    expect(created).toEqual([expect.objectContaining({ host, videoId: 'dQw4w9WgXcQ' })])
   })
 
   it('cannot even start when the API script is blocked', async () => {
@@ -189,5 +189,12 @@ describe('autoplay', () => {
     await transport.play()
     expect(errors.map((e) => e.code)).toEqual(['autoplay_blocked'])
     expect(transport.state).toBe('paused')
+  })
+})
+
+describe('the player UI', () => {
+  it('hides the native controls and keyboard shortcuts, so speed, seeking and the loop stay in the app', async () => {
+    const { created } = await loaded()
+    expect(created[0].playerVars).toMatchObject({ controls: 0, disablekb: 1 })
   })
 })

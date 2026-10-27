@@ -14,6 +14,8 @@ const MIN_SAMPLES = 5
 const SLOW_MS = 34 // slower than ~30 fps: paint every 2nd frame
 const VERY_SLOW_MS = 60 // slower than ~16 fps: paint every 4th frame
 const RECOVERED_MS = 24 // back above ~40 fps: paint every frame again
+const IDLE_MS = 150 // no frame for this long: keep the loop going from a timer
+const IDLE_CHECK_MS = 100
 
 const defaultRaf = (callback: FrameRequestCallback) => requestAnimationFrame(callback)
 const defaultCancel = (handle: number) => cancelAnimationFrame(handle)
@@ -72,7 +74,9 @@ export function usePlayhead(
       else if (average < RECOVERED_MS) stride = 1
     }
 
+    let lastFrameAt = performance.now()
     const frame: FrameRequestCallback = (now) => {
+      lastFrameAt = performance.now()
       handle = raf(frame)
       adapt(now)
       frameHook.current?.(transport.currentTimeMs())
@@ -83,11 +87,16 @@ export function usePlayhead(
     }
 
     const onVisible = () => paint()
+    // A hidden or fully covered window gets no animation frames; the loop must still wrap.
+    const idle = setInterval(() => {
+      if (performance.now() - lastFrameAt > IDLE_MS) frameHook.current?.(transport.currentTimeMs())
+    }, IDLE_CHECK_MS)
     document.addEventListener('visibilitychange', onVisible)
     handle = raf(frame)
     return () => {
       document.removeEventListener('visibilitychange', onVisible)
       cancel(handle)
+      clearInterval(idle)
     }
   }, [transport, grid, root, raf, cancel])
 }

@@ -23,7 +23,10 @@ export function useShortcuts(controller: PracticeController | null, toggle: () =
       if (target?.closest(TYPING)) return
       const { controller: practice, toggle: playPause } = latest.current
 
-      if (event.key === ' ') {
+      if (event.key === ' ' && target?.closest('[data-bar]')) {
+        event.preventDefault() // a bar cell keeps focus after a click; Space still means play/pause
+        playPause()
+      } else if (event.key === ' ') {
         if (target?.closest(ACTIVATES_ON_SPACE)) return
         event.preventDefault() // the page would scroll
         playPause()
@@ -35,7 +38,14 @@ export function useShortcuts(controller: PracticeController | null, toggle: () =
         else practice.stepBars(direction)
       }
     }
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === ' ' && event.target instanceof Element && event.target.closest('[data-bar]')) event.preventDefault()
+    }
     document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
+    document.addEventListener('keyup', onKeyUp)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('keyup', onKeyUp)
+    }
   }, [])
 }

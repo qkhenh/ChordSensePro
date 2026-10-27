@@ -87,7 +87,7 @@ def create_app(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", REQUEST_ID_HEADER],
+        allow_headers=["Authorization", "Content-Type", "If-None-Match", REQUEST_ID_HEADER],
         expose_headers=[REQUEST_ID_HEADER, "Retry-After", "Content-Range", "Accept-Ranges", "ETag"],
     )
 

@@ -1,3 +1,4 @@
+import { focusManager } from '@tanstack/react-query'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createMemoryRouter } from 'react-router'
@@ -383,5 +384,46 @@ describe('embedded players that cannot start', () => {
     act(() => audios[0].fail())
     expect(await screen.findByText(/không phát được bài này/i)).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Tải tệp lên thay thế' })).not.toBeInTheDocument()
+  })
+})
+
+describe('after something goes wrong', () => {
+  it('keeps playing when a background refresh of the chart fails', async () => {
+    let calls = 0
+    server.use(
+      http.get(`${API}/charts/${plain.id}`, () => {
+        calls += 1
+        return calls === 1 ? HttpResponse.json(plain) : apiError(502, 'bad_gateway')
+      }),
+    )
+    renderChart(plain.id)
+    await screen.findByRole('group', { name: 'Lưới hợp âm' })
+    await loadedAudio()
+    act(() => {
+      focusManager.setFocused(false)
+      focusManager.setFocused(true) // the tab is back: TanStack refetches stale queries
+    })
+    await waitFor(() => expect(calls).toBeGreaterThan(1))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.getByRole('group', { name: 'Lưới hợp âm' })).toBeInTheDocument()
+    expect(screen.queryByText(/không tải được/i)).not.toBeInTheDocument()
+  })
+
+  it('lets the person retry a stored file that stopped working, and plays on from where it was', async () => {
+    serve(plain)
+    renderChart(plain.id)
+    await screen.findByRole('group', { name: 'Lưới hợp âm' })
+    const first = await loadedAudio()
+    first.currentTime = 4
+    act(() => first.fail())
+    await waitFor(() => expect(first.src).toContain('ticket=t2'))
+    act(() => first.fail())
+    await userEvent.click(await screen.findByRole('button', { name: 'Thử lại' }))
+    await waitFor(() => expect(audios).toHaveLength(2))
+    await waitFor(() => expect(audios[1].src).toBeTruthy())
+    act(() => audios[1].finishLoading(9000))
+    await waitFor(() => expect(audios[1].currentTime).toBeCloseTo(4, 1))
+    expect(screen.queryByText(/không phát được bài này/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Phát' })).toBeEnabled()
   })
 })

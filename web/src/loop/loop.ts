@@ -1,5 +1,8 @@
 import type { Grid } from '../grid/grid'
 
+// Playing moves the playhead a frame at a time (a throttled tab: a second or two); more than this is a scrub.
+const MAX_STEP_MS = 2500
+
 export interface LoopRange {
   startMs: number
   endMs: number
@@ -56,6 +59,7 @@ export class LoopController {
     this.last = positionMs
     const loop = this.current
     if (!loop || previous === null) return null
+    if (Math.abs(positionMs - previous) > MAX_STEP_MS) return null
     const wasInside = previous >= loop.startMs && previous < loop.endMs
     if (wasInside && positionMs >= loop.endMs) {
       this.last = loop.startMs

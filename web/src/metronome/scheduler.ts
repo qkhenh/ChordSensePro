@@ -23,6 +23,8 @@ export interface SchedulerOptions {
   schedule?: (ctx: BaseAudioContext, when: number, opts: ClickOptions) => (() => void) | void
 }
 
+const BACK_SLACK_MS = 250
+
 interface Queued {
   when: number
   cancel: () => void
@@ -96,6 +98,10 @@ export class MetronomeScheduler {
       this.cancelQueued(ctxTime)
       this.scheduledUntilMs = Number.NEGATIVE_INFINITY
       return
+    }
+    if (songMs < this.scheduledUntilMs - this.lookaheadMs * rate - BACK_SLACK_MS) {
+      this.cancelQueued(ctxTime) // the song went backwards behind our back (a scrub in an embedded player)
+      this.scheduledUntilMs = Number.NEGATIVE_INFINITY
     }
     this.queued = this.queued.filter((c) => c.when > ctxTime)
     const horizon = songMs + this.lookaheadMs * rate

@@ -11,7 +11,7 @@ export function createFakeYouTube() {
     destroyed: false,
     seeks: [] as [number, boolean][],
   }
-  const created: { host: unknown; videoId: string }[] = []
+  const created: { host: unknown; videoId: string; playerVars?: Record<string, unknown> }[] = []
   let events!: {
     onReady(): void
     onStateChange(e: { data: number }): void
@@ -19,9 +19,9 @@ export function createFakeYouTube() {
   }
 
   class Player {
-    constructor(host: unknown, opts: { videoId: string; events: typeof events }) {
+    constructor(host: unknown, opts: { videoId: string; playerVars?: Record<string, unknown>; events: typeof events }) {
       events = opts.events
-      created.push({ host, videoId: opts.videoId })
+      created.push({ host, videoId: opts.videoId, playerVars: opts.playerVars })
     }
     playVideo() {
       if (!state.blockAutoplay) events.onStateChange({ data: 1 })
