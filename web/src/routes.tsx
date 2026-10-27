@@ -4,7 +4,7 @@ import { GuestOnly, RequireAuth } from './auth/guards'
 import { Providers } from './Providers'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
-import ChartPage from './pages/ChartPage'
+import PracticePage from './practice/PracticePage'
 import LibraryPage from './pages/LibraryPage'
 import SectionPage from './pages/SectionPage'
 import SyncSpike from './spike/SyncSpike'
@@ -32,7 +32,7 @@ export function buildRoutes(client: ApiClient): RouteObject[] {
               element: <ShellLayout />,
               children: [
                 { path: '/', element: <Navigate to="/workspace" replace /> },
-                { path: '/charts/:id', element: <ChartPage /> },
+                { path: '/charts/:id', element: <PracticePage /> },
                 { path: '/library', element: <LibraryPage /> },
                 { path: '/workspace', element: <WorkspacePage /> },
                 { path: '/dictionary', element: <SectionPage section="dictionary" /> },

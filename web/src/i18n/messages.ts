@@ -86,6 +86,14 @@ const vi = {
   demo: { heading: 'Thử một bài demo', hint: 'Không tốn lượt phân tích' },
   practice: {
     gridLabel: 'Lưới hợp âm',
+    play: 'Phát',
+    pause: 'Tạm dừng',
+    unlockTitle: 'Bật âm thanh',
+    unlockBody: 'Trình duyệt chặn tự phát nhạc. Bấm nút bên dưới để nghe.',
+    unlock: 'Bật âm thanh',
+    embedBlocked: 'Video không khả dụng để phát tại đây.',
+    uploadInstead: 'Tải tệp lên thay thế',
+    playbackFailed: 'Không phát được bài này, vui lòng thử lại.',
     bar: (n: number, chords: string) => (chords ? `Ô nhịp ${n}: ${chords}` : `Ô nhịp ${n}`),
   },
   library: {
@@ -191,6 +199,14 @@ const en: Messages = {
   demo: { heading: 'Try a demo song', hint: 'Costs no analyses' },
   practice: {
     gridLabel: 'Chord grid',
+    play: 'Play',
+    pause: 'Pause',
+    unlockTitle: 'Turn on sound',
+    unlockBody: 'Your browser blocked automatic playback. Press the button below to listen.',
+    unlock: 'Turn on sound',
+    embedBlocked: 'This video is not available to play here.',
+    uploadInstead: 'Upload a file instead',
+    playbackFailed: 'This song could not be played, please try again.',
     bar: (n, chords) => (chords ? `Bar ${n}: ${chords}` : `Bar ${n}`),
   },
   library: {
