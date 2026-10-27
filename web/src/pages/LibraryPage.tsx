@@ -5,13 +5,10 @@ import { listCharts } from '../api/analyze'
 import { useApiClient } from '../api/context'
 import { toastFor } from '../api/errors'
 import type { ChartSummary } from '../api/types'
+import { minutesAndSeconds } from '../format/duration'
 import { useI18n } from '../i18n/context'
 import { useToast } from '../shell/context'
 
-export const minutesAndSeconds = (ms: number) => {
-  const total = Math.floor(ms / 1000)
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
-}
 
 type SourceLabel = 'file' | 'url' | 'demo' | 'recording'
 const sourceLabel = (kind: string): SourceLabel =>
