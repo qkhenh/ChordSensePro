@@ -123,3 +123,29 @@ describe('loop wrap', () => {
     expect(wrapped).not.toHaveBeenCalled()
   })
 })
+
+describe('jumps', () => {
+  it('announces every seek, step, skip and loop wrap, but not a plain frame', () => {
+    const { controller } = setup(5000)
+    const jumped = vi.fn()
+    controller.onJump(jumped)
+    controller.frame(5100)
+    expect(jumped).not.toHaveBeenCalled()
+    controller.seek(9000)
+    controller.stepBars(1)
+    controller.skip(1000)
+    expect(jumped).toHaveBeenCalledTimes(3)
+    controller.loop.setFromBars(grid, 8, 15)
+    controller.frame(32_990)
+    controller.frame(33_010)
+    expect(jumped).toHaveBeenCalledTimes(4)
+  })
+
+  it('stops notifying a listener that unsubscribed', () => {
+    const { controller } = setup()
+    const jumped = vi.fn()
+    controller.onJump(jumped)()
+    controller.seek(1000)
+    expect(jumped).not.toHaveBeenCalled()
+  })
+})

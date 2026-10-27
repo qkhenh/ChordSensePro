@@ -267,3 +267,28 @@ describe('practice controls', () => {
     expect(audio.currentTime * 1000).toBeCloseTo(end + 10, 0)
   })
 })
+
+describe('chord style and metronome', () => {
+  it('shows simpler names in Basic and makes no request to do it', async () => {
+    serve(edited)
+    renderChart(edited.id)
+    const grid = await screen.findByRole('group', { name: 'Lưới hợp âm' })
+    const override = edited.overrides.find((o) => o.op === 'set')!.event!
+    const names = () => within(grid).getAllByRole('button').map((b) => b.getAttribute('aria-label')).join('|')
+    expect(names()).toContain(formatChord(override, 'precise'))
+    const requests: string[] = []
+    const record = ({ request }: { request: Request }) => void requests.push(request.url)
+    server.events.on('request:start', record)
+    await userEvent.click(screen.getByRole('button', { name: 'Cơ bản' }))
+    server.events.removeListener('request:start', record)
+    expect(names()).toContain(formatChord(override, 'basic'))
+    expect(names()).not.toContain(formatChord(override, 'precise'))
+    expect(requests).toEqual([])
+  })
+
+  it('offers the metronome panel next to the player', async () => {
+    serve(plain)
+    renderChart(plain.id)
+    expect(await screen.findByRole('switch', { name: 'Metronome' })).not.toBeChecked()
+  })
+})

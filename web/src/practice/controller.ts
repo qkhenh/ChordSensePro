@@ -14,6 +14,7 @@ export class PracticeController {
   private readonly transport: Seekable
   private readonly grid: Grid
   private readonly wrapListeners = new Set<() => void>()
+  private readonly jumpListeners = new Set<() => void>()
 
   constructor(transport: Seekable, grid: Grid) {
     this.transport = transport
@@ -24,6 +25,7 @@ export class PracticeController {
   seek(ms: number): void {
     this.transport.seek(ms)
     this.loop.noteSeek(ms)
+    this.announce(this.jumpListeners)
   }
 
   seekToBar(index: number): void {
@@ -53,7 +55,8 @@ export class PracticeController {
     const back = this.loop.tick(positionMs)
     if (back === null) return false
     this.transport.seek(back)
-    for (const listener of [...this.wrapListeners]) listener()
+    this.announce(this.wrapListeners)
+    this.announce(this.jumpListeners)
     return true
   }
 
@@ -63,5 +66,17 @@ export class PracticeController {
     return () => {
       this.wrapListeners.delete(listener)
     }
+  }
+
+  /** The playhead moved by something other than playing: a seek, a step, a skip or a loop wrap. */
+  onJump(listener: () => void): () => void {
+    this.jumpListeners.add(listener)
+    return () => {
+      this.jumpListeners.delete(listener)
+    }
+  }
+
+  private announce(listeners: Set<() => void>): void {
+    for (const listener of [...listeners]) listener()
   }
 }

@@ -11,6 +11,20 @@ interface CellProps {
   onActivate: (index: number, shift: boolean) => void
 }
 
+/** Two renders of a cell look the same when nothing but the chord mode differs and both modes name its chords alike. */
+function sameCell(prev: CellProps, next: CellProps): boolean {
+  if (
+    prev.bar !== next.bar ||
+    prev.inLoop !== next.inLoop ||
+    prev.label !== next.label ||
+    prev.onActivate !== next.onActivate
+  ) {
+    return false
+  }
+  if (prev.mode === next.mode) return true
+  return prev.bar.chords.every((c) => formatChord(c.event, prev.mode) === formatChord(c.event, next.mode))
+}
+
 /**
  * One bar. The "currently playing" look is applied from outside through `data-current` (see
  * usePlayhead), so a cell never re-renders as the song plays: it only changes when its own
@@ -39,7 +53,7 @@ const BarCell = memo(function BarCell({ bar, mode, inLoop, label, onActivate }: 
       </span>
     </button>
   )
-})
+}, sameCell)
 
 interface Props {
   grid: Grid

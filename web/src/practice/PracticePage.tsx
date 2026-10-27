@@ -5,7 +5,6 @@ import { getChart } from '../api/analyze'
 import { useApiClient } from '../api/context'
 import { ApiError } from '../api/http'
 import type { Chart } from '../api/types'
-import type { ChordMode } from '../format/chord'
 import { applyOverrides } from '../grid/effective'
 import { buildGrid } from '../grid/grid'
 import { useI18n } from '../i18n/context'
@@ -13,14 +12,16 @@ import type { Rate, TransportError } from '../transport/types'
 import { useTransport } from '../transport/useTransport'
 import { ensureAudioContext } from './audio'
 import { PracticeController } from './controller'
+import { ChordModeToggle } from './ChordModeToggle'
 import { LoopControls } from './LoopControls'
+import { MetronomePanel } from './MetronomePanel'
 import { SmartGrid } from './SmartGrid'
 import { TransportBar } from './TransportBar'
 import { UnlockModal } from './UnlockModal'
+import { useChordMode } from './useChordMode'
+import { useMetronome } from './useMetronome'
 import { usePlayhead } from './usePlayhead'
 import { useShortcuts } from './useShortcuts'
-
-const MODE: ChordMode = 'precise'
 
 /** The practice workspace for one chart: the grid, the player and what it needs to stay in step. */
 export default function PracticePage() {
@@ -76,6 +77,15 @@ function Practice({ chart }: { chart: Chart }) {
   const controller = useMemo(() => (transport ? new PracticeController(transport, grid) : null), [transport, grid])
   usePlayhead(transport, grid, gridRef, { onFrame: (ms) => controller?.frame(ms) })
   const [rate, setRate] = useState<Rate>(1)
+  const [mode, setMode] = useChordMode()
+  const metronome = useMetronome({
+    transport,
+    grid,
+    controller,
+    rate,
+    tempoBpm: chart.metadata.beat_grid.tempo_bpm,
+    beatsPerBar: chart.metadata.beat_grid.beats_per_bar,
+  })
   const [loopBars, setLoopBars] = useState<{ from: number; to: number } | null>(null)
 
   const start = useCallback(async () => {
@@ -83,8 +93,9 @@ function Practice({ chart }: { chart: Chart }) {
     const ctx = ensureAudioContext()
     await ctx?.resume().catch(() => {})
     // A refusal or failure is reported through the transport's error event.
+    if (transport.state !== 'playing' && !(await metronome.runCountIn())) return
     await transport.play().catch(() => {})
-  }, [transport])
+  }, [transport, metronome])
 
   const toggle = () => {
     if (state === 'playing') transport?.pause()
@@ -150,17 +161,22 @@ function Practice({ chart }: { chart: Chart }) {
           onRate={changeRate}
         />
         <LoopControls range={loopBars} onClear={clearLoop} />
+        <ChordModeToggle mode={mode} onChange={setMode} />
       </div>
 
       <div className="mt-6">
         <SmartGrid
           grid={grid}
-          mode={MODE}
+          mode={mode}
           rootRef={gridRef}
           loop={loopBars}
           onSeek={(ms) => controller?.seek(ms)}
           onSelect={selectLoop}
         />
+      </div>
+
+      <div className="mt-6">
+        <MetronomePanel metronome={metronome} />
       </div>
 
       {error?.code === 'autoplay_blocked' && error !== answered && (
