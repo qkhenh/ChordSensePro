@@ -3,6 +3,7 @@ import {
   analyzeDemo,
   analyzeUrl,
   getChart,
+  listCharts,
   getAudioTicket,
   getJob,
   listDemoTracks,
@@ -153,7 +154,7 @@ describe('getAudioTicket', () => {
     )
     const ticket = await getAudioTicket(client, 'chart-1')
     expect(path).toBe('chart-1')
-    expect(ticket.url).toBe('/api/v1/charts/chart-1/audio?ticket=abc')
+    expect(ticket.url).toBe(`${location.origin}/api/v1/charts/chart-1/audio?ticket=abc`)
     expect(ticket.expiresAt.toISOString()).toBe('2026-10-26T12:30:00.000Z')
   })
 
@@ -190,5 +191,70 @@ describe('openJobSocket', () => {
     vi.stubGlobal('WebSocket', FakeSocket)
     const client = createApiClient({ storage: memoryStorage() })
     expect(() => openJobSocket(client, JOB_ID)).toThrowError(/signed in/i)
+  })
+})
+
+describe('listCharts', () => {
+  it('passes the cursor and limit as query parameters and returns the page', async () => {
+    const client = await signedIn()
+    let search = ''
+    server.use(
+      http.get(`${API}/charts`, ({ request }) => {
+        search = new URL(request.url).search
+        return HttpResponse.json({ items: [], next_cursor: null })
+      }),
+    )
+    const page = await listCharts(client, { cursor: 'abc', limit: 10 })
+    expect(new URLSearchParams(search).get('cursor')).toBe('abc')
+    expect(new URLSearchParams(search).get('limit')).toBe('10')
+    expect(page).toEqual({ items: [], next_cursor: null })
+  })
+
+  it('sends no query string by default', async () => {
+    const client = await signedIn()
+    let search = 'x'
+    server.use(
+      http.get(`${API}/charts`, ({ request }) => {
+        search = new URL(request.url).search
+        return HttpResponse.json({ items: [], next_cursor: null })
+      }),
+    )
+    await listCharts(client)
+    expect(search).toBe('')
+  })
+})
+
+describe('getChart revalidation', () => {
+  it('sends If-None-Match after the first load and keeps the cached chart on a 304', async () => {
+    const client = await signedIn()
+    const seen: (string | null)[] = []
+    server.use(
+      http.get(`${API}/charts/${charts[0].id}`, ({ request }) => {
+        const header = request.headers.get('if-none-match')
+        seen.push(header)
+        if (header === 'W/"1-5"') return new HttpResponse(null, { status: 304, headers: { ETag: 'W/"1-5"' } })
+        return HttpResponse.json(charts[0], { headers: { ETag: 'W/"1-5"' } })
+      }),
+    )
+    const first = await getChart(client, charts[0].id)
+    const second = await getChart(client, charts[0].id)
+    expect(seen).toEqual([null, 'W/"1-5"'])
+    expect(second).toBe(first)
+  })
+
+  it('takes the new body when the ETag no longer matches', async () => {
+    const client = await signedIn()
+    let etag = 'W/"1-5"'
+    let title = 'Old'
+    server.use(
+      http.get(`${API}/charts/${charts[0].id}`, ({ request }) => {
+        if (request.headers.get('if-none-match') === etag) return new HttpResponse(null, { status: 304 })
+        return HttpResponse.json({ ...charts[0], title }, { headers: { ETag: etag } })
+      }),
+    )
+    expect((await getChart(client, charts[0].id)).title).toBe('Old')
+    etag = 'W/"2-9"'
+    title = 'New'
+    expect((await getChart(client, charts[0].id)).title).toBe('New')
   })
 })

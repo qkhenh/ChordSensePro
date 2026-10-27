@@ -88,6 +88,14 @@ const vi = {
     gridLabel: 'Lưới hợp âm',
     bar: (n: number, chords: string) => (chords ? `Ô nhịp ${n}: ${chords}` : `Ô nhịp ${n}`),
   },
+  library: {
+    loading: 'Đang tải thư viện',
+    loadMore: 'Tải thêm',
+    empty: 'Thư viện còn trống.',
+    start: 'Phân tích bài đầu tiên',
+    source: { file: 'Tải lên', url: 'Liên kết', demo: 'Demo', recording: 'Ghi âm' },
+    customized: 'Đã chỉnh sửa',
+  },
   chart: {
     loading: 'Đang tải bài…',
     notFound: 'Không tìm thấy bài này',
@@ -184,6 +192,14 @@ const en: Messages = {
   practice: {
     gridLabel: 'Chord grid',
     bar: (n, chords) => (chords ? `Bar ${n}: ${chords}` : `Bar ${n}`),
+  },
+  library: {
+    loading: 'Loading your library',
+    loadMore: 'Load more',
+    empty: 'Your library is empty.',
+    start: 'Analyse your first song',
+    source: { file: 'Upload', url: 'Link', demo: 'Demo', recording: 'Recording' },
+    customized: 'Edited',
   },
   chart: {
     loading: 'Loading the song…',

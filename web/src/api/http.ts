@@ -75,6 +75,7 @@ export interface RequestOptions {
   body?: unknown
   /** Attach the access token and refresh it on 401 (default true). */
   auth?: boolean
+  headers?: Record<string, string>
 }
 
 export interface ApiClientOptions {
@@ -92,8 +93,8 @@ export function createApiClient({ baseUrl = '/api/v1', storage = localStorageSto
 
   const url = (path: string) => new URL(`${baseUrl}${path}`, globalThis.location?.origin ?? 'http://localhost')
 
-  async function send(path: string, { method = 'GET', body }: RequestOptions, token: string | null) {
-    const headers: Record<string, string> = { Accept: 'application/json' }
+  async function send(path: string, { method = 'GET', body, headers: extra }: RequestOptions, token: string | null) {
+    const headers: Record<string, string> = { Accept: 'application/json', ...extra }
     // FormData: the browser adds multipart/form-data with its boundary itself.
     const isForm = body instanceof FormData
     if (body !== undefined && !isForm) headers['Content-Type'] = 'application/json'
@@ -164,7 +165,8 @@ export function createApiClient({ baseUrl = '/api/v1', storage = localStorageSto
     return inflightRefresh
   }
 
-  async function request<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
+  /** Sends the call, refreshing the session once on a 401. Answers 2xx and 304; throws the rest. */
+  async function execute(path: string, options: RequestOptions): Promise<Response> {
     const auth = options.auth ?? true
     let res = await send(path, options, auth ? accessToken : null)
 
@@ -180,8 +182,20 @@ export function createApiClient({ baseUrl = '/api/v1', storage = localStorageSto
       }
     }
 
-    if (!res.ok) throw await toApiError(res)
+    if (!res.ok && res.status !== 304) throw await toApiError(res)
+    return res
+  }
+
+  async function request<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
+    const res = await execute(path, options)
     return (res.status === 204 ? undefined : await res.json()) as T
+  }
+
+  /** GET with `If-None-Match`: `data` is undefined when the server answered 304. */
+  async function requestConditional<T>(path: string, etag: string | null) {
+    const res = await execute(path, { headers: etag ? { 'If-None-Match': etag } : {} })
+    if (res.status === 304) return { data: undefined, etag }
+    return { data: (await res.json()) as T, etag: res.headers.get('etag') }
   }
 
   async function authenticate(path: string, body: unknown): Promise<AuthResponse> {
@@ -190,6 +204,9 @@ export function createApiClient({ baseUrl = '/api/v1', storage = localStorageSto
 
   return {
     request,
+    requestConditional,
+    /** Resolves a server-relative href (e.g. a media URL) against the API's own origin. */
+    resolveUrl: (href: string) => new URL(href, url('/')).toString(),
     login: (email: string, password: string) => authenticate('/auth/login', { email, password }),
     register: (email: string, password: string, name?: string) =>
       authenticate('/auth/register', { email, password, ...(name ? { name } : {}) }),

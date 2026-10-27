@@ -1,5 +1,5 @@
 import { ApiError, type ApiClient } from './http'
-import type { AudioTicketWire, Chart, DemoTrack, JobAccepted, JobProgress } from './types'
+import type { AudioTicketWire, Chart, ChartPage, DemoTrack, JobAccepted, JobProgress } from './types'
 
 export function uploadFile(client: ApiClient, file: File): Promise<JobAccepted> {
   const body = new FormData()
@@ -19,8 +19,34 @@ export function getJob(client: ApiClient, id: string): Promise<JobProgress> {
   return client.request<JobProgress>(`/analyze/status/${encodeURIComponent(id)}`)
 }
 
-export function getChart(client: ApiClient, id: string): Promise<Chart> {
-  return client.request<Chart>(`/charts/${encodeURIComponent(id)}`)
+const chartCache = new WeakMap<ApiClient, Map<string, { etag: string; chart: Chart }>>()
+
+/** Revalidates with the ETag of the last copy; a 304 hands that copy back unchanged. */
+export async function getChart(client: ApiClient, id: string): Promise<Chart> {
+  let cache = chartCache.get(client)
+  if (!cache) chartCache.set(client, (cache = new Map()))
+  const cached = cache.get(id)
+  const { data, etag } = await client.requestConditional<Chart>(
+    `/charts/${encodeURIComponent(id)}`,
+    cached?.etag ?? null,
+  )
+  if (data === undefined) {
+    if (cached) return cached.chart
+    throw new ApiError(502, 'bad_response', 'Unexpected 304 without a cached chart')
+  }
+  if (etag) cache.set(id, { etag, chart: data })
+  return data
+}
+
+export function listCharts(
+  client: ApiClient,
+  { cursor, limit }: { cursor?: string | null; limit?: number } = {},
+): Promise<ChartPage> {
+  const query = new URLSearchParams()
+  if (cursor) query.set('cursor', cursor)
+  if (limit) query.set('limit', String(limit))
+  const qs = query.size ? `?${query}` : ''
+  return client.request<ChartPage>(`/charts${qs}`)
 }
 
 export function listDemoTracks(client: ApiClient): Promise<DemoTrack[]> {
@@ -46,5 +72,5 @@ export async function getAudioTicket(client: ApiClient, chartId: string): Promis
     `/charts/${encodeURIComponent(chartId)}/audio-ticket`,
     { method: 'POST' },
   )
-  return { url: wire.url, expiresAt: new Date(wire.expires_at) }
+  return { url: client.resolveUrl(wire.url), expiresAt: new Date(wire.expires_at) }
 }

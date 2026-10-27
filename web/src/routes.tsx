@@ -5,6 +5,7 @@ import { Providers } from './Providers'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import ChartPage from './pages/ChartPage'
+import LibraryPage from './pages/LibraryPage'
 import SectionPage from './pages/SectionPage'
 import SyncSpike from './spike/SyncSpike'
 import WorkspacePage from './pages/WorkspacePage'
@@ -32,7 +33,7 @@ export function buildRoutes(client: ApiClient): RouteObject[] {
               children: [
                 { path: '/', element: <Navigate to="/workspace" replace /> },
                 { path: '/charts/:id', element: <ChartPage /> },
-                { path: '/library', element: <SectionPage section="library" /> },
+                { path: '/library', element: <LibraryPage /> },
                 { path: '/workspace', element: <WorkspacePage /> },
                 { path: '/dictionary', element: <SectionPage section="dictionary" /> },
               ],
