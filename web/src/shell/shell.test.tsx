@@ -48,7 +48,7 @@ describe('workspace shell', () => {
   })
 
   it('shows a skeleton placeholder on the still-empty pages', async () => {
-    renderShell('/library')
+    renderShell('/dictionary')
     expect(await screen.findByTestId('page-skeleton')).toBeInTheDocument()
   })
 
