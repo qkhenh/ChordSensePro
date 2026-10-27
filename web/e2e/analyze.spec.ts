@@ -50,7 +50,7 @@ test('upload a WAV, watch the steps, land on the finished chart', async ({ page 
   await analyzeFile(page, 'E2E Song.wav')
   await expect(page).toHaveURL(/\/charts\/[0-9a-f-]{36}$/)
   await expect(page.getByRole('heading', { level: 2, name: 'E2E Song' })).toBeVisible()
-  await expect(page.getByRole('row').nth(1)).toContainText(/:/) // at least one chord with a time
+  await expect(page.getByRole('group', { name: 'Lưới hợp âm' }).getByRole('button').first()).toBeVisible() // the grid has bars
   await expect(badge(page)).toContainText('còn 4/5')
 })
 

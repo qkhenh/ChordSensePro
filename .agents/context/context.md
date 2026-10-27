@@ -1,10 +1,14 @@
 # context.md — Trạng thái hiện tại của dự án
 
-> Cập nhật cuối mỗi task. Cập nhật lần cuối: **2026-10-26**. Branch: `tienkee`.
+> Cập nhật cuối mỗi task. Cập nhật lần cuối: **2026-10-27**. Branch: `tienkee`.
 > Kế hoạch đầy đủ: [implementation-plan.md](implementation-plan.md). Quyết định/quy tắc: [../memory/memory.md](../memory/memory.md).
 
 ## Giai đoạn
-**M2 hoàn tất (2026-10-26)** — upload / link / bài demo → stepper realtime → chart mock lưu vào thư viện. Tiếp theo: **M3** (Chord Viewer & Audio Sync). Kế hoạch chi tiết đã chạy: [docs/superpowers/plans/2026-10-26-m2-ingestion-mock-pipeline.md](../../docs/superpowers/plans/2026-10-26-m2-ingestion-mock-pipeline.md).
+(M3 chi tiết đã hoàn tất, xem dòng đầu mục này.)
+
+**M3 hoàn tất (2026-10-27)** — Practice Workspace: thư viện, lưới nhịp đồng bộ, loop A/B, tốc độ 0.5/0.75/1, metronome + count-in, Basic/Precise, gate Free/Pro. Số đo và giới hạn: memory.md (mục "Số đo M3"). Chưa kiểm tay: YouTube/SoundCloud thật, nghe 0.75×. Tiếp theo: **M4**.
+
+(M2) **M2 hoàn tất (2026-10-26)** — upload / link / bài demo → stepper realtime → chart mock lưu vào thư viện. Tiếp theo: **M3** (Chord Viewer & Audio Sync). Kế hoạch chi tiết đã chạy: [docs/superpowers/plans/2026-10-26-m2-ingestion-mock-pipeline.md](../../docs/superpowers/plans/2026-10-26-m2-ingestion-mock-pipeline.md).
 
 M2 gồm: `DE/src/ingestion/` (state machine job, SSRF guard, SafeFetcher, Normalizer ffmpeg, MockAnalysisEngine, JobExecutor, Submission, demo catalog, dọn file tạm, Celery+Redis), `DE/src/api/routers/{analyze,charts,demo,jobs_ws}.py`, migration `0002`; FE `web/src/analyze/` (Source Selector, useJob WS→polling, JobTracker, QuotaBanner, DemoTracks), `web/src/pages/{WorkspacePage,ChartPage}.tsx`. Kiểm chứng: `DE` pytest xanh (680+), `web` vitest 220 + lint + build, Playwright 9 e2e với backend thật (`E2E_BACKEND=1`).
 
@@ -32,12 +36,12 @@ Baseline 1.0:
 | :-- | :-- | :-- | :-- |
 | M1 | Foundation, DB, Auth, Workspace Shell | P0 | ✅ 1.0 ✅ · 1.1 ✅ · 1.2 ✅ · 1.3 ✅ · 1.4 ✅ · 1.5 ✅ |
 | M2 | Ingestion + Mock Pipeline | P0 | ✅ 2.1–2.8 |
-| M3 | Chord Viewer & Audio Sync | P1 | ⏳ (kế tiếp) |
+| M3 | Chord Viewer & Audio Sync | P1 | ✅ Task 1–15 |
 | M4 | Harmony / Jazz Theory | P1 | ⏳ |
 | M5 | Tích hợp AI thật | P2 | ⏳ |
 
 ## Endpoint đã xong
-`GET /healthz` · `POST /api/v1/auth/{register,login,refresh,logout}` · `GET /api/v1/users/me`, `/users/me/quota` · `POST /api/v1/analyze/file` (multipart `file`, 202 `{job_id}`), `/analyze/url` (`{url}`), `/analyze/demo/{id}` (không trừ quota) · `GET /api/v1/analyze/status/{id}` · `WS /api/v1/ws/jobs/{id}` (subprotocol `bearer`, token) · `GET /api/v1/charts/{id}` (chỉ chủ sở hữu; M3.1 mở rộng) · `GET /api/v1/demo-tracks`. Mã lỗi: 413 `file_too_large`/`duration_too_long`, 415 `unsupported_format`, 422 `ssrf_blocked`/`url_unresolvable`, 429 `quota_exceeded`, 502 `ai_failure`, 503 `demo_unavailable`.
+`GET /healthz` · `POST /api/v1/auth/{register,login,refresh,logout}` · `GET /api/v1/users/me`, `/users/me/quota` · `POST /api/v1/analyze/file` (multipart `file`, 202 `{job_id}`), `/analyze/url` (`{url}`), `/analyze/demo/{id}` (không trừ quota) · `GET /api/v1/analyze/status/{id}` · `WS /api/v1/ws/jobs/{id}` (subprotocol `bearer`, token) · `GET /api/v1/charts/{id}` (chỉ chủ sở hữu) · `GET /api/v1/charts` (keyset, ETag) · `GET /api/v1/charts/{id}/audio` (Range, ticket ngắn hạn) · `GET /api/v1/demo-tracks`. Mã lỗi: 413 `file_too_large`/`duration_too_long`, 415 `unsupported_format`, 422 `ssrf_blocked`/`url_unresolvable`, 429 `quota_exceeded`, 502 `ai_failure`, 503 `demo_unavailable`.
 
 ## Đang làm dở
 _(không)_
@@ -59,6 +63,6 @@ _(không)_
 - `ChordLabel.display_name` hiển thị `Cmaj9` và `C9` giống nhau ("C9"); từ vựng chưa có `sus4` + extension kiểu `G9sus4`; chưa có `bass` (slash chord). Xem memory.md.
 
 ## Việc kế tiếp
-1. **M3** (xem implementation-plan.md §3): Chart API đầy đủ (list, ETag, `GET /charts/{id}/audio` hỗ trợ Range), Smart Grid, player đồng bộ, spike 3.2 (độ lệch < 100 ms). Trang `/charts/:id` hiện chỉ là bảng hợp âm tạm.
+1. **M4** (Harmony / Jazz Theory) theo implementation-plan.md §3. Còn nợ M3: chạy tay YouTube/SoundCloud thật, nghe thử 0.75×, loop chọn được trên cảm ứng (không có Shift), lưu loop lên cloud.
 2. Thay `InMemoryRevocationStore` (Redis hoặc bảng PG) trước khi chạy thật; dịch nốt Login/Register và `toastFor` sang từ điển i18n chung.
 3. Khi có team AI: thêm adapter thật vào `ENGINES` của `DE/tests/contract/test_analysis_engine_contract.py` (tiêu chí nghiệm thu).

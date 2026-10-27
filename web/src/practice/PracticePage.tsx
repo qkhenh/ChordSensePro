@@ -148,7 +148,7 @@ function Practice({ chart }: { chart: Chart }) {
         className="mt-4 aspect-video w-full max-w-xl overflow-hidden rounded-xl bg-black [&>*]:h-full [&>*]:w-full"
       />
 
-      {error?.code === 'embed_blocked' ? (
+      {error && error.code !== 'autoplay_blocked' && (error.code === 'embed_blocked' || embedded) ? (
         <div role="alert" className="mt-4 rounded-lg bg-amber-500/10 px-3 py-2 text-amber-200">
           <p>{t.practice.embedBlocked}</p>
           <Link to="/workspace" className="mt-1 inline-block underline">

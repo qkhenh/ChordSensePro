@@ -14,10 +14,16 @@ import { FakeAudio } from '../test/fakeMedia'
 import { resetAudioContext } from './audio'
 import { apiError, authResponse, http, HttpResponse, server, TEST_USER } from '../test/server'
 
-const youtube = vi.hoisted(() => ({ api: null as unknown }))
+const youtube = vi.hoisted(() => ({ api: null as unknown, fail: false }))
 vi.mock('../transport/loaders', async (original) => {
   const real = await original<typeof import('../transport/loaders')>()
-  return { ...real, loadYouTubeApi: async () => youtube.api }
+  return {
+    ...real,
+    loadYouTubeApi: async () => {
+      if (youtube.fail) throw new Error('script blocked')
+      return youtube.api
+    },
+  }
 })
 
 const API = '*/api/v1'
@@ -66,6 +72,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  youtube.fail = false
   vi.unstubAllGlobals()
   resetAudioContext()
 })
@@ -350,5 +357,31 @@ describe('plans', () => {
     expect(screen.getByRole('checkbox', { name: 'Đếm nhịp vào bài' })).toBeChecked()
     expect(screen.queryByRole('link', { name: 'Nâng cấp lên Pro' })).not.toBeInTheDocument()
     expect(writes).toEqual([])
+  })
+})
+
+describe('embedded players that cannot start', () => {
+  it('suggests uploading a file when the YouTube player cannot be loaded at all', async () => {
+    youtube.fail = true
+    const chart: Chart = {
+      ...plain,
+      id: '44444444-aaaa-4aaa-8aaa-444444444444',
+      source: { ...plain.source, kind: 'url', playback: { kind: 'youtube', embed_id: 'abc123', audio_url: null } },
+    }
+    serve(chart)
+    renderChart(chart.id)
+    expect(await screen.findByRole('link', { name: 'Tải tệp lên thay thế' })).toHaveAttribute('href', '/workspace')
+  })
+
+  it('shows a plain message, without the upload suggestion, when a stored file fails to play', async () => {
+    serve(plain)
+    renderChart(plain.id)
+    await screen.findByRole('group', { name: 'Lưới hợp âm' })
+    await waitFor(() => expect(audios[0]?.src).toBeTruthy())
+    act(() => audios[0].fail()) // the first failure only asks for a fresh ticket
+    await waitFor(() => expect(audios[0].src).toContain('ticket=t2'))
+    act(() => audios[0].fail())
+    expect(await screen.findByText(/không phát được bài này/i)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Tải tệp lên thay thế' })).not.toBeInTheDocument()
   })
 })
