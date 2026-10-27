@@ -23,7 +23,7 @@ describe('workspace shell', () => {
   it('sends / to the workspace', async () => {
     const { router } = renderShell('/')
     await nav()
-    expect(router.state.location.pathname).toBe('/workspace')
+    await waitFor(() => expect(router.state.location.pathname).toBe('/workspace'))
   })
 
   it('lists Library, Workspace and Dictionary and marks the current one', async () => {
