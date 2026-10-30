@@ -1,23 +1,7 @@
-"""SampleWriterHandler — final training handler: persists the clean labeled segments to disk.
-
-Position in training pipeline (last handler):
-    ... → Annotation → Label → [SampleWriter]
-
-What it writes
---------------
-One ``.npy`` per song:  ``{TRAINING_DIR}/audio/{song_id}.npy``
-    dtype int16, shape (N, 48000)  = N segments × 2 s @ 24 kHz mono  (MERT input rate)
-
-Segments are stored **clean** (no augmentation, no features): augmentation is a train-side
-concern applied later, and features are recomputed by the model. Split (train/val/test) is decided
-here from a hash of the source URL so every segment of a song stays in the same split.
-
-No database access: it only fills ``ProcessedAudio.sample_rows`` (one dict per saved segment,
-keys identical to ``TrainingSample`` fields). ProcessAudioService persists them to PostgreSQL.
-"""
 from __future__ import annotations
 import io
 import os
+import shutil
 from pathlib import Path
 
 from src.data_processing.domain.models.base_handler import BaseProcessingHandler
@@ -26,22 +10,108 @@ from src.shared.domain.dataset_split import split_for
 
 TARGET_SR      = 24_000
 SEGMENT_SEC    = 2
-SEGMENT_LEN    = TARGET_SR * SEGMENT_SEC     # 48000 samples
+SEGMENT_LEN    = TARGET_SR * SEGMENT_SEC
 USABLE_STATUS  = ("ok", "partial")
 
 
 def training_dir() -> Path:
-    """Root of the persisted training audio (Docker volume)."""
     return Path(os.getenv("TRAINING_DIR") or (Path(os.getenv("DATA_DIR", "/data")) / "training"))
 
 
+def training_v2_dir() -> Path:
+    return Path(os.getenv("TRAINING_V2_DIR") or (Path(os.getenv("DATA_DIR", "/data")) / "training_v2"))
+
+
+def raw_audio_dir() -> Path:
+    return Path(os.getenv("RAW_AUDIO_DIR") or (Path(os.getenv("DATA_DIR", "/data")) / "raw"))
+
+
 class SampleWriterHandler(BaseProcessingHandler):
-    """Decode → resample 24 kHz → int16 → stack → write one .npy per song."""
 
     def handle(self, data: ProcessedAudio) -> ProcessedAudio:
         if data.is_failed:
             return data
 
+        if data.chord_timeline:
+            return self._handle_v2(data)
+        return self._handle_v1(data)
+
+    def _handle_v2(self, data: ProcessedAudio) -> ProcessedAudio:
+        if not data.stem_path or not data.stem_path.exists():
+            data.error = "SampleWriter v2: stem_path missing"
+            return data
+
+        usable = [c for c in data.chord_timeline if c.get("label_status") in USABLE_STATUS]
+        if not usable:
+            data.error = (
+                f"No usable labeled chords (total={len(data.chord_timeline)}) "
+                f"— annotation missing or labels unmapped"
+            )
+            return data
+
+        try:
+            import numpy as np
+            import soundfile as sf
+            import librosa
+
+            audio, file_sr = sf.read(str(data.stem_path), dtype="float32", always_2d=False)
+            if audio.ndim > 1:
+                audio = audio.mean(axis=1)
+            if file_sr != TARGET_SR:
+                audio = librosa.resample(audio, orig_sr=file_sr, target_sr=TARGET_SR)
+            audio_int16 = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
+
+            song_id = data.audio_file.analysis_id
+            rel_path = f"audio/{song_id}.npy"
+            abs_path = training_v2_dir() / rel_path
+            self._atomic_save(abs_path, audio_int16)
+
+            raw_dest = None
+            if data.wav_path and data.wav_path.exists():
+                raw_dest_path = raw_audio_dir() / f"{song_id}.wav"
+                raw_dest_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(data.wav_path), str(raw_dest_path))
+                raw_dest = f"raw/{song_id}.wav"
+
+            duration_ms = round(len(audio) / TARGET_SR * 1000)
+            split = split_for(data.audio_file.source_url)
+            source_type = getattr(data.audio_file.source_type, "value", str(data.audio_file.source_type))
+
+            data.section_row = {
+                "song_id":         song_id,
+                "source_type":     source_type,
+                "source_url":      data.audio_file.source_url,
+                "audio_path":      rel_path,
+                "raw_audio_path":  raw_dest,
+                "duration_ms":     duration_ms,
+                "align_offset_ms": data.align_offset_ms,
+                "align_score":     data.align_score,
+                "align_status":    data.align_status,
+                "split":           split,
+                "pipeline_version": 2,
+            }
+
+            data.chord_rows = [
+                {
+                    "song_id":      song_id,
+                    "start_ms":     c["start_ms"],
+                    "end_ms":       c["end_ms"],
+                    "label_raw":    c["label_raw"],
+                    "label_status": c["label_status"],
+                    "root_id":      c.get("root_id"),
+                    "quality_id":   c.get("quality_id"),
+                    "ext_id":       c.get("ext_id"),
+                }
+                for c in data.chord_timeline
+            ]
+
+        except Exception as e:
+            data.error = f"SampleWriter v2 failed: {e}"
+            return data
+
+        return self._call_next(data)
+
+    def _handle_v1(self, data: ProcessedAudio) -> ProcessedAudio:
         labeled = [s for s in data.segments if s.chord_label is not None and s.label_status]
         usable  = [s for s in labeled if s.label_status in USABLE_STATUS]
         if not usable:
@@ -52,9 +122,9 @@ class SampleWriterHandler(BaseProcessingHandler):
             return data
 
         try:
-            import numpy as np  # lazy — audio extras (Docker only)
+            import numpy as np
             clips = [self._to_int16_clip(s.audio_data, s.sample_rate) for s in labeled]
-            array = np.stack(clips).astype(np.int16)           # (N, 48000)
+            array = np.stack(clips).astype(np.int16)
 
             song_id  = data.audio_file.analysis_id
             rel_path = f"audio/{song_id}.npy"
@@ -91,7 +161,6 @@ class SampleWriterHandler(BaseProcessingHandler):
 
     @staticmethod
     def _to_int16_clip(wav_bytes: bytes, sr: int):
-        """WAV bytes → mono int16 array of exactly SEGMENT_LEN samples at TARGET_SR."""
         import numpy as np
         import soundfile as sf
         audio, file_sr = sf.read(io.BytesIO(wav_bytes), dtype="float32", always_2d=False)
@@ -107,7 +176,6 @@ class SampleWriterHandler(BaseProcessingHandler):
 
     @staticmethod
     def _atomic_save(path: Path, array) -> None:
-        """Write to a temp file then rename — a crash never leaves a half-written .npy."""
         import numpy as np
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".npy.tmp")

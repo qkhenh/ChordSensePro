@@ -1,4 +1,3 @@
-"""Unit tests for HarteMapper — pure Python, no audio libs or database."""
 import pytest
 
 from src.data_processing.application.mappers.harte_mapper import (
@@ -81,6 +80,8 @@ class TestSeventhsAndExtensions:
         ("G:13",      Q.dominant, E.nat13),
         ("C:7sus4",   Q.sus4,     E.dom7),
         ("C:7sus2",   Q.sus2,     E.dom7),
+        ("C:11",      Q.sus4,     E.nat9),
+        ("C:9sus4",   Q.sus4,     E.nat9),
     ])
     def test_shorthand(self, label, quality, ext):
         status, _, q, e = _triple(label)

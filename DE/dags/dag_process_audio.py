@@ -1,18 +1,3 @@
-"""DAG 2: dag_process_audio — process staged WAVs from MongoDB → labeled training samples.
-
-Trigger: fired by dag_ingest_raw (TriggerDagRunOperator) right after DAG 1 finishes; no schedule.
-Picks pending RawAudioJobs from MongoDB → training pipeline (alignment check → Demucs → beats →
-segments → labels → .npy) → PostgreSQL ``training_samples``.
-
-Architecture:
-    This file contains Airflow wiring only.
-    All callable logic lives in dags/wrapper/process_audio_wrapper.py.
-
-Pipeline:
-    pick_pending_jobs → process_and_save → send_summary
-
-If MongoDB has no pending jobs, tasks complete immediately — no-op.
-"""
 from __future__ import annotations
 from datetime import timedelta
 
@@ -31,14 +16,14 @@ default_args = {
     "owner": "chordsense",
     "retries": 1,
     "retry_delay": timedelta(minutes=15),
-    "on_failure_callback": on_task_failure,   # email on any task failure
+    "on_failure_callback": on_task_failure,
 }
 
 with DAG(
     dag_id="dag_process_audio",
     default_args=default_args,
-    description="DAG 2: Process staged WAVs → labeled clean segments (.npy + training_samples)",
-    schedule=None,   # triggered by dag_ingest_raw via TriggerDagRunOperator — not time-based
+    description="DAG 2: Process staged WAVs → training_sections + training_chords (v2)",
+    schedule=None,
     start_date=pendulum.datetime(2026, 9, 9, tz="UTC"),
     catchup=False,
     max_active_runs=1,

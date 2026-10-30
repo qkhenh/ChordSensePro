@@ -1,16 +1,3 @@
-"""AnnotationHandler — assigns chord_label to each AudioSegment from annotation file.
-
-Position in training pipeline:
-    SeparateHandler → BeatHandler → SegmentHandler → [AnnotationHandler] → AugmentHandler → FeatureHandler
-
-Reads ProcessedAudio.annotation_path, parses chord timeline, then for each segment
-finds the chord covering its midpoint and assigns it as segment.chord_label.
-
-Skipped (pass-through) if annotation_path is None — safe for inference pipeline.
-
-Hooktheory annotations only cover a short clip: segments outside ``labelled_range`` are left with
-chord_label=None (not 'N') so SampleWriterHandler drops them instead of training on a wrong 'no chord'.
-"""
 from __future__ import annotations
 
 from src.data_processing.domain.models.base_handler import BaseProcessingHandler
@@ -19,17 +6,11 @@ from src.data_processing.application.annotation_parsers.parsers import get_parse
 
 
 class AnnotationHandler(BaseProcessingHandler):
-    """Assign chord_label to each segment using the dataset annotation file.
-
-    Uses the segment's midpoint (ms) to find the matching chord event.
-    Segments with no matching chord get label 'N' (no chord / silence).
-    """
 
     def handle(self, data: ProcessedAudio) -> ProcessedAudio:
         if data.is_failed:
             return data
 
-        # No annotation file → try to infer chord from filename (Kaggle piano_triads)
         if data.annotation_path is None:
             label = self._label_from_filename(data.audio_file.source_url)
             if label:
@@ -48,25 +29,38 @@ class AnnotationHandler(BaseProcessingHandler):
             data.error = f"Annotation parse failed: {e}"
             return data
 
-        # Assign chord_label to each segment by midpoint lookup
-        labelled = read_annotation_range(data.annotation_path)
-        for segment in data.segments:
-            if labelled is not None and not self._inside(segment, labelled):
-                continue                       # annotated clip only: padding stays unlabeled (dropped later)
-            mid_sec = (segment.start_ms + segment.end_ms) / 2 / 1000.0
-            segment.chord_label = self._find_chord(mid_sec, timeline)
+        if data.segments:
+            labelled = read_annotation_range(data.annotation_path)
+            for segment in data.segments:
+                if labelled is not None and not self._inside(segment, labelled):
+                    continue
+                mid_sec = (segment.start_ms + segment.end_ms) / 2 / 1000.0
+                segment.chord_label = self._find_chord(mid_sec, timeline)
+        else:
+            offset_ms = getattr(data, "align_offset_ms", 0) or 0
+            offset_sec = offset_ms / 1000.0
+            data.chord_timeline = []
+            for start, end, label in timeline:
+                adjusted_start = start - offset_sec
+                adjusted_end = end - offset_sec
+                if adjusted_end <= 0:
+                    continue
+                adjusted_start = max(0.0, adjusted_start)
+                data.chord_timeline.append({
+                    "start_ms": round(adjusted_start * 1000),
+                    "end_ms": round(adjusted_end * 1000),
+                    "label_raw": label,
+                })
 
         return self._call_next(data)
 
     @staticmethod
     def _inside(segment, labelled: tuple[float, float], tolerance: float = 0.25) -> bool:
-        """True when the whole 2 s segment lies within the labelled range (± tolerance seconds)."""
         start, end = segment.start_ms / 1000.0, segment.end_ms / 1000.0
         return start >= labelled[0] - tolerance and end <= labelled[1] + tolerance
 
     @staticmethod
     def _find_chord(mid_sec: float, timeline: list[tuple[float, float, str]]) -> str:
-        """Find the chord label covering mid_sec. Returns 'N' if no match."""
         for start, end, label in timeline:
             if start <= mid_sec < end:
                 return label
@@ -74,29 +68,18 @@ class AnnotationHandler(BaseProcessingHandler):
 
     @staticmethod
     def _label_from_filename(source_url: str) -> str | None:
-        """Try to parse chord label from Kaggle-style filename.
-
-        Kaggle piano_triads: A_dim_2_0.wav → A:dim
-        Format: {note}_{quality}_{octave}_{variant}.wav
-        Note can be: A, Bb, C, Cs, D, Eb, E, F, Fs, G, Gs, Ab
-        Quality: maj, min, dim
-
-        Returns Harte notation string or None if not parseable.
-        """
         from pathlib import Path
-        name = Path(source_url).stem  # e.g. "A_dim_2_0"
+        name = Path(source_url).stem
         parts = name.split("_")
         if len(parts) < 3:
             return None
 
-        # Find quality index
         qual_map = {"maj": "maj", "min": "min", "dim": "dim"}
         for i, p in enumerate(parts):
             if p in qual_map:
                 note = "_".join(parts[:i])
                 if not note:
                     return None
-                # Normalize: Cs → C#, Fs → F#, etc.
                 note = note.replace("s", "#").replace("b", "b")
                 return f"{note}:{qual_map[p]}"
         return None

@@ -1,4 +1,3 @@
-"""Tests for the new training-chain handlers: duration reader, AlignmentCheck, Label."""
 import json
 from pathlib import Path
 
@@ -6,13 +5,13 @@ import pytest
 
 from src.data_processing.application.annotation_parsers.parsers import read_annotation_duration
 from src.data_processing.application.pipeline_handlers.alignment_check_handler import AlignmentCheckHandler
+from src.data_processing.application.pipeline_handlers.annotation_handler import AnnotationHandler
 from src.data_processing.application.pipeline_handlers.label_handler import LabelHandler
 from src.data_processing.domain.models.audio_segment import AudioSegment
 from src.data_processing.domain.models.processed_audio import ProcessedAudio
 
 
 class _FakeAudioFile:
-    """Duck-typed AudioFile — handlers only read these attributes."""
     def __init__(self, source_type: str):
         self.source_type = source_type
         self.source_url = "ytsearch1:x"
@@ -20,10 +19,8 @@ class _FakeAudioFile:
 
 
 def _pa(source: str, **kw) -> ProcessedAudio:
-    return ProcessedAudio(audio_file=_FakeAudioFile(source), **kw)  # type: ignore[arg-type]
+    return ProcessedAudio(audio_file=_FakeAudioFile(source), **kw)
 
-
-# ── read_annotation_duration ────────────────────────────────────────────────
 
 def test_duration_from_jaah_json(tmp_path: Path):
     f = tmp_path / "song.json"
@@ -46,8 +43,6 @@ def test_duration_none_for_lab_and_broken_files(tmp_path: Path):
     assert read_annotation_duration(bad) is None
     assert read_annotation_duration(tmp_path / "missing.json") is None
 
-
-# ── AlignmentCheckHandler ───────────────────────────────────────────────────
 
 def test_alignment_skips_non_jaah():
     data = _pa("kaggle")
@@ -86,8 +81,6 @@ def test_alignment_rejects_mismatch(tmp_path: Path):
     assert "duration_mismatch" in (out.error or "")
 
 
-# ── LabelHandler ────────────────────────────────────────────────────────────
-
 def test_label_handler_fills_ids_and_status():
     segs = [
         AudioSegment(segment_idx=0, chord_label="C:maj7"),
@@ -108,3 +101,41 @@ def test_label_handler_short_circuits_on_error():
     data.error = "boom"
     out = LabelHandler().handle(data)
     assert out.segments[0].label_status is None
+
+
+def test_label_handler_v2_fills_chord_timeline():
+    data = _pa("jaah")
+    data.chord_timeline = [
+        {"start_ms": 0, "end_ms": 2000, "label_raw": "C:maj7"},
+        {"start_ms": 2000, "end_ms": 4000, "label_raw": "N"},
+        {"start_ms": 4000, "end_ms": 6000, "label_raw": "C:6"},
+    ]
+    out = LabelHandler().handle(data)
+    assert out.chord_timeline[0]["label_status"] == "ok"
+    assert out.chord_timeline[0]["root_id"] == 0
+    assert out.chord_timeline[1]["label_status"] == "no_chord"
+    assert out.chord_timeline[2]["label_status"] == "partial"
+
+
+def test_annotation_handler_v2_builds_timeline(tmp_path: Path):
+    ann = tmp_path / "ann.lab"
+    ann.write_text("0.0 2.0 C:maj\n2.0 4.0 G:7\n4.0 6.0 A:min\n")
+    data = _pa("jaah", annotation_path=ann, wav_path=tmp_path / "a.wav")
+    data.align_offset_ms = 500
+    out = AnnotationHandler().handle(data)
+    assert len(out.chord_timeline) == 3
+    assert out.chord_timeline[0]["start_ms"] == 0
+    assert out.chord_timeline[0]["end_ms"] == 1500
+    assert out.chord_timeline[0]["label_raw"] == "C:maj"
+    assert out.chord_timeline[1]["start_ms"] == 1500
+    assert out.chord_timeline[1]["end_ms"] == 3500
+
+
+def test_annotation_handler_v2_drops_negative_end(tmp_path: Path):
+    ann = tmp_path / "ann.lab"
+    ann.write_text("0.0 0.3 C:maj\n0.3 2.0 G:7\n")
+    data = _pa("jaah", annotation_path=ann, wav_path=tmp_path / "a.wav")
+    data.align_offset_ms = 500
+    out = AnnotationHandler().handle(data)
+    assert len(out.chord_timeline) == 1
+    assert out.chord_timeline[0]["label_raw"] == "G:7"

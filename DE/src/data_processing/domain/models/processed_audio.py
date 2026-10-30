@@ -1,4 +1,3 @@
-"""ProcessedAudio — data bag that flows through the entire handler chain."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,31 +11,28 @@ from src.data_processing.domain.models.audio_segment import AudioSegment
 
 @dataclass
 class ProcessedAudio:
-    """Data bag passed through SeparateHandler → BeatHandler → SegmentHandler → FeatureHandler.
-
-    Each handler reads its required inputs and writes its outputs into this object.
-    If error is set, subsequent handlers short-circuit.
-    """
     audio_file:  AudioFile
 
-    # Populated by each handler in sequence
-    wav_path:        Path | None = None          # set by data_loader (input to chain)
-    stem_path:       Path | None = None          # set by SeparateHandler
-    beat_times:      list[float] = field(default_factory=list)  # set by BeatHandler
-    tempo_bpm:       float | None = None         # set by BeatHandler
-    segments:        list[AudioSegment] = field(default_factory=list)  # set by SegmentHandler+
-    annotation_path: Path | None = None          # set by caller for training pipeline (JAMS/Harte/CSV)
+    wav_path:        Path | None = None
+    stem_path:       Path | None = None
+    beat_times:      list[float] = field(default_factory=list)
+    tempo_bpm:       float | None = None
+    segments:        list[AudioSegment] = field(default_factory=list)
+    annotation_path: Path | None = None
 
-    # Training pipeline outputs (see build_training_pipeline)
-    align_status:    str = "n/a"                 # set by AlignmentCheckHandler: ok | n/a | duration_mismatch
-    sample_rows:     list[dict] = field(default_factory=list)  # set by SampleWriterHandler (one dict per saved segment)
+    align_status:    str = "n/a"
+    align_offset_ms: int = 0
+    align_score:     float = 0.0
+    sample_rows:     list[dict] = field(default_factory=list)
 
-    # Populated by SummaryHandler (aggregates segment-level → song-level)
-    chord_timeline:  list[dict] = field(default_factory=list)    # [{time_ms, duration_ms, chord}]
-    detected_key:    str = ""                                    # e.g. "C", "Am", "F#"
-    chord_sheet:     dict = field(default_factory=dict)          # {sections: [{name, chords}]}
+    chord_timeline:  list[dict] = field(default_factory=list)
+    detected_key:    str = ""
+    chord_sheet:     dict = field(default_factory=dict)
 
-    error:       str | None = None           # set on failure, causes downstream short-circuit
+    section_row:     dict | None = None
+    chord_rows:      list[dict] = field(default_factory=list)
+
+    error:       str | None = None
 
     @property
     def is_failed(self) -> bool:

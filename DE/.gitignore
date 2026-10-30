@@ -14,6 +14,9 @@ data/datasets/
 data/tmp/
 data/training/
 data/export/
+data/backup/
+data/raw/
+data/training_v2/
 config/cookies.txt
 
 # IDE

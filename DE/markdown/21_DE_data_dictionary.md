@@ -1,6 +1,6 @@
 # ChordSense Pro — DE: Từ điển dữ liệu (bảng, cột, file)
 
-> Ngày: 2026-10-21. Giải thích **từng nơi lưu data** và **từng cột** của pipeline training, kèm ví dụ thật lấy từ DB.
+> Ngày: 2026-10-30. Giải thích **từng nơi lưu data** và **từng cột** của pipeline training, kèm ví dụ thật lấy từ DB.
 > Xem tổng quan luồng ở [data_flow.md](data_flow.md); lệnh xem data ở [setup.md](setup.md) mục 7.
 
 ---
@@ -16,13 +16,15 @@ Postgres  crawl_queue        "Danh sách việc cần làm" (mỗi dòng = 1 bà
         ▼
 MongoDB   raw_audio_jobs     Khu "chờ xử lý": trỏ tới file WAV tạm  (xóa được bất cứ lúc nào)
 data/tmp/<id>/*.wav          WAV tạm (xóa sau khi xử lý xong)
-        │ dag_process_audio (Demucs → cắt đoạn 2 s → gắn nhãn)
+        │ dag_process_audio (Demucs → gắn nhãn toàn bộ timeline)
         ▼
-Postgres  training_samples   KẾT QUẢ: mỗi dòng = 1 đoạn audio 2 s + nhãn   ← cái dùng để train
-data/training/audio/*.npy    Audio của các đoạn (mỗi bài 1 file)
-        │ export_dataset.py
+Postgres  training_sections  KẾT QUẢ v2: mỗi dòng = 1 bài/clip + metadata
+          training_chords    N dòng/bài = chord timeline (đã áp offset)
+data/training_v2/audio/*.npy Audio whole section (24 kHz int16 mono, 1D variable length)
+data/raw/<song_id>.wav       Raw WAV gốc 44.1 kHz
+        │ export_dataset_v2.py
         ▼
-data/export/                 train/val/test_audio.npy + _meta.parquet → đưa lên Colab
+data/export/v2/              train/val/test/ (audio/ + chords.parquet) → đưa lên Colab
 ```
 
 **Quy tắc nhớ:** `crawl_queue` = *việc phải làm*; `training_samples` = *thành phẩm*; Mongo + `data/tmp` = *đồ tạm*.
@@ -104,6 +106,43 @@ align_status ok
 - Nhãn `label_status = 'partial'` chỉ thiếu **một phần** (có root nhưng thiếu quality/extension) — khi train phải **bỏ qua** phần thiếu trong loss.
 
 **Nhãn của đoạn lấy ở đâu?** Là hợp âm đang vang tại **điểm giữa** đoạn (giây thứ 1,0 trong đoạn 2 s). Nếu hợp âm đổi giữa chừng thì nhãn chỉ đúng một nửa đoạn.
+
+---
+
+## 3a. Bảng `training_sections` — thành phẩm v2 (1 dòng/bài)
+
+Mỗi dòng = **một bài hát / clip** đã xử lý qua pipeline v2.
+
+| Cột | Kiểu | Ý nghĩa |
+|---|---|---|
+| `song_id` | UUID text, PK | Mã bài. Cũng là tên file `.npy` và là FK cho `training_chords`. |
+| `source_type` | text | Nguồn (jaah, hooktheory, …) |
+| `source_url` | text | URL gốc |
+| `audio_path` | text | File `.npy` audio 24 kHz int16 1D (variable length), tính từ `training_v2/` |
+| `raw_audio_path` | text | File WAV gốc 44.1 kHz, tính từ `data/` |
+| `duration_ms` | int | Thời lượng audio đã resample (ms) |
+| `align_offset_ms` | int | Chroma offset (ms). Dương = annotation chạy trễ so với audio. |
+| `align_score` | real | Điểm cosine chroma tại offset tối ưu (0..1) |
+| `align_status` | text | `ok` (≤200ms), `shifted` (200–2000ms, điểm đủ), `rejected` (>2000ms hoặc điểm thấp) |
+| `split` | text | train/val/test (hash source_url) |
+| `pipeline_version` | int | Luôn = 2 |
+| `created_at` | timestamp | Lúc ghi DB |
+
+## 3b. Bảng `training_chords` — chord timeline (N dòng/bài)
+
+Mỗi dòng = **một hợp âm** trong timeline đã áp chroma offset.
+
+| Cột | Kiểu | Ý nghĩa |
+|---|---|---|
+| `id` | bigserial PK | Số thứ tự tự tăng |
+| `song_id` | UUID FK → training_sections | Bài nào |
+| `start_ms` | int | Thời điểm bắt đầu (đã áp offset) |
+| `end_ms` | int | Thời điểm kết thúc (đã áp offset) |
+| `label_raw` | text | Nhãn Harte gốc |
+| `label_status` | text | ok/partial/no_chord/unmapped |
+| `root_id` | smallint | 0..11 |
+| `quality_id` | smallint | 0..5 |
+| `ext_id` | smallint | 0..14 |
 
 ---
 

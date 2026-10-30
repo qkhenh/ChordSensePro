@@ -81,3 +81,24 @@
 - [ ] Báo BE/FE bảng tên mới (`CHORD_SUFFIX`): `Cmaj9` ≠ `C9`, `Csus2`/`Csus4`, `C7sus4`, `C9sus4`, `Cm(maj7)`; quality có **6** lớp (4 = sus2, 5 = sus4). BE đang dùng hàm `chord_symbol()` riêng — hai bên nên thống nhất một bảng.
 - [ ] Nói rõ giới hạn vốn từ: sus2/sus4 đã tách nhưng **dễ nhầm nhau** (Csus2 và Gsus4 cùng nốt, khác root); không có lớp riêng cho hợp âm 6, 6/9 hay dim7 (gộp dim + dom7); sus2 chỉ có none/maj7/dom7, sus4 chỉ có none/maj7/dom7/9/13 (các tổ hợp khác bị loại).
 - [ ] Còn chờ BE xác nhận trước khi dọn: `song_analysis`, `user_analytics`, `ingest_service` cũ.
+
+---
+
+## G. Chẩn đoán lỗi: nghe sai hay đặt tên sai (thêm 2026-10-26)
+
+> Bài toán có **hai tầng**. **Tầng 1 — nghe:** audio → nốt nào đang vang (MERT lo; khó vì nhiều nhạc cụ chồng nhau, nốt mở rộng 9/11/13 yếu; **hợp âm đảo** thuộc tầng này vì nốt trầm nằm trong âm thanh). **Tầng 2 — đặt tên:** biết nốt → gọi tên (**hợp âm cùng cấu tạo** thuộc tầng này: Csus2 = C–D–G và Gsus4 = G–C–D cùng nốt, âm thanh giống hệt nên chỉ ngữ cảnh/nốt trầm mới quyết định). Baseline (MERT + 3 head nối tầng, không ngữ cảnh) chủ yếu xử lý tầng 1, tầng 2 chỉ một phần. **Đừng sửa data hay thêm kiến trúc trước khi đo xem lỗi nằm ở tầng nào.**
+
+- [ ] **Sau baseline B2**, phân loại mọi lỗi của từng cặp (nhãn thật → nhãn đoán) thành:
+  - **Lỗi tầng 1:** hai hợp âm **khác** tập nốt (Cmaj7 ↔ C7, Cm ↔ C, sai root…).
+  - **Lỗi tầng 2:** hai hợp âm **cùng tập nốt** (Csus2 ↔ Gsus4, dim7 lệch root 3 nửa cung, …). Cần viết hàm tính pitch-class set từ `(root, quality, ext)` + test.
+  - Báo tỉ lệ tầng 1 / tầng 2, **theo từng nguồn** (Hooktheory, JAAH, piano) và theo lớp hiếm.
+- [ ] **Chốt hướng theo số đo** (ngưỡng cụ thể đặt sau khi thấy số, không đặt trước):
+  - Lỗi tầng 2 chiếm phần lớn → thí nghiệm **ngữ cảnh theo bài**: transformer nhỏ (1–2 lớp, d≈256, dropout) hai chiều trên chuỗi embedding các segment của một bài; so với B2 **trên cùng embedding đã cache**.
+  - Lỗi tầng 1 chiếm phần lớn, nhất là các cặp đảo → thử **head bass** (dưới).
+  - Cả hai đều nhỏ → không làm gì thêm.
+- [ ] **Head bass (chưa làm, chờ số đo):**
+  - Nhãn cần: Hooktheory trường `inversion` (14,5 % hợp âm bị đảo; **không** nằm trong `label_raw`, lấy lại từ `Hooktheory.json.gz` — file vẫn còn trên ổ); JAAH/GuitarSet có `/bass` trong `label_raw` nhưng `harte_mapper._strip_bass` đang cắt; piano local không có (để trống, loại khỏi loss).
+  - **Không cần crawl lại audio**, chỉ gán lại nhãn (cột `bass_id` + script kiểu `remap_labels.py`).
+  - Lưu ý audio: `harmonic.wav` = piano + guitar + other, **không có stem bass**; nốt trầm của piano/guitar vẫn còn nhưng **chưa kiểm** cue này còn nghe được không. Nhãn đảo của Hooktheory là cách rải của hợp âm người chép, **không phải line bass guitar** (walking bass/pedal không khớp) → không nên thêm stem bass vào mix.
+- [ ] **Data cho ngữ cảnh:** không cần data mới (mô hình học tiến trình từ các bài đã có). Dựng chuỗi từ meta bằng `song_id`, `segment_idx`, `start_ms`; khoảng trống do lọc (im lặng, tổ hợp không hợp lệ, partial) nhận ra qua `start_ms`. Clip Hooktheory chỉ ≈ 20 s (13–16 segment) → chỉ học được tiến trình cục bộ 4–8 hợp âm; JAAH có cả bài nhưng chỉ 102 bài. Chỉ 2.385 bài train → giữ transformer nhỏ để khỏi quá khớp.
+- [ ] **Trả 2–3 phương án hợp âm:** xếp hạng bằng xác suất chung `p(root)·p(quality|root)·p(ext|root,quality)` (beam search, có `valid_combo_mask`), lấy top-3 hoặc dừng khi tổng ≥ 0,9. **Hiệu chỉnh nhiệt độ trên tập val** (Focal Loss làm xác suất lệch), dùng chung cho cờ `reliable` ở mục E.3. (Hạ nhiệt độ softmax làm phân phối *nhọn hơn*, không dùng để "lấy thêm" phương án.)

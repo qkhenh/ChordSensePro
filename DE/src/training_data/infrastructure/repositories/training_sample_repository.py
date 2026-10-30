@@ -1,4 +1,3 @@
-"""TrainingSampleRepository — PostgreSQL access for the ``training_samples`` table."""
 from __future__ import annotations
 from dataclasses import astuple
 
@@ -42,23 +41,19 @@ _COLUMNS = (
 
 
 class TrainingSampleRepository:
-    """Idempotent persistence of training samples (one song = one atomic replace)."""
 
     def ensure_table(self) -> None:
-        """Create table if missing — init.sql only runs on an empty Postgres volume."""
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(DDL)
 
     def source_exists(self, source_url: str) -> bool:
-        """True if this source already produced training samples."""
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1 FROM training_samples WHERE source_url = %s LIMIT 1", (source_url,))
                 return cur.fetchone() is not None
 
     def replace_song(self, song_id: str, samples: list[TrainingSample]) -> int:
-        """Delete then insert all samples of a song in one transaction. Returns rows inserted."""
         rows = [astuple(s) for s in samples]
         with get_connection() as conn:
             with conn.cursor() as cur:
@@ -72,7 +67,6 @@ class TrainingSampleRepository:
         return len(rows)
 
     def stats(self) -> list[tuple]:
-        """(source_type, split, label_status, count) aggregated — for monitoring."""
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(

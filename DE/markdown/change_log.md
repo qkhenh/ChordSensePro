@@ -5,6 +5,66 @@
 
 ---
 
+## 2026-10-30 — Pipeline v2: whole section + frame labels + htdemucs_ft
+
+### Quyết định đã chốt
+
+| # | Quyết định |
+|---|---|
+| D1 | **demucs_ft** — 4 stem, giữ `bass + other`, bỏ `vocals + drums` |
+| D2 | **Lưu whole section**, không cắt 2s segment |
+| D3 | **Random crop 5s + frame labels** → AI side, DE không cắt |
+| D4 | `dominant + nat11` → `sus4 + nat9` (mapping `"11"` trong harte_mapper) |
+| D5 | Raw audio 44.1 kHz mono giữ lại, training audio 24 kHz |
+| D6 | Augmentation (weighted sampling + pitch shift) → AI side |
+| D7 | **Truncate** `training_samples`, thay bằng `training_sections` + `training_chords` |
+
+### Pipeline v2
+
+```
+v1:  AlignmentCheck → Separate → Beat → Segment → Annotation → Label → SampleWriter
+v2:  AlignmentCheck → Separate → Annotation → Label → SampleWriter
+```
+
+### Thay đổi code
+
+| File | Thay đổi |
+|------|----------|
+| `init/init.sql` | Truncate `training_samples`. Thêm `training_sections` + `training_chords`. |
+| `harte_mapper.py` | `_SHORTHAND["11"]`: `(dominant, nat11)` → `(sus4, nat9)`. Thêm `"9sus4"` → `(sus4, nat9)`. |
+| `separate_handler.py` | `MODEL = "htdemucs_ft"`, `HARMONIC_STEMS = ("other", "bass")`. |
+| `alignment_check_handler.py` | Thêm chroma offset tính toán. Output: `align_offset_ms`, `align_score`, `align_status` (ok/shifted/rejected). |
+| `annotation_handler.py` | v2 path: đọc toàn bộ timeline, áp offset, lưu `chord_timeline`. v1 path giữ nguyên. |
+| `label_handler.py` | v2 path: lặp qua `chord_timeline`. v1 path giữ nguyên. |
+| `sample_writer_handler.py` | v2 path: resample whole audio 24 kHz int16 1D, lưu `.npy` + copy raw WAV, điền `section_row` + `chord_rows`. v1 path giữ nguyên. |
+| `pipeline_factory.py` | Thêm `build_training_pipeline_v2()` (bỏ Beat + Segment). |
+| `process_audio_service.py` | `pipeline_version` param (default 2). v2 dùng `TrainingSectionRepository`. |
+| `process_audio_wrapper.py` | Env `PIPELINE_VERSION` (default 2). |
+| `dag_process_audio.py` | Description cập nhật. |
+| `processed_audio.py` | Thêm `align_offset_ms`, `align_score`, `section_row`, `chord_rows`. |
+| `training_section.py` (mới) | Models: `TrainingSection`, `TrainingChord`. |
+| `training_section_repository.py` (mới) | `TrainingSectionRepository`: `ensure_tables`, `source_exists`, `replace_song`, `stats`. |
+| `export_dataset_v2.py` (mới) | Export từ `training_sections` + `training_chords` → per-split `audio/` + `chords.parquet` + `config.yaml` + `classes.json`. |
+
+### Tests
+
+- Thêm test cho `C:11` → `(sus4, nat9)` và `C:9sus4` → `(sus4, nat9)`.
+- Thêm test v2: `test_label_handler_v2_fills_chord_timeline`, `test_annotation_handler_v2_builds_timeline`, `test_annotation_handler_v2_drops_negative_end`.
+- Cập nhật `test_separate_harmonic_mix.py` cho stems mới (`other + bass`).
+- Xóa comments khỏi tất cả file sửa đổi.
+- **213 passed, 5 skipped** (full suite).
+
+### DB schema mới
+
+```sql
+training_sections (song_id PK, source_type, source_url, audio_path, raw_audio_path,
+                   duration_ms, align_offset_ms, align_score, align_status, split, pipeline_version)
+training_chords   (id PK, song_id FK, start_ms, end_ms, label_raw, label_status,
+                   root_id, quality_id, ext_id)
+```
+
+---
+
 ## 2026-10-26 — Kiểm tra data, vẽ lại sơ đồ luồng data, viết lại phần DE trong báo cáo
 
 ### Hiện trạng data (export 2026-10-26, crawl vẫn đang chạy)
@@ -13,6 +73,10 @@
 - Nguồn: Hooktheory 48.624, JAAH 13.189, GuitarSet 334, piano local 48. Quality: major 26.489, minor 18.431, dominant 10.198, dim 1.874, sus2 2.173, sus4 2.960.
 - Hàng đợi còn lại: Hooktheory 2.008 pending (170 đang chạy), ChoCo 1.359 chưa chạy, GuitarSet 340, piano local 384, SWD 48.
 - Kết luận: đủ để chạy **baseline** (MERT đóng băng + head); export lại lần cuối sau khi crawl xong. Lớp mỏng (#9, b13, b5, alt) sẽ yếu; piano chỉ 48 clip; Hooktheory chiếm ~78 %; nhãn JAAH yếu nhất (xem `ai_checklist.md`), chưa nghe người kiểm.
+
+### Ghi chú cho phía AI (thảo luận cùng ngày)
+- Thêm mục **G** vào `AI/markdown/ai_checklist.md`: phân loại lỗi baseline thành tầng 1 (nghe: nốt nào vang, gồm hợp âm đảo) và tầng 2 (đặt tên: hợp âm cùng nốt, ví dụ Csus2/Gsus4); chỉ thêm ngữ cảnh theo bài hoặc head bass sau khi đo.
+- Phát hiện (chưa sửa code): `harte_mapper._strip_bass` cắt bass; Hooktheory có `inversion` (14,5 % hợp âm đảo) nhưng không ghi vào `label_raw` (`Hooktheory.json.gz` vẫn còn); `harmonic.wav` không có stem bass. Thêm bass chỉ cần gán lại nhãn, không crawl lại audio.
 
 ### Tài liệu / báo cáo
 - `latex_last_project/diagrams/data_flow.drawio` vẽ lại: trang 1 gồm 13 bước (0 Seed → 12 AI) kèm thẻ cấu trúc data sau mỗi bước; trang 2 so sánh các nguồn. (Chưa mở thử trong draw.io, mới kiểm XML.)
