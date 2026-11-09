@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoModel
+from transformers import AutoConfig, AutoModel
 
 from src.config import ModelCfg
 
@@ -45,7 +45,9 @@ class ChordModel(nn.Module):
         super().__init__()
         self.cfg = cfg
 
-        self.mert = AutoModel.from_pretrained(cfg.name, trust_remote_code=True)
+        mert_config = AutoConfig.from_pretrained(cfg.name, trust_remote_code=True)
+        mert_config.output_hidden_states = True
+        self.mert = AutoModel.from_pretrained(cfg.name, config=mert_config, trust_remote_code=True)
         for p in self.mert.parameters():
             p.requires_grad = False
 
@@ -63,7 +65,7 @@ class ChordModel(nn.Module):
         )
 
     def forward(self, wav: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        out = self.mert(wav, output_hidden_states=True, return_dict=True)
+        out = self.mert(wav, return_dict=True)
         hidden_states = torch.stack(out.hidden_states)
 
         w = F.softmax(self.layer_weights, dim=0)
