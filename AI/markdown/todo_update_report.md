@@ -1,58 +1,65 @@
 # TODO: Cập nhật báo cáo sau khi có kết quả training
 
 > **Ngày tạo:** 2026-11-09  
-> **Cập nhật khi:** Phase 2 LoRA xong
+> **Cập nhật:** 2026-11-09 — Phase 2 LoRA xong, đã update reports
 
 ---
 
-## Các thay đổi cần sửa trong `20_DE_training_plan.md`
+## Các thay đổi đã sửa trong `20_DE_training_plan.md`
 
 ### §0 — Tóm tắt (dòng ~15–25)
-- [ ] Cập nhật "Pitch-shift kèm đổi nhãn root" → ghi rõ: đã phân tích data, root balanced (2.3x), **quyết định không dùng pitch-shift**
-- [ ] Thêm kết quả Phase 1 + Phase 2 vào tóm tắt
+- [x] Cập nhật "Pitch-shift kèm đổi nhãn root" → **không dùng pitch-shift**, data analysis cho thấy root balanced 2.3×
+- [x] Thêm kết quả Phase 1 + Phase 2 vào tóm tắt (header dòng 5)
+- [x] Cập nhật môi trường: T4 → L4 (Colab Pro)
+
+### §2.5 — Pitch-shift kèm đổi nhãn
+- [x] Thêm NOTE box: kết quả thực tế, root balanced, pitch-shift tắt, CPU quá chậm
 
 ### §6 — Chống lệch lớp và augmentation (dòng ~303–320)
-- [ ] Thêm bảng phân bố data thực tế:
-  - Root: balanced (max/min = 2.3x) → **không cần pitch-shift**
-  - Quality: imbalance 37x (major vs aug) → xử lý bằng Focal Loss
-  - Extension: imbalance 1533x (none vs b5) → xử lý bằng Focal Loss
-- [ ] Dòng 309: pitch-shift online → ghi rõ: **đã tắt**, lý do: root đã balanced + tốn thời gian
-- [ ] Dòng 316: "precompute trước" → thêm kết luận: **không cần precompute** vì root balanced
-- [ ] Giữ nguyên Focal Loss + weighted sampler (đang dùng đúng)
+- [x] Thêm bảng phân bố data thực tế (root 2.3×, quality 37×, ext 1533×)
+- [x] Sửa bảng augmentation: kế hoạch vs thực tế, tất cả ❌ Tắt
+- [x] Thêm NOTE: code augment vẫn có, có thể bật lại
+- [x] Giữ nguyên Focal Loss + weighted sampler (đang dùng đúng)
 
-### §8 — Các pha huấn luyện (dòng ~385–400)
-- [ ] Dòng 393: "augment bật" → sửa thành: **augment tắt**, LoRA + Focal Loss đủ
-- [ ] Thêm kết quả thực tế Phase 1 + Phase 2 (loss, accuracy từng head)
+### §7/S2 — Các pha huấn luyện (dòng ~391–398)
+- [x] "augment bật" → **augment tắt**
+- [x] Thêm bảng kết quả thực tế Phase 1 + Phase 2
 
-### §9 — Đánh giá (dòng ~430–460)
-- [ ] Thêm bảng kết quả thực tế so với baseline
-- [ ] Dòng 455: "tăng pitch-shift" → sửa: root đã balanced, không cần
+### §8.3 — Phân tích lỗi
+- [x] "tăng pitch-shift" → sửa: root balanced, kiểm tra nguyên nhân khác
 
-### §10 — Thí nghiệm (dòng ~465–480)
-- [ ] E6 (Augment): ghi kết luận: **không dùng augment**, lý do data analysis
-- [ ] Thêm kết quả thí nghiệm thực tế (E1 baseline, E2 pooling, ...)
+### §9 — Thí nghiệm
+- [x] E6 (Augment): thêm kết luận — **không dùng**, root balanced, CPU chậm
 
-### §13 — Troubleshooting (dòng ~510–520)
-- [ ] Dòng 516: "Lỗi nhãn do pitch-shift" → đánh dấu: **không áp dụng** (đã tắt augment)
+### §12 — Rủi ro
+- [x] "Lỗi nhãn do pitch-shift" → **không áp dụng** (augment tắt)
 
----
+### §13 — Cấu trúc code
+- [x] "chưa tạo" → **đã tạo**, cập nhật cấu trúc thực tế
 
-## Các thay đổi cần sửa trong `ai_checklist.md`
-
-- [ ] Cập nhật trạng thái các task Phase 1 → ✅
-- [ ] Cập nhật trạng thái các task Phase 2 → ✅ (khi xong)
-- [ ] Task augmentation → đánh dấu: **skip** (đã phân tích, không cần)
-- [ ] Thêm kết quả metric vào checklist
+### §14 — Checklist
+- [x] Tick các mục đã hoàn thành
 
 ---
 
-## Cần thêm mới
+## Các thay đổi đã sửa trong `ai_checklist.md`
 
-- [ ] Bảng so sánh Phase 1 vs Phase 2 (loss, root_acc, qual_acc, ext_acc, thời gian train)
-- [ ] Thêm link đến `decision_crop_2s_to_5s.md` vào report chính
+- [x] §C Train: Pitch-shift → **SKIP** với lý do
+- [x] §C Train: Tick ✅ các task đã xong (MERT batch, resume, results.csv, eval theo bài)
 
 ---
 
-## Lý do chưa sửa ngay
+## Đã thêm mới
 
-Đợi Phase 2 xong để có **kết quả thực tế đầy đủ**, update 1 lần cho chính xác — tránh sửa đi sửa lại.
+- [x] `change_log.md`: Entry Phase 1 + Phase 2 results, ONNX export, augment decision
+- [ ] Bảng so sánh Phase 1 vs Phase 2 chi tiết (đã có trong training_plan §7/S2)
+- [x] Link đến `decision_crop_2s_to_5s.md` (đã có trong §2.5)
+
+---
+
+## Còn lại (sau deploy)
+
+- [ ] Update `DE/markdown/18_DE_AI_chordsense.md` nếu có nhắc AI augmentation
+- [ ] Update `markdown/18_main_project_edtech_music.md` nếu có section AI
+- [ ] Thêm kết quả evaluate trên test set (chưa chạy test)
+- [ ] Thêm ONNX Phase 2 benchmark

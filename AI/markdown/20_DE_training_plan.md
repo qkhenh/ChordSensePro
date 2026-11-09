@@ -2,7 +2,7 @@
 
 > Ngày lập: 2026-10-21 · **Cập nhật lần cuối: 2026-11-09 (pipeline v2, data hoàn tất).**
 > Phạm vi: **phía AI** (train + đánh giá + chuẩn bị deploy) dùng data do pipeline DE v2 tạo ra.
-> Tài liệu này là **kế hoạch**. Repo hiện **chưa có code train**. Mọi con số về thời gian chạy / bộ nhớ là **ước lượng**, phải đo thật rồi cập nhật lại vào đây.
+> Tài liệu này là **kế hoạch + ghi nhận kết quả thực tế**. Code train đã hoàn tất tại `AI/src/`. Kết quả Phase 2 (LoRA): **val_loss=1.0266, root_acc=62.8%, qual_acc=61.8%, ext_acc=60.0%**.
 > Liên quan: [data_flow.md](../../DE/markdown/data_flow.md) · [dataset_sources.md](../../DE/markdown/dataset_sources.md) · [data_dictionary.md](../../DE/markdown/21_DE_data_dictionary.md) · [change_log.md](../../DE/markdown/change_log.md).
 
 ---
@@ -16,8 +16,8 @@
 | **Model nền** | MERT-v1-330M (model âm nhạc đã pretrain, nhận waveform 24 kHz). |
 | **Cách thích nghi** | Đi từ nhẹ đến nặng: (1) đóng băng MERT, chỉ train head → (2) thêm LoRA (chỉ train ~2 triệu tham số phụ). **Không** fine-tune toàn bộ 330M. |
 | **Head** | 3 head nối tầng (root → quality → extension), mask nhãn thiếu, Focal Loss cho extension. |
-| **Chống lệch lớp** | Pitch-shift kèm đổi nhãn root + sampler cân bằng + Focal Loss. So sánh bằng thí nghiệm, không đoán. |
-| **Môi trường** | Google Colab (GPU T4 16 GB). Máy bạn (RTX 3050 4 GB) chỉ dùng để thử inference, **không** đủ để train LoRA 330M. |
+| **Chống lệch lớp** | Focal Loss (γ=2) cho cả 3 head. **Không dùng pitch-shift** (root đã balanced, max/min = 2.3×; pitch-shift trên CPU quá chậm ~4h/epoch). Quality imbalance 37× và ext imbalance 1533× xử lý hoàn toàn bằng Focal Loss. |
+| **Môi trường** | Google Colab Pro (GPU L4 24 GB). Máy bạn (RTX 3050 4 GB) chỉ dùng để thử inference, **không** đủ để train LoRA 330M. |
 | **Đánh giá** | Theo **bài hát/video** (không theo crop), báo cáo từng lớp + độ tin cậy; test chỉ chạm **một lần** ở cuối. |
 | **Deploy** | Web app chạy trên máy tính: đo tốc độ trước, chỉ thu nhỏ model (fp16/ONNX → cắt tầng → distillation) nếu cần. |
 | **Thứ tự làm** | S0 chuẩn bị → S1 baseline → S2 LoRA → S3 thí nghiệm cân bằng lớp → S4 đánh giá sâu → S5 inference + tốc độ → S6 viết báo cáo. |
@@ -104,6 +104,9 @@ Cross-entropy thường để các lớp phổ biến (`none` 18.864, `dom7` 8.5
 ### 2.5. Pitch-shift kèm đổi nhãn
 
 Dịch cao độ audio lên `n` nửa cung thì **root dịch `n`** (mod 12), còn **quality và extension không đổi** (Am7 lên 2 cung → Bm7). Đây là cách hợp lệ nhất để nhân data và cân bằng root, và để một loại hợp âm hiếm xuất hiện ở đủ 12 tông. **Không** giúp với việc có quá ít *ví dụ độc lập* (ví dụ chỉ có vài bài chứa b13 thì 12 phiên bản của chúng vẫn chỉ là vài bài).
+
+> [!NOTE]
+> **Kết quả thực tế (2026-11-09):** Phân tích phân bố data cho thấy **root đã balanced** (max/min = 2.3×, D:18007 / F#:7891) → pitch-shift **không cần thiết** cho mục đích cân bằng root. Ngoài ra, `torchaudio.functional.pitch_shift` trên CPU rất chậm (~1-2s/clip, ~4h/epoch trên Colab L4). **Quyết định: tắt pitch-shift**, chỉ dùng Focal Loss. Code pitch-shift vẫn có trong `AI/src/augment.py` (`augment.enabled: false` trong config). Xem thêm: [`decision_crop_2s_to_5s.md`](decision_crop_2s_to_5s.md).
 
 ---
 
@@ -302,20 +305,36 @@ Hiện có 1.230 segment `partial` (≈ 4,6%): 6th/6-9 chiếm phần lớn.
 
 ## 6. Chống lệch lớp và augmentation
 
-### 6.1. Augmentation chỉ áp cho `train` (không bao giờ cho val/test)
+> [!IMPORTANT]
+> **Kết quả thực tế (2026-11-09):** Sau khi phân tích phân bố data, **quyết định tắt toàn bộ augmentation** (`augment.enabled: false` trong cả `default.yaml` và `phase2_lora.yaml`). Chỉ dùng **Focal Loss (γ=2)** cho cả 3 head để xử lý imbalance. Lý do chi tiết bên dưới.
 
-| Loại | Tham số đề xuất | Đổi nhãn? |
-|---|---|---|
-| **Pitch-shift** | ngẫu nhiên −5…+6 nửa cung mỗi lần lấy mẫu (online, mỗi epoch một giá trị khác) | **root dịch `n` (mod 12)**, quality/ext giữ nguyên |
-| Gain | ±6 dB | không |
-| Nhiễu Gaussian | SNR 10–30 dB, xác suất 0,5 | không |
-| Reverb nhẹ | xác suất 0,3 | không |
-| Time-stretch | 0,85–1,15 (cẩn thận: v2 chord timeline tính bằng ms nên stretch phải điều chỉnh boundary), xác suất 0,3 | không |
-| ❌ Mixup | **không dùng** (nhãn mơ hồ) | — |
+### 6.0. Phân bố data thực tế (v2, 222.816 chord labels)
 
-- Pitch-shift **online trên GPU** (ví dụ `torchaudio.functional.pitch_shift`, hoặc resample + time-stretch) để không phải lưu ×12 data. Pitch-shift bằng `librosa` trên CPU mỗi batch sẽ **rất chậm** — nếu cần dùng thì precompute trước.
-- Sau pitch-shift, **kiểm tra chéo**: nhãn root mới phải bằng `(root_id + n) % 12`. Viết **unit test** cho hàm này (một lỗi lệch nhãn sẽ phá toàn bộ pha train mà không báo lỗi).
-- Pitch-shift lớn (|n| > 6) làm méo âm sắc; vì dịch −5…+6 đã phủ đủ 12 tông nên không cần lớn hơn.
+| Dimension | Balanced? | Max/Min ratio | Chi tiết |
+|---|---|---|---|
+| **Root** (12 lớp) | ✅ Balanced | **2.3×** (D:18007 / F#:7891) | Không cần pitch-shift để cân bằng root |
+| **Quality** (6 lớp) | ❌ Imbalanced | **37×** (major:82888 / aug:2209) | Xử lý bằng Focal Loss |
+| **Extension** (15 lớp) | ❌ Rất imbalanced | **1533×** (none:99668 / b5:65) | Xử lý bằng Focal Loss |
+
+→ **Pitch-shift chỉ giúp cân bằng root**, mà root đã balanced sẵn → **không cần**.
+→ Quality/extension imbalance **không thể giải bằng pitch-shift** (pitch-shift giữ nguyên quality/ext, chỉ đổi root).
+
+### 6.1. Augmentation — kế hoạch ban đầu vs thực tế
+
+| Loại | Kế hoạch | Thực tế | Ghi chú |
+|---|---|---|---|
+| **Pitch-shift** | −5…+6 nửa cung, online | ❌ **Tắt** | Root balanced; `torchaudio.functional.pitch_shift` trên CPU ~1-2s/clip → ~4h/epoch. Code có trong `AI/src/augment.py` nhưng `enabled: false` |
+| Gain | ±6 dB | ❌ **Tắt** | Tắt cùng augment |
+| Nhiễu Gaussian | SNR 10–30 dB, p=0.5 | ❌ **Tắt** | Tắt cùng augment |
+| Reverb nhẹ | p=0.3 | ❌ **Tắt** | Config `reverb_prob: 0.0` (Phase 2) |
+| Time-stretch | 0.85–1.15 | ❌ **Không implement** | Phức tạp với chord timeline |
+| ❌ Mixup | không dùng | ❌ | Nhãn mơ hồ |
+
+> [!NOTE]
+> Code augment vẫn sẵn sàng trong `AI/src/augment.py` (class `Augmenter`, hàm `pitch_shift_root`), có unit test đầy đủ (`AI/tests/test_augment.py`). Có thể bật lại nếu cần thí nghiệm sau này.
+
+- Pitch-shift bằng `torchaudio.functional.pitch_shift` trên CPU mỗi clip rất chậm (~1-2s/clip). Epoch 1 Phase 2 có bật augment mất **~4 tiếng**. Từ epoch 2 trở đi tắt augment, mỗi epoch chỉ ~153s.
+- Sau pitch-shift, nhãn root mới phải bằng `(root_id + n) % 12`. Hàm `pitch_shift_root()` đã có **unit test** (`test_augment.py`).
 
 ### 6.2. Cân bằng lớp (so sánh 3 cách trong §9)
 
@@ -389,9 +408,21 @@ Thêm **trọng số theo bài**: mỗi crop có trọng số `∝ 1/√(duratio
    | Grad clip | 1,0 |
 
 3. Chạy theo pha (rút gọn từ spec, **bỏ phần Pianoteq/VN piano** vì chưa có data):
-   - **Pha 1** (5 epoch): MERT đóng băng, chỉ head root + quality (loss 0,5/0,5).
-   - **Pha 2** (10 epoch): mở LoRA + cả 3 head (loss 0,3/0,3/0,4), Focal cho extension, augment bật.
+   - **Pha 1** (14 epoch, early stop): MERT đóng băng, chỉ head root + quality (loss 0,5/0,5/0), augment tắt. **~550K params trainable.**
+   - **Pha 2** (19 epoch, early stop): mở LoRA + cả 3 head (loss 0,3/0,3/0,4), Focal cho extension, **augment tắt**. **~2.1M params trainable.** Init từ Phase 1 best checkpoint.
    - **Pha 3** *(chưa làm được ngay)*: fine-tune trên **piano thật** — chỉ khi có data piano (xem §10).
+
+> [!NOTE]
+> **Kết quả thực tế:**
+>
+> | Pha | Best epoch | val_loss | root_acc | qual_acc | ext_acc | Thời gian/epoch |
+> |---|---|---|---|---|---|---|
+> | **Phase 1** (frozen MERT) | E11/14 | 1.3791 | 45.8% | 53.1% | 0.4% | ~90s (Colab L4) |
+> | **Phase 2** (LoRA) | E14/19 | **1.0266** | **62.8%** | **61.8%** | **60.0%** | ~153s (Colab L4) |
+>
+> - ext_acc Phase 1 = 0.4% vì `loss_weights: [0.5, 0.5, 0.0]` → ext head không nhận tín hiệu loss.
+> - Phase 2 E1 bật augment (pitch-shift) → ~4h/epoch. Từ E2 tắt augment, resume từ E1 checkpoint → ~153s/epoch.
+> - ONNX export Phase 1: PyTorch L4 38.9ms, ONNX L4 26.3ms per 5s clip.
 4. **Theo dõi:** loss từng head, accuracy từng head, **recall từng lớp hiếm**, trọng số tầng `w`, LR — ghi vào `results.csv` (TensorBoard chỉ là tùy chọn).
 5. Lưu **checkpoint tốt nhất theo điểm val** (không phải epoch cuối) + file `config.yaml`.
 
@@ -452,7 +483,7 @@ Mục tiêu trong spec: root > 95%, quality > 85%, extension > 70% (lớp 0–5)
 
 1. **Tách crop "ổn định" và "gần ranh giới"** — nếu crop 5 s chứa 2+ chord khác nhau trong timeline thì coi là gần ranh giới. Nếu lỗi tập trung ở ranh giới, vấn đề nằm ở **nhiễu nhãn**, không phải ở model.
 2. **Nhầm lẫn quen thuộc:** min7 ↔ maj6, dom7 ↔ 9, sus2 ↔ sus4 (cùng nốt, khác root: Csus2 = Gsus4) và sus ↔ add9, dim ↔ hdim (cùng một số nốt).
-3. **Theo tông:** accuracy từng root; nếu một số tông yếu → tăng pitch-shift hoặc kiểm tra thiên lệch data.
+3. **Theo tông:** accuracy từng root; nếu một số tông yếu → kiểm tra thiên lệch data (root đã balanced 2.3×, nếu vẫn yếu thì nguyên nhân khác, không phải thiếu data).
 4. **Theo nguồn:** so JAAH vs Hooktheory vs piano; nếu piano kém xa → ưu tiên thu/seed thêm piano (§10).
 5. **Xem 50 lỗi cao tin cậy nhất** bằng tay (model chắc chắn nhưng sai) — thường là **nhãn sai** chứ không phải model sai; ghi lại để sửa/lọc data.
 
@@ -469,7 +500,7 @@ Mục tiêu trong spec: root > 95%, quality > 85%, extension > 70% (lớp 0–5)
 | E3 | Pooling | P1 đều vs P2 trung tâm vs P3 attention | accuracy, lỗi ở ranh giới |
 | E4 | Head nối tầng hay song song? | cascaded (detach) vs cascaded (không detach) vs parallel | extension accuracy, Chord accuracy |
 | E5 | Cân bằng lớp | S0 vs S1 vs S2 vs S3 | macro-F1 extension, recall lớp hiếm |
-| E6 | Augment | không / chỉ pitch-shift / đầy đủ | accuracy root + lớp hiếm |
+| E6 | Augment | không / chỉ pitch-shift / đầy đủ | accuracy root + lớp hiếm | **Kết luận: không dùng** — root balanced (2.3×), pitch-shift CPU quá chậm |
 | E7 | LoRA rank | 8 vs 16 vs 32 (và thêm `out_proj`) | accuracy so với số tham số |
 | E8 | Cỡ model | MERT-330M vs MERT-95M vs cắt tầng | accuracy so với tốc độ |
 | E9 | Tác động nhãn `partial` | train có/không có partial | accuracy quality |
@@ -513,27 +544,37 @@ Hướng tiếp cận E1–E3 trước (rẻ, dùng cache embedding), E4–E7 sa
 | Rò rỉ data | val cao bất thường | assert không trùng `song_id`; chia theo nhóm bài |
 | Colab ngắt phiên | mất tiến độ | checkpoint mỗi epoch lên Drive + resume |
 | Hết VRAM | OOM | batch nhỏ hơn, gradient checkpointing, fp16, bỏ augment nặng |
-| Lỗi nhãn do pitch-shift | accuracy root tụt khi bật augment | unit test hàm đổi nhãn; kiểm tra từng ví dụ |
+| Lỗi nhãn do pitch-shift | accuracy root tụt khi bật augment | ~~unit test hàm đổi nhãn; kiểm tra từng ví dụ~~ **Không áp dụng** — augment đã tắt. Unit test vẫn có (`test_augment.py`) |
 | Deploy chậm | > 500 ms | thang giảm kích thước ở S5 |
 
 ---
 
-## 13. Cấu trúc code đề xuất (chưa tạo, đặt trong thư mục `AI/`)
+## 13. Cấu trúc code (đã tạo, thư mục `AI/`)
 
 ```
 AI/
-├── config.yaml                # toàn bộ siêu tham số của một lần chạy
-├── dataset.py                 # đọc per-song .npy + chords.parquet, random crop 5s, gán nhãn từ timeline
-├── augment.py                 # pitch-shift + đổi nhãn root (có unit test), gain, nhiễu
-├── model.py                   # MERT + gộp tầng + pooling + 3 head nối tầng
-├── losses.py                  # CE có ignore_index, Focal Loss, trọng số lớp
-├── extract_embeddings.py      # cache embedding đóng băng cho B1/B2
-├── train.py                   # vòng train, checkpoint/resume, ghi log
-├── evaluate.py                # chỉ số, ma trận nhầm lẫn, bootstrap theo bài, lỗi ở ranh giới
-├── infer.py                   # cửa sổ trượt + Viterbi + ngưỡng
-├── export_onnx.py             # xuất ONNX + đo tốc độ
-└── notebooks/colab_train.ipynb
-tests/unit/training/           # test: đổi nhãn pitch-shift, mask loss, shape model, crop + label lookup
+├── configs/
+│   ├── default.yaml            # Phase 1: freeze MERT, loss [0.5,0.5,0], augment off
+│   └── phase2_lora.yaml        # Phase 2: LoRA, loss [0.3,0.3,0.4], augment off
+├── src/
+│   ├── config.py               # Dataclass config + .env override
+│   ├── dataset.py              # ChordDataset: per-song .npy, random crop 5s, midpoint label
+│   ├── augment.py              # Pitch-shift + đổi nhãn root, gain, noise (disabled by config)
+│   ├── model.py                # ChordModel: MERT + forward hooks + weighted layer sum + cascaded heads + LoRA
+│   ├── losses.py               # FocalLoss + ChordLoss (3-head, ignore_index=-100)
+│   ├── train.py                # Training loop: fp16 AMP, checkpoint/resume, early stopping, CSV log
+│   ├── evaluate.py             # compute_metrics, per_class_recall, confusion matrix
+│   ├── extract_embeddings.py   # Cache MERT embeddings cho baselines
+│   ├── infer.py                # Sliding window + RMS gate + valid_combo_mask + merge consecutive
+│   └── export_onnx.py          # ONNX export + benchmark
+├── tests/
+│   ├── test_dataset.py
+│   ├── test_augment.py         # pitch_shift_root 12×11, augmenter enabled/disabled
+│   ├── test_losses.py
+│   └── test_model.py           # FakeMERT mock
+├── notebooks/colab_train.ipynb
+├── requirements.txt
+└── .env.example
 ```
 
 ---
@@ -543,13 +584,13 @@ tests/unit/training/           # test: đổi nhãn pitch-shift, mask loss, shap
 > Checklist đầy đủ hơn (chuẩn hóa âm lượng, lọc nhiễu, mask tổ hợp, giao diện với BE/FE): [`AI/markdown/ai_checklist.md`](ai_checklist.md).
 
 - [x] Export data mới — **đã export** tại `DE/data/export/v2/` (2026-11-04). `classes.json` khớp bảng lớp.
-- [ ] Assert: không `song_id` ở hai split; số file .npy = số bài trong parquet; không file toàn 0.
+- [x] Assert: không `song_id` ở hai split; số file .npy = số bài trong parquet; không file toàn 0. ✅
 - [ ] Nghe thử và đối chiếu chord timeline một số bài mỗi nguồn.
-- [ ] Hàm đổi nhãn pitch-shift có unit test.
-- [ ] Loss không `nan` khi cả batch thiếu nhãn một head.
-- [ ] Chạy một batch MERT qua model, shape `(B, 375, 1024)` và 25 tầng.
-- [ ] Có cơ chế resume checkpoint, lưu config + seed.
-- [ ] Đã quyết định các mục §11.
+- [x] Hàm đổi nhãn pitch-shift có unit test. ✅ `test_augment.py`
+- [x] Loss không `nan` khi cả batch thiếu nhãn một head. ✅ `test_losses.py`
+- [x] Chạy một batch MERT qua model, shape `(B, 375, 1024)` và 25 tầng. ✅ (forward hooks)
+- [x] Có cơ chế resume checkpoint, lưu config + seed. ✅ `train.py --phase1_ckpt`
+- [x] Đã quyết định các mục §11. ✅
 
 ---
 

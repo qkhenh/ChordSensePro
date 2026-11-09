@@ -44,11 +44,11 @@
 
 ## C. Train
 
-- [ ] Pitch-shift **kèm đổi nhãn root**, chỉ áp cho `train` (không bao giờ cho val/test). Viết **unit test** cho hàm đổi nhãn (`ChordLabel.pitch_shift` đã có, tái sử dụng).
-- [ ] Chạy thử một batch qua MERT: shape `(B, 375, 1024)` và 25 tầng (5 s × 75 Hz = 375 frames).
-- [ ] Có resume checkpoint; lưu config + seed.
-- [ ] Mỗi lần chạy ghi một dòng `results.csv` + `config.yaml`.
-- [ ] Đánh giá theo **bài** (split đã chia theo bài), không theo crop.
+- [ ] ~~Pitch-shift **kèm đổi nhãn root**~~ → **SKIP**: root đã balanced (2.3×), pitch-shift CPU quá chậm (~4h/epoch). Code có sẵn (`augment.py`, `augment.enabled: false`), unit test có (`test_augment.py`). Có thể bật lại nếu cần.
+- [x] Chạy thử một batch qua MERT: shape `(B, 375, 1024)` và 25 tầng (5 s × 75 Hz = 375 frames). ✅ Dùng forward hooks (MERT không hỗ trợ `output_hidden_states`).
+- [x] Có resume checkpoint; lưu config + seed. ✅ `train.py` + `--phase1_ckpt` arg.
+- [x] Mỗi lần chạy ghi một dòng `results.csv` + `config.yaml`. ✅
+- [x] Đánh giá theo **bài** (split đã chia theo bài), không theo crop. ✅
 
 ---
 

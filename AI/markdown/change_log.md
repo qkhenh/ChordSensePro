@@ -2,6 +2,33 @@
 
 ---
 
+## 2026-11-09 — Kết quả training Phase 1 + Phase 2
+
+### Phase 1 (MERT frozen, ~550K params)
+- Config: `default.yaml` — loss_weights [0.5, 0.5, 0.0], augment off, dropout 0.3
+- Early stopped at epoch 14 (patience 3)
+- **Best (E11):** val_loss=1.3791, root_acc=45.8%, qual_acc=53.1%, ext_acc=0.4%
+- ext_acc=0.4% vì loss_weight ext = 0.0 (intentional — chỉ train root + quality)
+
+### Phase 2 (LoRA, ~2.1M params)
+- Config: `phase2_lora.yaml` — loss_weights [0.3, 0.3, 0.4], augment off, LoRA r=16 α=32
+- Init từ Phase 1 best checkpoint (`--phase1_ckpt`)
+- E1 chạy WITH augment (pitch-shift) → ~4h/epoch → tắt augment từ E2
+- Early stopped at epoch 19 (patience 5)
+- **Best (E14):** val_loss=1.0266, root_acc=62.8%, qual_acc=61.8%, ext_acc=60.0%
+
+### ONNX Export (Phase 1)
+- PyTorch L4: mean=38.9ms per 5s clip
+- ONNX L4: mean=26.3ms per 5s clip
+
+### Quyết định: Tắt augmentation
+- **Lý do 1:** Root distribution đã balanced (max/min = 2.3×) → pitch-shift không cần
+- **Lý do 2:** `torchaudio.functional.pitch_shift` trên CPU ~1-2s/clip → ~4h/epoch quá chậm
+- **Lý do 3:** Quality imbalance (37×) và ext imbalance (1533×) xử lý bằng Focal Loss, pitch-shift không giúp
+- Code augment giữ nguyên (`augment.py`), `augment.enabled: false` trong config
+
+---
+
 ## 2026-11-09 — Viết toàn bộ AI source code
 
 ### Files tạo mới (session 2)

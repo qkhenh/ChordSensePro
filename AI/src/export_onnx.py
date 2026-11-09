@@ -36,7 +36,15 @@ def export_onnx(
     device = torch.device("cpu")
 
     model = build_model(cfg.model).to(device)
-    load_checkpoint(Path(checkpoint_path), model)
+
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    state = ckpt.get("model_state_dict", ckpt)
+    has_lora = any("lora_A" in k for k in state.keys())
+    if has_lora:
+        log.info("Checkpoint has LoRA weights — applying LoRA before loading")
+        model.apply_lora(cfg.lora)
+
+    load_checkpoint(Path(checkpoint_path), model, strict=True)
     model.eval()
 
     wrapper = ExportWrapper(model)
@@ -69,7 +77,15 @@ def benchmark_pytorch(cfg_path: str, checkpoint_path: str, n_runs: int = 50) -> 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = build_model(cfg.model).to(device)
-    load_checkpoint(Path(checkpoint_path), model)
+
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    state = ckpt.get("model_state_dict", ckpt)
+    has_lora = any("lora_A" in k for k in state.keys())
+    if has_lora:
+        log.info("Benchmark: applying LoRA before loading checkpoint")
+        model.apply_lora(cfg.lora)
+
+    load_checkpoint(Path(checkpoint_path), model, strict=True)
     model.eval()
 
     dummy = torch.randn(1, cfg.crop_samples, device=device)

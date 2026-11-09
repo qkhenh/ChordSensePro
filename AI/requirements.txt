@@ -11,4 +11,7 @@ onnx>=1.15.0
 onnxscript>=0.1.0
 torchao>=0.16.0
 onnxruntime-gpu>=1.16.0
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
 pytest>=7.0.0
