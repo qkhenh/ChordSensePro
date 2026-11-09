@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 from transformers import AutoModel
 
 from src.config import Config, load_config
@@ -63,8 +63,8 @@ def extract_split(
 
             wav_t = torch.from_numpy(crop).unsqueeze(0).to(device)
 
-            with torch.no_grad(), autocast():
-                out = model(wav_t, output_hidden_states=True)
+            with torch.no_grad(), autocast("cuda"):
+                out = model(wav_t, output_hidden_states=True, return_dict=True)
 
             stacked = torch.stack(out.hidden_states)
             pooled = stacked.mean(dim=2).squeeze(1)

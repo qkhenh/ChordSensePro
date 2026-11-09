@@ -63,7 +63,7 @@ class ChordModel(nn.Module):
         )
 
     def forward(self, wav: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        out = self.mert(wav, output_hidden_states=True)
+        out = self.mert(wav, output_hidden_states=True, return_dict=True)
         hidden_states = torch.stack(out.hidden_states)
 
         w = F.softmax(self.layer_weights, dim=0)

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 
 from src.config import Config, load_config
 from src.model import build_model
@@ -98,7 +98,7 @@ def infer_song(
 
         wav_t = torch.from_numpy(wav).unsqueeze(0).to(device)
 
-        with autocast():
+        with autocast("cuda"):
             r, q, e = model(wav_t)
 
         root_prob = F.softmax(r, dim=-1)
