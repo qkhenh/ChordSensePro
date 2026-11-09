@@ -1,6 +1,6 @@
 """DAG 1: dag_ingest_raw — download audio URLs and stage to MongoDB.
 
-Schedule: every 6 hours.
+Schedule: every 2 hours (batch size via env INGEST_BATCH_SIZE, default 20).
 At completion, triggers dag_process_audio via TriggerDagRunOperator
 so DAG 2 always runs immediately after DAG 1 finishes — no fragile time offsets.
 
@@ -37,7 +37,7 @@ with DAG(
     dag_id="dag_ingest_raw",
     default_args=default_args,
     description="DAG 1: Download audio URLs → stage WAV + metadata to MongoDB, then trigger DAG 2",
-    schedule="0 */2 * * *",   # every 6 hours
+    schedule="0 */2 * * *",   # every 2 hours
     start_date=pendulum.datetime(2026, 9, 9, tz="UTC"),
     catchup=False,
     max_active_runs=1,

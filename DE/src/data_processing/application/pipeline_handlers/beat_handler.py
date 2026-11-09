@@ -29,6 +29,13 @@ class BeatHandler(BaseProcessingHandler):
             beat_times = librosa.frames_to_time(beat_frames, sr=sr).tolist()
 
             if not beat_times:
+                # Isolated studio chords (Kaggle/local/pianoteq) are sustained notes: a beat
+                # tracker finding nothing is expected and harmless — segmenting does not need beats.
+                source = getattr(data.audio_file.source_type, "value", str(data.audio_file.source_type))
+                if source in ("kaggle", "local", "pianoteq", "guitarset"):
+                    data.beat_times = []
+                    data.tempo_bpm  = 0.0
+                    return self._call_next(data)
                 data.error = "No beats detected — audio may be silent or arrhythmic"
                 return data
 

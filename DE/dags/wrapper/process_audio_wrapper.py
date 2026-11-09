@@ -1,14 +1,7 @@
-"""Wrapper for dag_process_audio — python_callables for PythonOperator.
-
-Flow: pick_pending_jobs → process_and_save → send_summary
-
-DAG 2 responsibility: Read RawAudioJob from MongoDB → Demucs → features → PostgreSQL.
-After each job, updates BOTH MongoDB (job status) AND Postgres crawl_queue (via crawl_queue_id).
-Triggered by dag_ingest_raw via TriggerDagRunOperator — not on a time schedule.
-"""
 from __future__ import annotations
 import asyncio
 import logging
+import os
 
 from src.data_ingest.infrastructure.mongo.raw_audio_job_repository import RawAudioJobRepository
 from src.data_ingest.domain.models.raw_audio_job import RawAudioJob, RawJobStatus
@@ -21,13 +14,11 @@ from src.shared.application.email_utils import notify_dag_failure, notify_batch_
 
 log = logging.getLogger(__name__)
 
-BATCH_SIZE = 10
+BATCH_SIZE = int(os.getenv("INGEST_BATCH_SIZE", "20"))
+PIPELINE_VERSION = int(os.getenv("PIPELINE_VERSION", "2"))
 
-
-# ── Airflow failure callback ──────────────────────────────────────────────────
 
 def on_task_failure(context: dict) -> None:
-    """Called by Airflow when any task in dag_process_audio fails."""
     notify_dag_failure(
         dag_id=context["dag"].dag_id,
         task_id=context["task_instance"].task_id,
@@ -35,14 +26,7 @@ def on_task_failure(context: dict) -> None:
     )
 
 
-# ── Task callables ────────────────────────────────────────────────────────────
-
 def pick_pending_jobs(**context) -> None:
-    """Task 1: Fetch N pending RawAudioJobs from MongoDB, push to XCom.
-
-    Marks each job PROCESSING to prevent duplicate pickup.
-    Includes crawl_queue_id so process_and_save can close the Postgres loop.
-    """
     async def _run():
         repo = RawAudioJobRepository(get_mongo_db())
         jobs = await repo.get_pending(limit=BATCH_SIZE)
@@ -55,6 +39,7 @@ def pick_pending_jobs(**context) -> None:
                 "source_type":     job.source_type,
                 "wav_path":        job.wav_path,
                 "crawl_queue_id":  job.crawl_queue_id,
+                "annotation_path": job.annotation_path,
             }
             for job in jobs
         ]
@@ -65,10 +50,6 @@ def pick_pending_jobs(**context) -> None:
 
 
 def process_and_save(**context) -> None:
-    """Task 2: Run Demucs + features + save to PostgreSQL for each pending job.
-
-    On completion: updates MongoDB job status AND crawl_queue (via crawl_queue_id).
-    """
     ti   = context["ti"]
     jobs = ti.xcom_pull(key="jobs") or []
 
@@ -78,7 +59,7 @@ def process_and_save(**context) -> None:
         return
 
     async def _process_all() -> list[dict]:
-        service    = ProcessAudioService()
+        service    = ProcessAudioService(pipeline_version=PIPELINE_VERSION)
         mongo_repo = RawAudioJobRepository(get_mongo_db())
         cq_repo    = CrawlQueueRepository()
         results    = []
@@ -89,6 +70,7 @@ def process_and_save(**context) -> None:
                 source_url=entry["source_url"],
                 source_type=entry["source_type"],
                 wav_path=entry["wav_path"],
+                annotation_path=entry.get("annotation_path", ""),
                 crawl_queue_id=entry.get("crawl_queue_id", ""),
                 status=RawJobStatus.PROCESSING,
             )
@@ -97,7 +79,6 @@ def process_and_save(**context) -> None:
             try:
                 record = await service.run(job)
 
-                # ── Update Postgres crawl_queue — closes the RUNNING loop ────
                 if job.crawl_queue_id:
                     if record.status in (IngestStatus.DONE,):
                         cq_repo.update_status(job.crawl_queue_id, CrawlStatus.DONE)
@@ -139,7 +120,6 @@ def process_and_save(**context) -> None:
 
 
 def send_summary(**context) -> None:
-    """Task 3: Log + email summary of this processing batch."""
     ti      = context["ti"]
     results = ti.xcom_pull(key="results") or []
 

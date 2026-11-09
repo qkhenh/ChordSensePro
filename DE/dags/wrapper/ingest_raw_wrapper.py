@@ -8,6 +8,7 @@ At the end, triggers dag_process_audio via TriggerDagRunOperator (defined in DAG
 from __future__ import annotations
 import asyncio
 import logging
+import os
 import uuid
 
 from src.data_ingest.infrastructure.repositories.crawl_queue_repository import CrawlQueueRepository
@@ -18,7 +19,7 @@ from src.shared.application.email_utils import notify_dag_failure, notify_batch_
 
 log = logging.getLogger(__name__)
 
-BATCH_SIZE = 10
+BATCH_SIZE = int(os.getenv("INGEST_BATCH_SIZE", "20"))
 
 
 # ── Airflow failure callback ──────────────────────────────────────────────────
