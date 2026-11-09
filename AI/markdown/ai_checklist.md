@@ -1,6 +1,7 @@
 # AI — Checklist bàn giao từ DE sang AI
 
-> Tạo 2026-10-23. Gom mọi điều cần nhớ khi bắt đầu phần AI, rút ra từ việc kiểm tra data và code phía DE.
+> Tạo 2026-10-23 · **Cập nhật 2026-11-09 (pipeline v2 hoàn tất, data exported).**
+> Gom mọi điều cần nhớ khi bắt đầu phần AI, rút ra từ việc kiểm tra data và code phía DE.
 > Kế hoạch train chi tiết: [`20_DE_training_plan.md`](20_DE_training_plan.md). Từ điển data: [`DE/markdown/21_DE_data_dictionary.md`](../../DE/markdown/21_DE_data_dictionary.md).
 > Tick `[x]` khi xong. Mục **[Quyết định]** cần chốt trước khi chạy.
 
@@ -17,37 +18,37 @@
 
 ## B. Chuẩn bị data (trước mỗi lần train)
 
-- [ ] **Export lại data mới** (`export_dataset.py`) — data còn tăng (Hooktheory còn ~3.300 clip chờ crawl). Ghi **ngày export + số segment mỗi split** vào `config.yaml` để biết kết quả ứng với data nào.
+- [x] **Export data** — `export_dataset_v2.py` đã chạy (2026-11-04). Data tại `DE/data/export/v2/`. Format: `{split}/audio/{song_id}.npy` (24 kHz int16 mono, chiều dài biến thiên) + `{split}/chords.parquet` (chord timeline). Ghi **ngày export + số bài mỗi split** vào `config.yaml` khi train.
 - [ ] `classes.json` khớp bảng lớp (id theo **thứ tự enum**: quality 0 major, 1 minor, 2 dominant, 3 dim, 4 sus2, 5 sus4; ext 0 none … 14 alt). Đầu vào head extension = 1024 + 12 + **6** = 1042; có `valid_combo_mask` (6 × 15) trong `classes.json` để mask lúc inference.
-- [ ] Assert: không `song_id` nào nằm ở hai split; số dòng audio = số dòng meta; không segment toàn 0.
+- [ ] Assert: không `song_id` nào nằm ở hai split; số file `.npy` = số `song_id` duy nhất trong `chords.parquet`; không file toàn 0.
 - [ ] **Luôn đọc đủ 3 cột** `root_id / quality_id / ext_id`: `ext_id = 5 (dom7)` còn gồm cả 7sus2/7sus4 và dim7. `dim7` = quality dim + ext dom7 (không có lớp riêng).
-- [ ] **Nhãn `partial` (~1.250 hàng):** hợp âm 6, 6/9, power chord → **mask head bị thiếu** khỏi loss; loss không được `nan` khi cả batch thiếu nhãn một head.
+- [ ] **Nhãn `partial`:** hợp âm 6, 6/9, power chord → **mask head bị thiếu** khỏi loss; loss không được `nan` khi cả batch thiếu nhãn một head.
 
 ### Chuẩn hóa âm lượng (dễ sai, đọc kỹ)
-- [ ] Audio trong data **chưa chuẩn hóa biên độ** (stem Demucs nhỏ, median −24 dBFS) → chuẩn hóa ở phía train.
-- [ ] Chuẩn hóa **theo cả bài** (hoặc gain cố định), **KHÔNG theo từng segment**: tăng từng segment sẽ biến đoạn im lặng thành tiếng ồn to ngang đoạn có nhạc.
+- [ ] Audio trong data **chưa chuẩn hóa biên độ** (stem Demucs htdemucs_ft, stems: other+bass, median −24 dBFS) → chuẩn hóa ở phía train.
+- [ ] Chuẩn hóa **theo cả bài** (hoặc gain cố định), **KHÔNG theo từng crop**: tăng từng crop sẽ biến đoạn im lặng thành tiếng ồn to ngang đoạn có nhạc.
 - [ ] Kiểm tra im lặng (RMS) **trước** khi chuẩn hóa, không phải sau.
 
 ### Lọc nhiễu
-- [x] Segment gần như im lặng nhưng vẫn mang nhãn hợp âm (RMS < −50 dBFS, đo thực tế 2,31 % = 1.151/49.726 segment: Hooktheory 911, JAAH 240, hay do Demucs tách stem bị trống) → **`export_dataset.py` đã tự bỏ** ở cả train/val/test (đổi ngưỡng `--min-rms-dbfs`, giữ lại `--keep-silent`; số bị bỏ nằm trong `classes.json`). **Đừng lọc thêm lần nữa** ở phía train.
-- [ ] Meta export có cột `rms_dbfs` (đo trên audio gốc, trước chuẩn hóa): dùng để chỉnh ngưỡng cổng âm lượng ở mục E.3, khỏi đọc lại audio.
-- [x] 233 hàng (0,47 %) có tổ hợp (quality, ext) **ngoài `VALID_COMBOS`** (dim+b9 61, sus4+b5 22, sus2+nat13 19, minor+#5 15…) → **`export_dataset.py` đã tự loại** (`--keep-invalid-combos` để giữ; số bị loại nằm trong `classes.json`). Lý do: lúc inference mask chặn các tổ hợp này, giữ lại chỉ dạy model thứ nó không được phép đoán. **Đừng lọc thêm** ở phía train.
-- [ ] 39 nhãn `unmapped` (đều chứa bậc `b2`) và `no_chord` đã bị export loại sẵn — không cần xử lý.
+- [x] Segment gần như im lặng nhưng vẫn mang nhãn hợp âm → **`export_dataset_v2.py` đã tự bỏ** ở cả train/val/test. **Đừng lọc thêm lần nữa** ở phía train.
+- [x] Tổ hợp (quality, ext) **ngoài `VALID_COMBOS`** → **`export_dataset_v2.py` đã tự loại**. **Đừng lọc thêm** ở phía train.
+- [x] Nhãn `unmapped` và `no_chord` đã bị export loại sẵn — không cần xử lý.
 
 ### Cân bằng và thiên lệch
-- [ ] Hooktheory ≈ 70 %, JAAH ≈ 30 % (jazz chỉ 102 bài). Hợp âm màu đa số đến từ **một nguồn crowd-sourced** → luôn báo metric **theo từng nguồn**, đừng chỉ báo một số tổng.
-- [ ] Lớp altered còn mỏng (tổng toàn data): b13 133, b5 114, #9 142, alt 225, #11 323, #5 383. Dùng Focal Loss (γ=2) cho head extension + thử các cách cân bằng lớp (bảng thí nghiệm §9 của plan).
+- [ ] Hooktheory ≈ 78 %, JAAH ≈ 20 %. Hợp âm màu đa số đến từ JAAH (jazz). Luôn báo metric **theo từng nguồn**, đừng chỉ báo một số tổng.
+- [ ] Lớp altered vẫn mỏng dù v2 tăng gấp 4× data: b5, b13, #9, alt. Dùng Focal Loss (γ=2) cho head extension + thử các cách cân bằng lớp (bảng thí nghiệm §9 của plan).
 - [ ] Với lớp mỏng, tập test chỉ có vài chục mẫu → kết quả chỉ mang tính định tính, nói rõ trong báo cáo.
+- [ ] Bài JAAH dài (5+ phút) cho nhiều crop hơn clip Hooktheory (~20 s). Dùng sampler có trọng số theo bài (`1/√duration`).
 
 ---
 
 ## C. Train
 
 - [ ] Pitch-shift **kèm đổi nhãn root**, chỉ áp cho `train` (không bao giờ cho val/test). Viết **unit test** cho hàm đổi nhãn (`ChordLabel.pitch_shift` đã có, tái sử dụng).
-- [ ] Chạy thử một batch qua MERT: shape `(B, 150, 1024)` và 25 tầng.
+- [ ] Chạy thử một batch qua MERT: shape `(B, 375, 1024)` và 25 tầng (5 s × 75 Hz = 375 frames).
 - [ ] Có resume checkpoint; lưu config + seed.
 - [ ] Mỗi lần chạy ghi một dòng `results.csv` + `config.yaml`.
-- [ ] Đánh giá theo **bài** (split đã chia theo bài), không theo segment.
+- [ ] Đánh giá theo **bài** (split đã chia theo bài), không theo crop.
 
 ---
 
@@ -66,12 +67,12 @@
 1. [ ] **Mask tổ hợp hợp lệ:** sau khi chọn quality, chặn các ext không hợp lệ trước khi lấy argmax. Dùng `valid_combo_mask()` (`mask[quality_id][ext_id]`, thứ tự enum) từ `value_objects.py`. Không tự viết lại bảng.
 2. [ ] Chạy test: mỗi quality luôn còn ít nhất một ext hợp lệ (đã có test phía DE).
 3. [ ] **Xử lý "không có hợp âm" (cách a, không thêm lớp N):**
-   - **Bước 1 — cổng âm lượng:** segment có RMS dưới ngưỡng thì trả "không có hợp âm", **không hỏi model**. Tính RMS **trước** khi chuẩn hóa âm lượng.
+   - **Bước 1 — cổng âm lượng:** crop có RMS dưới ngưỡng thì trả "không có hợp âm", **không hỏi model**. Tính RMS **trước** khi chuẩn hóa âm lượng.
    - **Bước 2 — độ tự tin:** model tự tin thấp thì đánh dấu "không rõ".
    - Ngưỡng của cả hai bước chỉnh trên **tập val**. Ngưỡng trong `ConfidenceScore.is_reliable` (root ≥ 0,6, quality ≥ 0,55) mới là số tạm.
    - Nếu báo động giả nhiều, mới cân nhắc thêm lớp N ở phiên bản sau (data N có sẵn ~2.100 segment).
 4. [ ] Làm mượt theo thời gian (HMM / lọc theo nhịp) — plan S5.
-5. [ ] Đo tốc độ trên PC RTX 3050 4 GB; thu nhỏ model nếu chậm (plan §0, S5).
+5. [ ] Đo tốc độ trên PC RTX 3050 4 GB (5 s input); thu nhỏ model nếu chậm (plan §0, S5).
 
 ---
 
@@ -100,5 +101,5 @@
   - Nhãn cần: Hooktheory trường `inversion` (14,5 % hợp âm bị đảo; **không** nằm trong `label_raw`, lấy lại từ `Hooktheory.json.gz` — file vẫn còn trên ổ); JAAH/GuitarSet có `/bass` trong `label_raw` nhưng `harte_mapper._strip_bass` đang cắt; piano local không có (để trống, loại khỏi loss).
   - **Không cần crawl lại audio**, chỉ gán lại nhãn (cột `bass_id` + script kiểu `remap_labels.py`).
   - Lưu ý audio: `harmonic.wav` = piano + guitar + other, **không có stem bass**; nốt trầm của piano/guitar vẫn còn nhưng **chưa kiểm** cue này còn nghe được không. Nhãn đảo của Hooktheory là cách rải của hợp âm người chép, **không phải line bass guitar** (walking bass/pedal không khớp) → không nên thêm stem bass vào mix.
-- [ ] **Data cho ngữ cảnh:** không cần data mới (mô hình học tiến trình từ các bài đã có). Dựng chuỗi từ meta bằng `song_id`, `segment_idx`, `start_ms`; khoảng trống do lọc (im lặng, tổ hợp không hợp lệ, partial) nhận ra qua `start_ms`. Clip Hooktheory chỉ ≈ 20 s (13–16 segment) → chỉ học được tiến trình cục bộ 4–8 hợp âm; JAAH có cả bài nhưng chỉ 102 bài. Chỉ 2.385 bài train → giữ transformer nhỏ để khỏi quá khớp.
+- [ ] **Data cho ngữ cảnh:** không cần data mới (mô hình học tiến trình từ các bài đã có). Dựng chuỗi chord từ `chords.parquet` theo `song_id`, `start_ms`; v2 có chord timeline đầy đủ nên không cần ghép lại từ segments. Clip Hooktheory chỉ ≈ 20 s → chỉ học được tiến trình cục bộ 4–8 hợp âm; JAAH có cả bài nhưng số bài ít. Giữ transformer nhỏ để khỏi quá khớp.
 - [ ] **Trả 2–3 phương án hợp âm:** xếp hạng bằng xác suất chung `p(root)·p(quality|root)·p(ext|root,quality)` (beam search, có `valid_combo_mask`), lấy top-3 hoặc dừng khi tổng ≥ 0,9. **Hiệu chỉnh nhiệt độ trên tập val** (Focal Loss làm xác suất lệch), dùng chung cho cờ `reliable` ở mục E.3. (Hạ nhiệt độ softmax làm phân phối *nhọn hơn*, không dùng để "lấy thêm" phương án.)

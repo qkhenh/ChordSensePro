@@ -1,8 +1,9 @@
 # ChordSense Pro — Kế hoạch train model nhận diện hợp âm
 
-> Ngày lập: 2026-10-21. Phạm vi: **phía AI** (train + đánh giá + chuẩn bị deploy) dùng data do pipeline DE tạo ra.
-> Tài liệu này là **kế hoạch**. Repo hiện **chưa có code train** (chỉ có spec trong [18_DE_AI_chordsense.md](../../DE/markdown/18_DE_AI_chordsense.md) §4). Mọi con số về thời gian chạy / bộ nhớ là **ước lượng**, phải đo thật rồi cập nhật lại vào đây.
-> Liên quan: [data_flow.md](../../DE/markdown/data_flow.md) (data đi thế nào), [dataset_sources.md](../../DE/markdown/dataset_sources.md) (nguồn data), [setup.md](../../DE/markdown/setup.md) (lệnh export + kiểm tra data).
+> Ngày lập: 2026-10-21 · **Cập nhật lần cuối: 2026-11-09 (pipeline v2, data hoàn tất).**
+> Phạm vi: **phía AI** (train + đánh giá + chuẩn bị deploy) dùng data do pipeline DE v2 tạo ra.
+> Tài liệu này là **kế hoạch**. Repo hiện **chưa có code train**. Mọi con số về thời gian chạy / bộ nhớ là **ước lượng**, phải đo thật rồi cập nhật lại vào đây.
+> Liên quan: [data_flow.md](../../DE/markdown/data_flow.md) · [dataset_sources.md](../../DE/markdown/dataset_sources.md) · [data_dictionary.md](../../DE/markdown/21_DE_data_dictionary.md) · [change_log.md](../../DE/markdown/change_log.md).
 
 ---
 
@@ -10,18 +11,19 @@
 
 | Mục | Quyết định |
 |---|---|
-| **Bài toán** | Với mỗi đoạn audio 2 s, đoán hợp âm đang vang ở **giữa đoạn** dưới dạng 3 nhãn: root (12 lớp), quality (6 lớp), extension (15 lớp). |
+| **Bài toán** | Với một đoạn audio **5 s** (random crop từ bài), đoán hợp âm đang vang dưới dạng 3 nhãn: root (12 lớp), quality (6 lớp), extension (15 lớp). Nhãn gán theo **chord timeline** (frame-level), không phải midpoint. |
+| **Data** | Pipeline v2 hoàn tất: **6.222 bài** (train 4.324 / val 1.251 / test 647), **222.816 chord labels**. Audio là `.npy` 24 kHz int16 mono, **chiều dài biến thiên** (whole section). Parquet chứa chord timeline `(start_ms, end_ms, label)`. |
 | **Model nền** | MERT-v1-330M (model âm nhạc đã pretrain, nhận waveform 24 kHz). |
 | **Cách thích nghi** | Đi từ nhẹ đến nặng: (1) đóng băng MERT, chỉ train head → (2) thêm LoRA (chỉ train ~2 triệu tham số phụ). **Không** fine-tune toàn bộ 330M. |
 | **Head** | 3 head nối tầng (root → quality → extension), mask nhãn thiếu, Focal Loss cho extension. |
 | **Chống lệch lớp** | Pitch-shift kèm đổi nhãn root + sampler cân bằng + Focal Loss. So sánh bằng thí nghiệm, không đoán. |
 | **Môi trường** | Google Colab (GPU T4 16 GB). Máy bạn (RTX 3050 4 GB) chỉ dùng để thử inference, **không** đủ để train LoRA 330M. |
-| **Đánh giá** | Theo **bài hát/video** (không theo segment), báo cáo từng lớp + độ tin cậy; test chỉ chạm **một lần** ở cuối. |
+| **Đánh giá** | Theo **bài hát/video** (không theo crop), báo cáo từng lớp + độ tin cậy; test chỉ chạm **một lần** ở cuối. |
 | **Deploy** | Web app chạy trên máy tính: đo tốc độ trước, chỉ thu nhỏ model (fp16/ONNX → cắt tầng → distillation) nếu cần. |
 | **Thứ tự làm** | S0 chuẩn bị → S1 baseline → S2 LoRA → S3 thí nghiệm cân bằng lớp → S4 đánh giá sâu → S5 inference + tốc độ → S6 viết báo cáo. |
 
 > [!IMPORTANT]
-> Rủi ro lớn nhất không phải là kiến trúc mà là **data lớp hiếm quá ít** (b13: 24, b5: 35, #9: 74 segment) và **lệch domain** (data là jazz/pop thu thật, app dành cho piano). Kế hoạch dưới đây tập trung đo và giảm hai rủi ro này.
+> Rủi ro lớn nhất không phải là kiến trúc mà là **data lớp hiếm quá ít** (b5: 80, b13: 106, #9: 128) và **lệch domain** (data là jazz/pop thu thật, app dành cho piano). Kế hoạch dưới đây tập trung đo và giảm hai rủi ro này.
 
 ---
 
@@ -29,21 +31,30 @@
 
 ### 1.1. Đầu vào và đầu ra
 
-- **Đầu vào:** 1 đoạn audio **2 giây**, mono, **24 kHz** → 48.000 mẫu (lưu dạng int16 trong `.npy`).
-- **Đầu ra:** 3 số nguyên:
+- **Đầu vào:** 1 đoạn audio **5 giây** (random crop từ bài gốc có chiều dài biến thiên), mono, **24 kHz** → 120.000 mẫu (lưu dạng int16 trong `.npy`, mỗi bài một file riêng).
+- **Đầu ra:** 3 số nguyên cho **mỗi frame** (MERT output 75 Hz → 375 frame cho 5 s):
   - `root_id` ∈ 0..11 = C, C#, D, D#, E, F, F#, G, G#, A, A#, B.
   - `quality_id` ∈ 0..5 = major, minor, dominant, dim, sus2, sus4.
   - `ext_id` ∈ 0..14 = none, b5, #5, maj7, min7, dom7, add9, b9, 9, #9, 11, #11, 13, b13, alt.
 - Ghép 3 số lại ra hợp âm, ví dụ (A, minor, min7) = Am7; (G, dominant, #9) = G7#9.
 - `dim7` **không có lớp riêng**: là `quality=dim` + `ext=dom7` (quy ước trong `value_objects.py`).
 
-### 1.2. Nhãn của một segment được chọn như thế nào (quan trọng cho cách train)
+> [!NOTE]
+> **Khác biệt v1 → v2:** v1 dùng segment cố định 2 s + nhãn tại midpoint (1 nhãn/segment). v2 dùng **whole section** + **chord timeline** (nhiều nhãn/bài, mỗi nhãn có `start_ms`/`end_ms`). AI tự crop random 5 s, gán nhãn frame-level từ timeline.
 
-Theo `AnnotationHandler`: nhãn của segment là **hợp âm tại điểm giữa** (midpoint, giây thứ 1,0 của đoạn 2 s). Hệ quả:
+### 1.2. Nhãn của một crop được gán như thế nào (quan trọng cho cách train)
 
-1. Nếu hợp âm **đổi** trong khoảng 2 s đó thì nhãn chỉ đúng với nửa đoạn → có **nhiễu nhãn ở ranh giới hợp âm**.
-2. Model nên **tập trung vào phần giữa** đoạn audio. Kế hoạch dùng "pooling lấy trung tâm" (xem §4.3) thay vì trung bình đều cả 2 s.
-3. Khi phân tích lỗi phải tách segment "ổn định" và segment "gần ranh giới" (xem §8.3).
+Chord timeline từ `chords.parquet` gồm chuỗi `(start_ms, end_ms, label_raw, root_id, quality_id, ext_id)` cho mỗi bài. Khi random crop 5 s từ vị trí `t_start`:
+
+1. **Segment-level (baseline):** lấy hợp âm tại **giữa crop** (`t_start + 2500 ms`) từ timeline → 1 nhãn cho cả crop. Pooling MERT output → 1 embedding → 3 head. Đơn giản, nhanh, phù hợp baseline.
+2. **Frame-level (nâng cao):** với mỗi MERT frame (75 Hz), tra chord timeline để gán nhãn → 375 nhãn cho 5 s. Head dự đoán per-frame. Chính xác hơn, tận dụng tối đa chord timeline.
+
+Đề xuất: **bắt đầu với segment-level** (baseline), thử frame-level ở thí nghiệm sau.
+
+Hệ quả khi segment-level:
+1. Nếu hợp âm **đổi** gần midpoint → nhiễu nhãn (giống v1 nhưng ít hơn vì biết chính xác ranh giới).
+2. Có thể **tránh crop tại ranh giới**: chỉ crop ở vị trí mà toàn bộ 5 s nằm trong 1 chord (hoặc chord tại midpoint chiếm ≥ 80% crop).
+3. Khi phân tích lỗi phải tách crop "ổn định" và crop "gần ranh giới" (xem §8.3).
 
 ### 1.3. Nhãn thiếu (`partial`) và "không có hợp âm" (`N`)
 
@@ -51,8 +62,8 @@ Theo `AnnotationHandler`: nhãn của segment là **hợp âm tại điểm gi�
 |---|---|---|
 | `ok` | cả 3 nhãn có | dùng bình thường |
 | `partial` | có root nhưng thiếu quality và/hoặc extension (hợp âm 6, 6/9, power chord `C5`) | **mask** head thiếu khỏi loss (mục 5.3) |
-| `no_chord` (`N`) | im lặng / không hợp âm | `export_dataset.py` **không xuất** (chỉ lấy ok + partial). Xem quyết định mở ở §11 |
-| `unmapped` | nhãn lạ chưa map được (hiện 14 segment) | không xuất |
+| `no_chord` (`N`) | im lặng / không hợp âm | `export_dataset_v2.py` **không xuất** (chỉ lấy ok + partial). Xem quyết định ở §11 |
+| `unmapped` | nhãn lạ chưa map được | không xuất |
 
 ---
 
@@ -61,9 +72,9 @@ Theo `AnnotationHandler`: nhãn của segment là **hợp âm tại điểm gi�
 ### 2.1. MERT là gì và vì sao dùng
 
 - **MERT** là model học tự giám sát trên rất nhiều audio âm nhạc (không cần nhãn hợp âm). Nó biến audio thành chuỗi vector biểu diễn "âm nhạc có nghĩa" (cao độ, hòa âm, âm sắc).
-- **MERT-v1-330M**: 24 tầng transformer, mỗi vector 1024 chiều, **75 vector mỗi giây** (75 Hz), nhận **24 kHz**. Đoạn 2 s → khoảng **150 vector** × 1024.
+- **MERT-v1-330M**: 24 tầng transformer, mỗi vector 1024 chiều, **75 vector mỗi giây** (75 Hz), nhận **24 kHz**. Đoạn 5 s → khoảng **375 vector** × 1024.
   - Output `output_hidden_states=True` cho **25 tập vector** (embedding đầu vào + 24 tầng). Mỗi tầng giữ loại thông tin khác nhau; tầng thấp thiên về âm sắc/cao độ, tầng cao thiên về ngữ cảnh. **Tầng nào tốt nhất cho hợp âm là thứ phải đo** (bước B1), không đoán.
-- Lý do dùng model pretrain: ta chỉ có ~11 giờ audio không trùng. Train từ đầu một mạng sâu trên đó sẽ quá khớp. MERT đã "nghe" hàng chục nghìn giờ nhạc nên ta chỉ cần dạy nó **bảng nhãn hợp âm**.
+- Lý do dùng model pretrain: ta chỉ có ~55 giờ audio (6.222 bài × ~30 s trung bình). Train từ đầu một mạng sâu trên đó sẽ quá khớp. MERT đã "nghe" hàng chục nghìn giờ nhạc nên ta chỉ cần dạy nó **bảng nhãn hợp âm**.
 - Có sẵn **MERT-v1-95M** (12 tầng, 768 chiều) nhẹ hơn nhiều; dùng làm đối chứng (§9.4).
 
 ### 2.2. Ba mức "dạy" MERT (từ nhẹ đến nặng)
@@ -96,58 +107,64 @@ Dịch cao độ audio lên `n` nửa cung thì **root dịch `n`** (mod 12), c�
 
 ---
 
-## 3. Hiện trạng data (chốt 2026-10-23, kết quả `export_dataset.py --stats`)
+## 3. Hiện trạng data (chốt 2026-11-09, pipeline v2 hoàn tất)
 
-Số liệu dưới đây là **sau khi export lọc**: bỏ 233 hàng có tổ hợp (quality, ext) không hợp lệ, bỏ 1.149 segment gần im lặng (RMS < −50 dBFS). Nhãn đã tách sus2/sus4. Số này **còn tăng** khi crawl tiếp; con số cuối nằm trong `classes.json` lúc export thật.
-
-Lệnh xem lại: `docker exec -w /opt/airflow chordsense_airflow env PYTHONPATH=/opt/airflow python scripts/export_dataset.py --stats` và `Get-Content DE\scripts\data_report.sql -Raw | docker exec -i chordsense_postgres psql -U chordsense -d chordsense` (xem [setup.md](../../DE/markdown/setup.md) mục 6–7).
+Data đã export tại `DE/data/export/v2/`. Cấu trúc:
+```
+v2/
+  {split}/audio/{song_id}.npy     # 24 kHz int16 mono, 1D, chiều dài biến thiên
+  {split}/chords.parquet          # song_id, start_ms, end_ms, label_raw, label_status, root_id, quality_id, ext_id
+  config.yaml                    # sample_rate: 24000, crop_s: 5, dtype: int16, mono: true, variable_length: true
+  classes.json                   # root/quality/extension names, valid_combo_mask [6×15], counts
+```
 
 ### 3.1. Quy mô
 
 | Mục | Số |
 |---|---|
-| Segment có nhãn sau lọc | **48.458** (49.840 trước lọc) |
-| Nguồn | Hooktheory 34.887 · JAAH 13.189 · GuitarSet 334 · local piano 48 |
-| Bài / video | 2.535 (train 1.747 · val 558 · test 230) |
-| Split (segment) | train 34.392 · val 10.458 · test 3.608 (≈ 71% / 22% / 7%) |
-| Thời lượng | mỗi segment 2 s, trượt 1,5 s → mỗi segment thêm 1,5 s audio mới ≈ **20 giờ** audio không trùng (48.458 × 1,5 s) |
+| Bài (training_sections) | **6.222** (train 4.324 · val 1.251 · test 647) |
+| Chord labels (training_chords) | **222.816** |
+| Nguồn | Hooktheory ~78% · JAAH ~20% · GuitarSet · local piano |
+| Thời lượng ước tính | ~55 giờ audio (bài ngắn ~20 s Hooktheory, bài dài ~5 phút JAAH) |
+| Dung lượng | `training_v2/` 17 GB, export ~15 GB |
 
 > [!NOTE]
-> Split chia theo hash của `source_url`: các segment cùng một bài/video luôn nằm cùng một split (đã kiểm tra: 0 video Hooktheory bị chia hai split). Lớp hiếm trên test vẫn chỉ vài chục mẫu → **số liệu theo từng lớp hiếm trên test sẽ rất nhiễu**.
+> Split chia theo hash của `source_url`: các chord cùng một bài luôn nằm cùng một split. Lớp hiếm trên test vẫn chỉ vài chục mẫu → **số liệu theo từng lớp hiếm trên test sẽ rất nhiễu**.
 
-### 3.2. Phân bố lớp
+### 3.2. Phân bố lớp (từ training_chords, 222K labels)
 
-| Quality | Segment | | Extension | Segment |
+| Quality | Count | | Extension | Count |
 |---|---|---|---|---|
-| major | 19.656 | | none | 18.864 |
-| minor | 14.688 | | dom7 | 8.559 |
-| dominant | 9.833 | | min7 | 7.044 |
-| dim | 1.715 | | maj7 | 3.649 |
-| sus2 | 975 | | 9 (nat9) | 3.061 |
-| sus4 | 1.551 | | add9 | 1.830 |
-| | | | 11 (nat11) | 1.783 |
-| | | | 13 (nat13) | 779 |
-| | | | b9 | 470 |
-| | | | #5 | 355 |
-| | | | #11 | 314 |
-| | | | alt | 205 |
-| | | | #9 | 128 |
-| | | | b13 | 106 |
-| | | | b5 | 80 |
+| major | ~87K | | none | ~57K |
+| minor | ~64K | | min7 | ~28K |
+| dominant | ~25K | | dom7 | ~15K |
+| dim | ~8K | | maj7 | ~14K |
+| sus4 | ~6K | | nat9 | ~14K |
+| sus2 | ~4K | | nat11 | ~7K |
+| | | | add9 | ~5K |
+| | | | nat13 | ~3K |
+| | | | b9 | ~2K |
+| | | | #5 | ~1.5K |
+| | | | #11 | ~1.5K |
+| | | | alt | ~1K |
+| | | | #9 | ~500 |
+| | | | b13 | ~400 |
+| | | | b5 | ~350 |
 
-Root: thấp nhất F# 2.607, cao nhất F 5.330 (thiên lệch tông của jazz/pop); pitch-shift sẽ làm đều lại.
+> [!NOTE]
+> Số liệu chính xác nằm trong `classes.json` sau export. Con số trên đây lấy từ truy vấn DB trực tiếp (tất cả label, chưa lọc). So với v1 (~48K segments), v2 có **4.6× nhiều hơn** vì mỗi bài giờ có nhiều chord labels thay vì chỉ ~16 segments.
 
 ### 3.3. Vấn đề của data (phải nhớ khi thiết kế)
 
-1. **Lệch lớp nặng ở extension.** Tỉ lệ lớp phổ biến nhất / hiếm nhất ≈ 180 lần (none 18.864 so với b5 80).
-2. **Segment chồng lấn.** Hai segment liền nhau chung 0,5 s audio; số "ví dụ độc lập" thấp hơn số segment nhiều lần.
-3. **Mất cân bằng giữa các bài.** JAAH ~146 segment/bài, Hooktheory ~16 segment/clip. Nếu lấy mẫu đều theo segment thì vài bài jazz dài chi phối.
-4. **Lệch domain.** Phần lớn là jazz (JAAH) và pop thu thật qua Demucs (stem harmonic: piano + guitar + other, bỏ trống/bass/vocal). App thật nhận **piano từ micro/file** không qua Demucs. Cần đo riêng trên nguồn piano (Kaggle `local`, SWD) và nếu có thể thu thêm piano thật (pha domain trong spec).
+1. **Lệch lớp nặng ở extension.** Tỉ lệ `none` / `b5` ≈ 160:1. Tốt hơn v1 (180:1) nhưng vẫn nghiêm trọng.
+2. **Chiều dài biến thiên.** Bài Hooktheory ~20 s, JAAH có thể 5+ phút. Random crop 5 s sẽ thiên về bài dài (nhiều crop hơn). Cần sampler có trọng số theo bài.
+3. **Mất cân bằng giữa các nguồn.** Hooktheory ≈ 78%, JAAH ≈ 20%. Hợp âm màu đa số đến từ JAAH (jazz). Luôn báo metric **theo từng nguồn**.
+4. **Lệch domain.** Phần lớn là jazz (JAAH) và pop thu thật qua Demucs (stem harmonic: `other + bass`, htdemucs_ft). App thật nhận **piano từ micro/file** không qua Demucs. Cần đo riêng trên nguồn piano.
 5. **Nhiễu nhãn:**
-   - Hooktheory: nhãn do người dùng chuyển soạn, canh với video YouTube chỉ bằng kiểm tra độ dài (chưa có kiểm tra căn chỉnh theo beat — ghi ở [data_flow.md](../../DE/markdown/data_flow.md) mục 3 dòng 4).
-   - Ranh giới hợp âm (mục 1.2).
-6. **Audio chưa chuẩn hóa biên độ** (ghi ở data_flow.md): phải chuẩn hóa ở phía train (mục 4.1).
-7. **Nguồn piano chưa dùng hết:** `kaggle/archive1` (1.760 file piano triad) có trên ổ nhưng **chưa seed** — hợp với domain app nhưng chỉ có tam hợp âm, nên chỉ nên dùng để **bổ sung/đánh giá** root + quality, không thể dạy extension.
+   - Hooktheory: nhãn do người dùng chuyển soạn, canh với video YouTube bằng alignment check (chroma offset, pipeline v2).
+   - JAAH: tín hiệu nhãn–audio yếu nhất (kiểm chroma 2026-10-23).
+6. **Audio chưa chuẩn hóa biên độ**: stem Demucs nhỏ (median −24 dBFS) → phải chuẩn hóa ở phía train (mục 4.1).
+7. **Alignment quality (v2):** pipeline v2 có `align_offset_ms`, `align_score`, `align_status` (ok/shifted/rejected). Bài bị rejected đã loại khỏi data. Bài shifted đã được điều chỉnh offset.
 
 ---
 
@@ -157,25 +174,36 @@ Root: thấp nhất F# 2.607, cao nhất F 5.330 (thiên lệch tông của jazz
 
 ```python
 # dataset.py (ý tưởng)
-audio = np.load("train_audio.npy", mmap_mode="r")      # (N, 48000) int16
-x = audio[i].astype(np.float32) / 32768.0               # về [-1, 1]
-x = (x - x.mean()) / (x.std() + 1e-7)                   # MERT dùng chuẩn hóa zero-mean/unit-var theo từng đoạn
+import pandas as pd
+
+chords_df = pd.read_parquet("train/chords.parquet")  # song_id, start_ms, end_ms, root_id, quality_id, ext_id
+song_chords = chords_df.groupby("song_id")           # nhóm theo bài
+
+# Mỗi lần lấy mẫu:
+audio = np.load(f"train/audio/{song_id}.npy")         # 1D int16, chiều dài biến thiên
+crop_start = random_int(0, len(audio) - 5*24000)      # random crop 5 s
+x = audio[crop_start : crop_start + 120000].astype(np.float32) / 32768.0
+x = (x - x.mean()) / (x.std() + 1e-7)                 # MERT zero-mean/unit-var
+
+# Gán nhãn từ chord timeline (segment-level: lấy chord tại midpoint)
+t_mid_ms = (crop_start / 24000 * 1000) + 2500
+chord = lookup_chord_at(song_chords[song_id], t_mid_ms)
 ```
 
 - `Wav2Vec2FeatureExtractor` của MERT (`do_normalize=True`) làm bước chuẩn hóa tương tự; có thể tự làm để nhanh hơn và để áp augment trước.
-- Đọc bằng `mmap` để không nạp cả file vào RAM (train ≈ 20 nghìn × 48.000 × 2 byte ≈ 1,9 GB; val/test nhỏ hơn).
-- Bảng meta (`*_meta.parquet`) có: `song_id, source_type, source_url, segment_idx, start_ms, end_ms, label_raw, label_status, root_id, quality_id, ext_id, split`. Hàng thứ `i` của meta khớp hàng thứ `i` của audio.
-- Nhãn thiếu: `quality_id`/`ext_id` là `null` → đổi thành `-100` và dùng `ignore_index=-100` khi tính loss (mục 5.3).
+- Mỗi bài là **1 file .npy riêng**, không cần mmap array lớn. Đọc bằng `np.load` bình thường.
+- Nhãn thiếu: `quality_id`/`ext_id` là `null` trong parquet → đổi thành `-100` và dùng `ignore_index=-100` khi tính loss (mục 5.3).
+- Nếu bài < 5 s: pad zero hoặc bỏ qua (rất ít bài dưới 5 s).
 
 ### 4.2. Môi trường
 
 | Việc | Ở đâu | Ghi chú |
 |---|---|---|
-| Export data | máy bạn (Docker) | `docker exec chordsense_airflow python /opt/airflow/scripts/export_dataset.py` → `DE/data/export/` (khoảng 3 GB cả ba split, ước lượng) |
+| Export data | máy bạn (Docker) | `docker exec -w /opt/airflow chordsense_airflow env PYTHONPATH=/opt/airflow python scripts/export_dataset_v2.py` → `DE/data/export/v2/` (~15 GB) |
 | Train, extract embedding | **Colab (T4 16 GB)** | upload export lên Google Drive; mount Drive; lưu checkpoint lên Drive mỗi epoch |
 | Thử inference / đo tốc độ | **máy bạn** (RTX 3050 4 GB) | fp16 MERT-330M ~0,7 GB nên vừa; đây là nơi sẽ deploy |
 
-- Phiên bản thư viện (từ tài liệu tổng): PyTorch ≥ 2.5, transformers ≥ 4.47, PEFT ≥ 0.14. Ghi lại `pip freeze` của mỗi lần chạy.
+- Phiên bản thư viện: PyTorch ≥ 2.5, transformers ≥ 4.47, PEFT ≥ 0.14. Ghi lại `pip freeze` của mỗi lần chạy.
 - T4 **không có bf16**: dùng **fp16 + GradScaler** (AMP), không dùng bf16.
 - Phiên Colab có thể bị ngắt: lưu checkpoint + trạng thái optimizer/scheduler + seed mỗi epoch; code train phải **resume** được.
 - Cố định seed (`torch`, `numpy`, `random`), ghi hyperparameter vào file `config.yaml` kèm mỗi lần chạy để tái lập được.
@@ -183,9 +211,9 @@ x = (x - x.mean()) / (x.std() + 1e-7)                   # MERT dùng chuẩn hó
 ### 4.3. Kiến trúc model chi tiết
 
 ```
-waveform (B, 48000)
+waveform (B, 120000)    ← 5 s × 24 kHz
    │
-   ▼  MERT-330M  (output_hidden_states=True → 25 × (B, 150, 1024))
+   ▼  MERT-330M  (output_hidden_states=True → 25 × (B, 375, 1024))
    │
    ▼  Gộp tầng:  h = Σ_k softmax(w)_k · hidden_k      (w học được; hoặc chọn tầng tốt nhất sau B1)
    │
@@ -202,11 +230,11 @@ waveform (B, 48000)
 
 | Phương án | Cách làm | Khi nào hợp |
 |---|---|---|
-| P1 Trung bình đều | mean 150 vector | baseline đơn giản |
-| P2 **Trung bình quanh trung tâm** | mean các vector ở khoảng 0,5–1,5 s (khung ~37–112) | khớp với quy tắc nhãn "tại midpoint" (mục 1.2) |
+| P1 Trung bình đều | mean 375 vector | baseline đơn giản |
+| P2 **Trung bình quanh trung tâm** | mean các vector ở khoảng 1,5–3,5 s (khung ~112–262 của 375) | giảm nhiễu ranh giới chord khi label = midpoint |
 | P3 Attention pooling | `softmax(MLP(h_t))` làm trọng số | model tự chọn vùng quan trọng; thêm ít tham số |
 
-Mặc định đề xuất: **P2 làm baseline**, thử P3 nếu P2 chưa đủ.
+Mặc định đề xuất: **P1 làm baseline** (đơn giản), thử P2/P3 nếu cần.
 
 **Truyền logit giữa các head khi train:** spec nối `logits` của head trước vào head sau. Có 2 cách:
 - (i) nối logit **chưa detach** (gradient của head sau chảy ngược về head trước);
@@ -229,7 +257,7 @@ class ChordModel(nn.Module):
     def forward(self, wav):
         hs = torch.stack(self.mert(wav, output_hidden_states=True).hidden_states)  # (25,B,T,D)
         h = (F.softmax(self.layer_w, 0)[:, None, None, None] * hs).sum(0)          # (B,T,D)
-        emb = h[:, 37:112].mean(1)                                                 # pooling P2
+        emb = h.mean(1)                                                             # pooling P1
         r = self.h1(emb)
         q = self.h2(torch.cat([emb, r.detach()], -1))
         e = self.h3(torch.cat([emb, r.detach(), q.detach()], -1))
@@ -282,7 +310,7 @@ Hiện có 1.230 segment `partial` (≈ 4,6%): 6th/6-9 chiếm phần lớn.
 | Gain | ±6 dB | không |
 | Nhiễu Gaussian | SNR 10–30 dB, xác suất 0,5 | không |
 | Reverb nhẹ | xác suất 0,3 | không |
-| Time-stretch | 0,85–1,15 (cẩn thận: có thể làm lệch ranh giới), xác suất 0,3 | không |
+| Time-stretch | 0,85–1,15 (cẩn thận: v2 chord timeline tính bằng ms nên stretch phải điều chỉnh boundary), xác suất 0,3 | không |
 | ❌ Mixup | **không dùng** (nhãn mơ hồ) | — |
 
 - Pitch-shift **online trên GPU** (ví dụ `torchaudio.functional.pitch_shift`, hoặc resample + time-stretch) để không phải lưu ×12 data. Pitch-shift bằng `librosa` trên CPU mỗi batch sẽ **rất chậm** — nếu cần dùng thì precompute trước.
@@ -298,10 +326,10 @@ Hiện có 1.230 segment `partial` (≈ 4,6%): 6th/6-9 chiếm phần lớn.
 | **S2 Class-balanced weight** | `α_c = (1 − β) / (1 − β^{n_c})`, `β = 0,999` (effective number of samples), chuẩn hóa về trung bình 1, dùng làm `α` trong Focal Loss |
 | **S3 = S1 + S2** | thường mạnh nhất nhưng dễ quá khớp lớp hiếm |
 
-Thêm **trọng số theo bài**: mỗi segment có trọng số `∝ 1/√(số segment của bài/clip chứa nó)` để vài bài JAAH dài không chi phối.
+Thêm **trọng số theo bài**: mỗi crop có trọng số `∝ 1/√(duration_s của bài)` để bài JAAH dài (5+ phút) không chi phối so với clip Hooktheory (~20 s).
 
 > [!WARNING]
-> Với lớp có 24–74 segment, dù sampler lấy lại nhiều lần thì model vẫn chỉ thấy **cùng vài ví dụ**. Dấu hiệu quá khớp: train recall của lớp đó ≈ 100% nhưng val recall ≈ 0%. Phải theo dõi riêng recall từng lớp hiếm trên val mỗi epoch.
+> Với lớp có vài trăm chord labels, dù sampler lấy lại nhiều lần thì model vẫn chỉ thấy **cùng vài ví dụ**. Dấu hiệu quá khớp: train recall của lớp đó ≈ 100% nhưng val recall ≈ 0%. Phải theo dõi riêng recall từng lớp hiếm trên val mỗi epoch.
 
 ---
 
@@ -311,26 +339,26 @@ Thêm **trọng số theo bài**: mỗi segment có trọng số `∝ 1/√(số
 
 ### S0 — Chuẩn bị (~0,5 ngày)
 
-1. Chạy `export_dataset.py --stats` để xem phân bố; sau đó export thật vào thư mục có ngày (ví dụ `DE/data/export/2026-10-21/`). **Lưu `classes.json` kèm.**
+1. ~~Chạy export~~ **Đã export** tại `DE/data/export/v2/` (2026-11-04). **`classes.json` đã có kèm.**
 2. **Kiểm tra sức khỏe data:**
-   - số hàng audio = số hàng meta cho từng split;
-   - nghe thử 5–10 segment ngẫu nhiên mỗi nguồn + đối chiếu `label_raw` (đảm bảo không lệch canh);
-   - biên độ không bị clipping, không có segment toàn 0;
+   - số file `.npy` = số bài trong `chords.parquet` cho từng split;
+   - nghe thử 5–10 bài ngẫu nhiên mỗi nguồn + đối chiếu chord timeline (đảm bảo không lệch canh);
+   - biên độ không bị clipping, không có file toàn 0;
    - không có `song_id` xuất hiện ở hai split (viết assert).
-3. Tạo môi trường Colab, upload data lên Drive, cài thư viện, tải `m-a-p/MERT-v1-330M` (cần `trust_remote_code=True`).
-4. **Chạy thử một batch** MERT lấy đủ `(B, 150, 1024)` × 25 tầng; xác nhận tốc độ khung 75 Hz.
-- **Đầu ra:** data đã export + notebook môi trường chạy được. **Tiêu chí đi tiếp:** các assert đều qua.
+3. Tạo môi trường Colab, upload data lên Drive (~15 GB), cài thư viện, tải `m-a-p/MERT-v1-330M` (cần `trust_remote_code=True`).
+4. **Chạy thử một batch** MERT lấy đủ `(B, 375, 1024)` × 25 tầng; xác nhận tốc độ khung 75 Hz.
+- **Đầu ra:** notebook môi trường chạy được + data verified. **Tiêu chí đi tiếp:** các assert đều qua.
 
 ### S1 — Baseline (~1–2 ngày)
 
 | Mã | Mô tả | Mục đích |
 |---|---|---|
-| **B0** | Dự đoán lớp phổ biến nhất; và **chroma + hồi quy logistic** (librosa `chroma_cqt`, trung bình 2 s) | chặn dưới; trả lời "LoRA có đáng không" (thí nghiệm A của spec) |
-| **B1** | **Thăm dò từng tầng:** cho MERT đóng băng, lấy vector pooling P1/P2 của từng tầng 0..24, huấn luyện một Linear cho root, quality, extension riêng | **chọn tầng/cách gộp tốt nhất** trước khi tốn công LoRA; thí nghiệm C (MERT zero-shot) |
+| **B0** | Dự đoán lớp phổ biến nhất; và **chroma + hồi quy logistic** (librosa `chroma_cqt`, trung bình 5 s) | chặn dưới; trả lời "LoRA có đáng không" (thí nghiệm A của spec) |
+| **B1** | **Thăm dò từng tầng:** cho MERT đóng băng, lấy vector pooling P1 của từng tầng 0..24, huấn luyện một Linear cho root, quality, extension riêng | **chọn tầng/cách gộp tốt nhất** trước khi tốn công LoRA; thí nghiệm C (MERT zero-shot) |
 | **B2** | 3 head nối tầng trên embedding đóng băng, **cache sẵn** | baseline đầy đủ nhanh |
 
-**Cache embedding (ý tưởng quan trọng để lặp nhanh):** vì MERT đóng băng nên chỉ cần chạy MERT **một lần** cho mỗi segment (không augment), lưu vector pooling cho cả 25 tầng.
-- Dung lượng: `28.563 × 25 tầng × 1024 × 2 byte (fp16) ≈ 1,46 GB` cho mỗi kiểu pooling; hai kiểu (P1, P2) ≈ 3 GB — Colab chịu được.
+**Cache embedding (ý tưởng quan trọng để lặp nhanh):** vì MERT đóng băng nên có thể chạy MERT **một lần** cho mỗi crop cố định (không augment), lưu vector pooling cho cả 25 tầng. Với v2 (variable-length audio), cần chọn vị trí crop cố định cho mỗi bài (ví dụ lấy N crop không chồng lấn mỗi 5 s).
+- Dung lượng ước tính: `4.324 bài × 3 crop trung bình × 25 tầng × 1024 × 2 byte (fp16) ≈ 0,66 GB` — Colab chịu được.
 - Sau đó thử hàng trăm cấu hình head trong vài phút, **không cần GPU nặng**.
 - Hạn chế: cache **không** có augment (không pitch-shift được), nên baseline này không phản ánh hết khả năng; augment chỉ có ở S2.
 
@@ -379,11 +407,11 @@ Xem §8. Test chỉ chạy **một lần** sau khi đã chốt mô hình bằng 
 
 ### S5 — Pipeline suy luận (inference) và tốc độ (~2–3 ngày)
 
-1. **Cửa sổ trượt:** web app nhận audio liên tục → cắt đoạn 2 s, bước 0,5 s (tùy yêu cầu độ trễ) → mỗi đoạn qua model → chuỗi xác suất theo thời gian.
+1. **Cửa sổ trượt:** web app nhận audio liên tục → cắt đoạn 5 s, bước 0,5–1 s (tùy yêu cầu độ trễ) → mỗi đoạn qua model → chuỗi xác suất theo thời gian.
 2. **Làm mượt theo thời gian:** thuật toán Viterbi/HMM trên chuỗi xác suất với **ma trận chuyển hợp âm** (học từ chuỗi hợp âm trong data hoặc đặt "ở lại hợp âm cũ" có xác suất cao) để bớt nhấp nháy.
 3. **Ngưỡng "không có hợp âm":** vì model **không có lớp N** (data export không có `no_chord`), dùng **cổng năng lượng (RMS)** và **ngưỡng độ tin cậy tối đa** để trả "không rõ".
 4. **Hiệu chỉnh độ tin cậy:** temperature scaling trên val để xác suất phản ánh đúng độ chắc chắn.
-5. **Đo tốc độ trên máy deploy** (RTX 3050 4 GB): thời gian cho một đoạn 2 s ở fp32/fp16/ONNX, đo cả bước tiền xử lý. Mục tiêu spec: **< 500 ms**.
+5. **Đo tốc độ trên máy deploy** (RTX 3050 4 GB): thời gian cho một đoạn 5 s ở fp32/fp16/ONNX, đo cả bước tiền xử lý. Mục tiêu spec: **< 500 ms**.
 6. **Chỉ khi chưa đạt** mới thu nhỏ theo thứ tự rẻ → đắt:
    1. fp16 + xuất ONNX (+ int8 nếu cần);
    2. cắt tầng (giữ N tầng đầu theo kết quả B1) hoặc dùng MERT-95M;
@@ -400,19 +428,19 @@ Gom bảng thí nghiệm (§9), biểu đồ, phân tích lỗi, hạn chế (da
 
 ### 8.1. Quy tắc để đánh giá không bị lừa
 
-1. **Chia theo bài/video, không theo segment** (đã đúng: split theo `source_url`). Không bao giờ trộn lại các segment.
+1. **Chia theo bài/video, không theo crop** (đã đúng: split theo `source_url`). Không bao giờ trộn lại các bài.
 2. **Test chỉ chạm một lần.** Mọi chọn lựa (siêu tham số, epoch, ngưỡng) dùng val. Nếu cần tinh chỉnh nhiều, dùng **cross-validation theo nhóm bài** (GroupKFold) thay vì "nhìn test".
-3. **Khoảng tin cậy bootstrap theo bài** (lấy lại mẫu các bài, không phải segment) vì segment cùng bài tương quan mạnh; nếu bootstrap theo segment thì khoảng tin cậy hẹp giả tạo.
+3. **Khoảng tin cậy bootstrap theo bài** (lấy lại mẫu các bài, không phải crop) vì crop cùng bài tương quan mạnh; nếu bootstrap theo crop thì khoảng tin cậy hẹp giả tạo.
 4. **Báo cáo riêng theo nguồn** (JAAH / Hooktheory / piano local / GuitarSet). Một con số trung bình che mất lệch domain.
 
 ### 8.2. Chỉ số
 
 | Chỉ số | Định nghĩa |
 |---|---|
-| Root accuracy | % segment đoán đúng root (chỉ tính segment có nhãn root) |
-| Quality accuracy | % đúng quality (bỏ segment mask) |
-| Extension accuracy | % đúng extension (bỏ segment mask) |
-| **Chord accuracy** | % đúng **cả 3** (chỉ tính segment có đủ 3 nhãn) |
+| Root accuracy | % crop đoán đúng root (chỉ tính crop có nhãn root) |
+| Quality accuracy | % đúng quality (bỏ crop mask) |
+| Extension accuracy | % đúng extension (bỏ crop mask) |
+| **Chord accuracy** | % đúng **cả 3** (chỉ tính crop có đủ 3 nhãn) |
 | Macro-F1 (quality, extension) | trung bình F1 các lớp — **không** bị lớp lớn lấn át, đây là chỉ số quan trọng nhất cho lớp hiếm |
 | Recall từng lớp | bảng 15 lớp extension, 6 lớp quality |
 | Ma trận nhầm lẫn | để thấy nhầm kiểu gì (vd. min7 ↔ dom7, 9 ↔ add9) |
@@ -422,7 +450,7 @@ Mục tiêu trong spec: root > 95%, quality > 85%, extension > 70% (lớp 0–5)
 
 ### 8.3. Phân tích lỗi bắt buộc
 
-1. **Tách segment "ổn định" và "gần ranh giới"** — nếu `label_raw` của segment liền trước hoặc liền sau (cùng bài, `segment_idx ± 1`) khác segment hiện tại thì coi là gần ranh giới. Nếu lỗi tập trung ở ranh giới, vấn đề nằm ở **nhiễu nhãn**, không phải ở model.
+1. **Tách crop "ổn định" và "gần ranh giới"** — nếu crop 5 s chứa 2+ chord khác nhau trong timeline thì coi là gần ranh giới. Nếu lỗi tập trung ở ranh giới, vấn đề nằm ở **nhiễu nhãn**, không phải ở model.
 2. **Nhầm lẫn quen thuộc:** min7 ↔ maj6, dom7 ↔ 9, sus2 ↔ sus4 (cùng nốt, khác root: Csus2 = Gsus4) và sus ↔ add9, dim ↔ hdim (cùng một số nốt).
 3. **Theo tông:** accuracy từng root; nếu một số tông yếu → tăng pitch-shift hoặc kiểm tra thiên lệch data.
 4. **Theo nguồn:** so JAAH vs Hooktheory vs piano; nếu piano kém xa → ưu tiên thu/seed thêm piano (§10).
@@ -445,23 +473,20 @@ Mục tiêu trong spec: root > 95%, quality > 85%, extension > 70% (lớp 0–5)
 | E7 | LoRA rank | 8 vs 16 vs 32 (và thêm `out_proj`) | accuracy so với số tham số |
 | E8 | Cỡ model | MERT-330M vs MERT-95M vs cắt tầng | accuracy so với tốc độ |
 | E9 | Tác động nhãn `partial` | train có/không có partial | accuracy quality |
-| E10 | Tăng data | train với data v1 (hiện tại) vs v2 (sau khi crawl xong Hooktheory hiếm) | macro-F1 lớp hiếm |
+| E10 | Frame-level vs segment-level | segment-level (midpoint label) vs frame-level (per-MERT-frame label từ timeline) | accuracy + chord accuracy |
 
 Hướng tiếp cận E1–E3 trước (rẻ, dùng cache embedding), E4–E7 sau.
 
 ---
 
-## 10. Data bổ sung nên làm song song (không bắt buộc trước khi train)
+## 10. Data bổ sung (không bắt buộc trước khi train)
 
-| Việc | Lợi ích | Chi phí |
+| Việc | Lợi ích | Trạng thái |
 |---|---|---|
-| Đợi crawl hết **~2.400 clip Hooktheory ưu tiên (chứa hợp âm hiếm)** | tăng 9/11/13/#5/#9... | ~4 ngày (đang chạy tự động) |
-| Seed `kaggle/archive1` (1.760 file piano triad) | domain piano cho root/quality, làm tập kiểm tra piano | thấp; đã có trên ổ, cần chạy seed + đủ thời gian xử lý |
-| Xử lý nhãn `b2` (14 segment `unmapped`) | không đáng kể | thấp |
+| ~~Crawl hết Hooktheory~~ | ~~tăng hợp âm hiếm~~ | **✅ Hoàn tất** (2026-11-04). 6.222 bài, 1.434 failed (video unavailable/alignment rejected) |
+| Seed `kaggle/archive1` (1.760 file piano triad) | domain piano cho root/quality, làm tập kiểm tra piano | chưa seed; đã có trên ổ |
 | Thu piano thật (có nhãn) để fine-tune cuối | **giải lệch domain** (quan trọng nhất cho app piano) | cao; nằm ngoài DE hiện tại |
-| Synth piano (Pianoteq/FluidSynth) từ chuỗi hợp âm | thêm piano với nhãn hoàn hảo, cân bằng lớp hiếm | trung bình (POP909 đã bị hạ ưu tiên) |
-
-Quy trình: train bản **v1** ngay với data hiện tại để có baseline sớm, **export lại v2** khi crawl xong và chạy lại các cấu hình tốt nhất (thí nghiệm E10).
+| Synth piano (Pianoteq/FluidSynth) từ chuỗi hợp âm | thêm piano với nhãn hoàn hảo, cân bằng lớp hiếm | trung bình |
 
 ---
 
@@ -498,7 +523,7 @@ Quy trình: train bản **v1** ngay với data hiện tại để có baseline s
 ```
 AI/
 ├── config.yaml                # toàn bộ siêu tham số của một lần chạy
-├── dataset.py                 # đọc *_audio.npy (mmap) + meta, trả (wave, labels)
+├── dataset.py                 # đọc per-song .npy + chords.parquet, random crop 5s, gán nhãn từ timeline
 ├── augment.py                 # pitch-shift + đổi nhãn root (có unit test), gain, nhiễu
 ├── model.py                   # MERT + gộp tầng + pooling + 3 head nối tầng
 ├── losses.py                  # CE có ignore_index, Focal Loss, trọng số lớp
@@ -508,7 +533,7 @@ AI/
 ├── infer.py                   # cửa sổ trượt + Viterbi + ngưỡng
 ├── export_onnx.py             # xuất ONNX + đo tốc độ
 └── notebooks/colab_train.ipynb
-tests/unit/training/           # test: đổi nhãn pitch-shift, mask loss, shape model
+tests/unit/training/           # test: đổi nhãn pitch-shift, mask loss, shape model, crop + label lookup
 ```
 
 ---
@@ -517,12 +542,12 @@ tests/unit/training/           # test: đổi nhãn pitch-shift, mask loss, shap
 
 > Checklist đầy đủ hơn (chuẩn hóa âm lượng, lọc nhiễu, mask tổ hợp, giao diện với BE/FE): [`AI/markdown/ai_checklist.md`](ai_checklist.md).
 
-- [ ] Export data mới, `classes.json` khớp bảng lớp trong tài liệu này.
-- [ ] Assert: không `song_id` ở hai split; số audio = số meta; không segment toàn 0.
-- [ ] Nghe thử và đối chiếu nhãn một số segment mỗi nguồn.
+- [x] Export data mới — **đã export** tại `DE/data/export/v2/` (2026-11-04). `classes.json` khớp bảng lớp.
+- [ ] Assert: không `song_id` ở hai split; số file .npy = số bài trong parquet; không file toàn 0.
+- [ ] Nghe thử và đối chiếu chord timeline một số bài mỗi nguồn.
 - [ ] Hàm đổi nhãn pitch-shift có unit test.
 - [ ] Loss không `nan` khi cả batch thiếu nhãn một head.
-- [ ] Chạy một batch MERT qua model, shape `(B,150,1024)` và 25 tầng.
+- [ ] Chạy một batch MERT qua model, shape `(B, 375, 1024)` và 25 tầng.
 - [ ] Có cơ chế resume checkpoint, lưu config + seed.
 - [ ] Đã quyết định các mục §11.
 
@@ -532,7 +557,9 @@ tests/unit/training/           # test: đổi nhãn pitch-shift, mask loss, shap
 
 | Từ | Nghĩa |
 |---|---|
-| Segment | đoạn audio 2 s, đơn vị mẫu của data |
+| Section / bài | đoạn audio whole section (chiều dài biến thiên), đơn vị cấp cao nhất |
+| Crop | đoạn audio 5 s random crop từ section, đơn vị mẫu khi train |
+| Chord timeline | chuỗi (start_ms, end_ms, label) cho mỗi bài — nhãn ground truth |
 | Head | lớp phân loại nhỏ gắn trên vector của MERT |
 | Embedding | vector số biểu diễn đoạn audio |
 | LoRA | kỹ thuật train thêm vài ma trận nhỏ thay vì cả model |
