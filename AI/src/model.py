@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoConfig, AutoModel
+from transformers import AutoModel
 
 from src.config import ModelCfg
 
@@ -45,11 +45,12 @@ class ChordModel(nn.Module):
         super().__init__()
         self.cfg = cfg
 
-        mert_config = AutoConfig.from_pretrained(cfg.name, trust_remote_code=True)
-        mert_config.output_hidden_states = True
-        self.mert = AutoModel.from_pretrained(cfg.name, config=mert_config, trust_remote_code=True)
+        self.mert = AutoModel.from_pretrained(cfg.name, trust_remote_code=True)
         for p in self.mert.parameters():
             p.requires_grad = False
+
+        self._captured: list[torch.Tensor] = []
+        self._register_hooks()
 
         self.layer_weights = nn.Parameter(torch.zeros(cfg.n_layers))
 
@@ -64,9 +65,36 @@ class ChordModel(nn.Module):
             cfg.dropout,
         )
 
+    def _register_hooks(self) -> None:
+        def make_hook():
+            def hook(module, inp, out):
+                h = out[0] if isinstance(out, tuple) else out
+                if isinstance(h, torch.Tensor):
+                    self._captured.append(h.detach() if not h.requires_grad else h)
+            return hook
+
+        fp = getattr(self.mert, "feature_projection", None)
+        if fp is not None:
+            fp.register_forward_hook(make_hook())
+
+        encoder = getattr(self.mert, "encoder", None)
+        layers = getattr(encoder, "layers", []) if encoder is not None else []
+        for layer in layers:
+            layer.register_forward_hook(make_hook())
+
     def forward(self, wav: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        out = self.mert(wav, return_dict=True)
-        hidden_states = torch.stack(out.hidden_states)
+        self._captured = []
+        out = self.mert(wav)
+
+        n = self.cfg.n_layers
+        if len(self._captured) >= n:
+            hidden_states = torch.stack(self._captured[:n])
+        elif len(self._captured) > 0:
+            pad = [self._captured[-1]] * (n - len(self._captured))
+            hidden_states = torch.stack(self._captured + pad)
+        else:
+            lhs = out.last_hidden_state
+            hidden_states = lhs.unsqueeze(0).expand(n, -1, -1, -1)
 
         w = F.softmax(self.layer_weights, dim=0)
         h = (w[:, None, None, None] * hidden_states).sum(0)
@@ -119,4 +147,3 @@ class ChordModel(nn.Module):
 
 def build_model(cfg: ModelCfg) -> ChordModel:
     return ChordModel(cfg)
-
