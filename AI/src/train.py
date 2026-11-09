@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
@@ -51,7 +51,7 @@ def train_one_epoch(
 
         optimizer.zero_grad()
 
-        with autocast(enabled=cfg.train.fp16):
+        with autocast("cuda", enabled=cfg.train.fp16):
             r, q, e = model(wav)
             loss, details = criterion(r, q, e, root, quality, ext)
 
@@ -93,7 +93,7 @@ def validate(
         quality = batch["quality"].to(device)
         ext = batch["ext"].to(device)
 
-        with autocast(enabled=cfg.train.fp16):
+        with autocast("cuda", enabled=cfg.train.fp16):
             r, q, e = model(wav)
             loss, _ = criterion(r, q, e, root, quality, ext)
 
@@ -184,7 +184,7 @@ def run(cfg: Config, resume_path: str | None = None) -> None:
     total_steps = len(train_loader) * cfg.train.epochs
     warmup_steps = int(total_steps * cfg.train.warmup_ratio)
     scheduler = CosineAnnealingLR(optimizer, T_max=total_steps - warmup_steps)
-    scaler = GradScaler(enabled=cfg.train.fp16)
+    scaler = GradScaler("cuda", enabled=cfg.train.fp16)
 
     start_epoch = 0
     best_val_loss = float("inf")
