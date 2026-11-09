@@ -40,7 +40,7 @@ lora:
   target_modules: ["q_proj", "v_proj"]
 
 augment:
-  enabled: true
+  enabled: false
   pitch_shift_range: [-5, 6]
   gain_db: 6.0
   noise_snr_range: [10, 30]
@@ -52,3 +52,4 @@ eval:
 
 checkpoint_dir: "results/checkpoints_p2"
 results_csv: "results/results_p2.csv"
+
