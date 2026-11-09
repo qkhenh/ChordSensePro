@@ -131,9 +131,9 @@ def save_checkpoint(model, optimizer, scheduler, scaler, epoch, metrics, path: P
     }, path)
 
 
-def load_checkpoint(path: Path, model, optimizer=None, scheduler=None, scaler=None):
+def load_checkpoint(path: Path, model, optimizer=None, scheduler=None, scaler=None, strict: bool = True):
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(ckpt["model_state_dict"], strict=strict)
     if optimizer and "optimizer_state_dict" in ckpt:
         optimizer.load_state_dict(ckpt["optimizer_state_dict"])
     if scheduler and ckpt.get("scheduler_state_dict"):
@@ -154,7 +154,7 @@ def append_results(csv_path: str, row: dict) -> None:
         writer.writerow(row)
 
 
-def run(cfg: Config, resume_path: str | None = None) -> None:
+def run(cfg: Config, resume_path: str | None = None, phase1_ckpt: str | None = None) -> None:
     set_seed(cfg.train.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log.info(f"Device: {device}")
@@ -172,7 +172,17 @@ def run(cfg: Config, resume_path: str | None = None) -> None:
         num_workers=cfg.train.num_workers, pin_memory=True,
     )
 
-    model = build_model(cfg.model).to(device)
+    model = build_model(cfg.model)
+
+    if phase1_ckpt:
+        load_checkpoint(Path(phase1_ckpt), model, strict=False)
+        log.info(f"Loaded Phase 1 weights from {phase1_ckpt}")
+
+    if cfg.lora.enabled:
+        model.apply_lora(cfg.lora)
+        log.info(f"LoRA applied: r={cfg.lora.r}, alpha={cfg.lora.alpha}, modules={cfg.lora.target_modules}")
+
+    model = model.to(device)
     criterion = ChordLoss(weights=cfg.train.loss_weights, focal_gamma=cfg.train.focal_gamma)
 
     param_groups = model.get_trainable_params()
@@ -243,9 +253,10 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/default.yaml")
-    parser.add_argument("--resume", default=None)
+    parser.add_argument("--resume", default=None, help="resume Phase 2 checkpoint")
+    parser.add_argument("--phase1_ckpt", default=None, help="Phase 1 best.pt to init Phase 2")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
-    run(cfg, resume_path=args.resume)
+    run(cfg, resume_path=args.resume, phase1_ckpt=args.phase1_ckpt)
 

@@ -128,6 +128,20 @@ class ChordModel(nn.Module):
         else:
             return h.mean(dim=1)
 
+    def apply_lora(self, lora_cfg) -> None:
+        from peft import LoraConfig, get_peft_model
+        peft_config = LoraConfig(
+            r=lora_cfg.r,
+            lora_alpha=lora_cfg.alpha,
+            target_modules=lora_cfg.target_modules,
+            lora_dropout=lora_cfg.dropout,
+            bias="none",
+        )
+        self.mert = get_peft_model(self.mert, peft_config)
+        for name, p in self.mert.named_parameters():
+            if "lora_" in name:
+                p.requires_grad = True
+
     def get_trainable_params(self) -> list[dict]:
         head_params = []
         for name, p in self.named_parameters():
