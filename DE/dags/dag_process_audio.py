@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, "/opt/airflow")
 
 from dags.wrapper.process_audio_wrapper import (
-    pick_pending_jobs, process_and_save, send_summary, on_task_failure,
+    reset_stale_jobs, pick_pending_jobs, process_and_save, send_summary, on_task_failure,
 )
 
 default_args = {
@@ -30,8 +30,9 @@ with DAG(
     tags=["chordsense", "etl", "process"],
 ) as dag:
 
+    t0 = PythonOperator(task_id="reset_stale_jobs",  python_callable=reset_stale_jobs)
     t1 = PythonOperator(task_id="pick_pending_jobs", python_callable=pick_pending_jobs)
     t2 = PythonOperator(task_id="process_and_save",  python_callable=process_and_save)
     t3 = PythonOperator(task_id="send_summary",      python_callable=send_summary)
 
-    t1 >> t2 >> t3
+    t0 >> t1 >> t2 >> t3

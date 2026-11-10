@@ -1,0 +1,57 @@
+data_dir: "../DE/data/export/v3"
+crop_s: 3
+sample_rate: 24000
+
+model:
+  name: "m-a-p/MERT-v1-330M"
+  n_layers: 25
+  hidden_dim: 1024
+  n_root: 12
+  n_quality: 6
+  n_ext: 15
+  n_bass: 13
+  head_hidden: 128
+  ext_head_hidden: 256
+  ext_head_mid: 64
+  bass_head_hidden: 128
+  dropout: 0.3
+  detach_logits: true
+  pooling: "mean"
+
+train:
+  phase: 1
+  epochs: 20
+  batch_size: 24
+  lr_head: 2.0e-4
+  lr_lora: 5.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  grad_clip: 1.0
+  early_stop_patience: 3
+  loss_weights: [0.4, 0.3, 0.2, 0.1]
+  focal_gamma: 2.0
+  fp16: true
+  seed: 42
+  num_workers: 2
+
+lora:
+  enabled: false
+  r: 32
+  alpha: 64
+  dropout: 0.1
+  target_modules: ["q_proj", "v_proj", "k_proj"]
+
+augment:
+  enabled: false
+  pitch_shift_range: [-5, 6]
+  gain_db: 6.0
+  noise_snr_range: [10, 30]
+  noise_prob: 0.5
+  reverb_prob: 0.0
+
+eval:
+  bootstrap_n: 1000
+
+checkpoint_dir: "results/v3_3s_p1"
+results_csv: "results/v3_3s_p1/results.csv"
+

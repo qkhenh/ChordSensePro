@@ -5,6 +5,20 @@
 
 ---
 
+## 2026-11-10 — Dataset v3: Parse `bass_id` (13 classes) cho Slash Chords
+
+### Thay đổi code
+
+| File | Thay đổi |
+|------|----------|
+| `harte_mapper.py` | Thêm `parse_bass_id(label_raw, root_id)` và trường `bass_id` (0..11 = `C..B`, 12 = `none`) vào `MappedChord`. `/1` và trường hợp bass trùng root được gộp về `12` (`none`). |
+| `label_handler.py` | Gán `chord["bass_id"] = mapped.bass_id` cho `chord_timeline`. |
+| `sample_writer_handler.py` | Thêm `bass_id` vào `data.chord_rows`. |
+| `scripts/export_dataset_v3.py` (mới) | Tạo `DE/data/export/v3/` từ `v2/`: thêm cột `bass_id` vào `chords.parquet`, thêm `"bass"` (13 classes) và `"bass_distribution"` vào `classes.json`, hardlink 6.222 file `.npy` sang `v3/{split}/audio/` (giữ nguyên `v2/` làm backup). |
+| `test_harte_mapper.py`, `test_training_handlers.py` | Thêm unit tests cho `parse_bass_id` và `bass_id` trong `chord_timeline` (**231 passed**). |
+
+---
+
 ## 2026-10-30 — Pipeline v2: whole section + frame labels + htdemucs_ft
 
 ### Quyết định đã chốt

@@ -9,9 +9,11 @@ model:
   n_root: 12
   n_quality: 6
   n_ext: 15
+  n_bass: 13
   head_hidden: 128
   ext_head_hidden: 256
   ext_head_mid: 64
+  bass_head_hidden: 128
   dropout: 0.3
   detach_logits: true
   pooling: "mean"

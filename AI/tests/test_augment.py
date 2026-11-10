@@ -8,7 +8,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.augment import Augmenter, pitch_shift_root
+from src.augment import Augmenter, pitch_shift_bass, pitch_shift_root
 from src.config import AugmentCfg
 
 
@@ -18,6 +18,16 @@ def test_pitch_shift_root_all():
             result = pitch_shift_root(root, shift)
             assert 0 <= result < 12
             assert result == (root + shift) % 12
+
+
+def test_pitch_shift_bass():
+    for bass in range(12):
+        for shift in range(-5, 7):
+            result = pitch_shift_bass(bass, shift)
+            assert 0 <= result < 12
+            assert result == (bass + shift) % 12
+    assert pitch_shift_bass(12, 4) == 12
+    assert pitch_shift_bass(-100, 4) == -100
 
 
 def test_pitch_shift_root_ignore():

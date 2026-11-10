@@ -75,6 +75,16 @@ class CrawlQueueRepository:
                         WHERE id = %s
                     """, (status.value, now, item_id))
 
+    def reset_stale_running(self, cutoff: datetime) -> int:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE crawl_queue
+                    SET status = 'pending', processed_at = NULL
+                    WHERE status = 'running' AND processed_at < %s
+                """, (cutoff,))
+                return cur.rowcount
+
     def count_by_status(self) -> dict[str, int]:
         """Return count per status."""
         with get_connection() as conn:

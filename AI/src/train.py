@@ -48,12 +48,13 @@ def train_one_epoch(
         root = batch["root"].to(device)
         quality = batch["quality"].to(device)
         ext = batch["ext"].to(device)
+        bass = batch["bass"].to(device)
 
         optimizer.zero_grad()
 
         with autocast("cuda", enabled=cfg.train.fp16):
-            r, q, e = model(wav)
-            loss, details = criterion(r, q, e, root, quality, ext)
+            r, q, e, b = model(wav)
+            loss, details = criterion(r, q, e, b, root, quality, ext, bass)
 
         if cfg.train.fp16:
             scaler.scale(loss).backward()
@@ -84,6 +85,7 @@ def validate(
     all_root_pred, all_root_true = [], []
     all_qual_pred, all_qual_true = [], []
     all_ext_pred, all_ext_true = [], []
+    all_bass_pred, all_bass_true = [], []
     total_loss = 0.0
     n_batches = 0
 
@@ -92,10 +94,11 @@ def validate(
         root = batch["root"].to(device)
         quality = batch["quality"].to(device)
         ext = batch["ext"].to(device)
+        bass = batch["bass"].to(device)
 
         with autocast("cuda", enabled=cfg.train.fp16):
-            r, q, e = model(wav)
-            loss, _ = criterion(r, q, e, root, quality, ext)
+            r, q, e, b = model(wav)
+            loss, _ = criterion(r, q, e, b, root, quality, ext, bass)
 
         total_loss += loss.item()
         n_batches += 1
@@ -106,6 +109,8 @@ def validate(
         all_qual_true.append(quality.cpu())
         all_ext_pred.append(e.argmax(-1).cpu())
         all_ext_true.append(ext.cpu())
+        all_bass_pred.append(b.argmax(-1).cpu())
+        all_bass_true.append(bass.cpu())
 
     root_pred = torch.cat(all_root_pred).numpy()
     root_true = torch.cat(all_root_true).numpy()
@@ -113,8 +118,15 @@ def validate(
     qual_true = torch.cat(all_qual_true).numpy()
     ext_pred = torch.cat(all_ext_pred).numpy()
     ext_true = torch.cat(all_ext_true).numpy()
+    bass_pred = torch.cat(all_bass_pred).numpy()
+    bass_true = torch.cat(all_bass_true).numpy()
 
-    metrics = compute_metrics(root_pred, root_true, qual_pred, qual_true, ext_pred, ext_true)
+    metrics = compute_metrics(
+        root_pred, root_true,
+        qual_pred, qual_true,
+        ext_pred, ext_true,
+        bass_pred, bass_true,
+    )
     metrics["val_loss"] = total_loss / max(n_batches, 1)
     return metrics
 
@@ -226,7 +238,8 @@ def run(cfg: Config, resume_path: str | None = None, phase1_ckpt: str | None = N
             f"val_loss={val_loss:.4f} | "
             f"root_acc={val_metrics.get('root_acc', 0):.3f} | "
             f"qual_acc={val_metrics.get('quality_acc', 0):.3f} | "
-            f"ext_acc={val_metrics.get('ext_acc', 0):.3f}"
+            f"ext_acc={val_metrics.get('ext_acc', 0):.3f} | "
+            f"bass_acc={val_metrics.get('bass_acc', 0):.3f}"
         )
 
         all_metrics = {**train_metrics, **val_metrics, "epoch": epoch + 1, "elapsed_s": elapsed}

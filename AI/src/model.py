@@ -64,6 +64,11 @@ class ChordModel(nn.Module):
             cfg.n_ext,
             cfg.dropout,
         )
+        self.head_bass = ChordHead(
+            d + cfg.n_root + cfg.n_quality + cfg.n_ext,
+            cfg.bass_head_hidden,
+            cfg.n_bass,
+        )
 
     def _register_hooks(self) -> None:
         def make_hook():
@@ -82,7 +87,7 @@ class ChordModel(nn.Module):
         for layer in layers:
             layer.register_forward_hook(make_hook())
 
-    def forward(self, wav: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, wav: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         self._captured = []
         out = self.mert(wav)
 
@@ -115,7 +120,13 @@ class ChordModel(nn.Module):
             quality_input = quality_logits
         ext_logits = self.head_ext(torch.cat([emb, root_input, quality_input], dim=-1))
 
-        return root_logits, quality_logits, ext_logits
+        if self.cfg.detach_logits:
+            ext_input = ext_logits.detach()
+        else:
+            ext_input = ext_logits
+        bass_logits = self.head_bass(torch.cat([emb, root_input, quality_input, ext_input], dim=-1))
+
+        return root_logits, quality_logits, ext_logits, bass_logits
 
     def _pool(self, h: torch.Tensor) -> torch.Tensor:
         if self.cfg.pooling == "mean":

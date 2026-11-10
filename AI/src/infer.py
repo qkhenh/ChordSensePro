@@ -86,6 +86,7 @@ def infer_song(
                 "root": -1,
                 "quality": -1,
                 "ext": -1,
+                "bass": 12,
                 "confidence": 0.0,
                 "is_silence": True,
             })
@@ -99,16 +100,19 @@ def infer_song(
         wav_t = torch.from_numpy(wav).unsqueeze(0).to(device)
 
         with autocast("cuda"):
-            r, q, e = model(wav_t)
+            r, q, e, b = model(wav_t)
 
         root_prob = F.softmax(r, dim=-1)
         qual_prob = F.softmax(q, dim=-1)
         ext_prob = F.softmax(e, dim=-1)
+        bass_prob = F.softmax(b, dim=-1)
 
         root_id = root_prob.argmax(-1).item()
         root_conf = root_prob[0, root_id].item()
 
         qual_id = qual_prob.argmax(-1).item()
+        bass_id = bass_prob.argmax(-1).item()
+        bass_conf = bass_prob[0, bass_id].item()
 
         if combo_mask is not None:
             masked_ext_prob = ext_prob.clone()
@@ -123,12 +127,13 @@ def infer_song(
             ext_id = ext_prob.argmax(-1).item()
             ext_conf = ext_prob[0, ext_id].item()
 
-        avg_conf = (root_conf + qual_prob[0, qual_id].item() + ext_conf) / 3
+        avg_conf = (root_conf + qual_prob[0, qual_id].item() + ext_conf + bass_conf) / 4
 
-        if root_conf < confidence_threshold:
+        if avg_conf < confidence_threshold:
             root_id = -1
             qual_id = -1
             ext_id = -1
+            bass_id = 12
 
         results.append({
             "start_ms": pos / sr * 1000,
@@ -136,6 +141,7 @@ def infer_song(
             "root": root_id,
             "quality": qual_id,
             "ext": ext_id,
+            "bass": bass_id,
             "confidence": round(avg_conf, 4),
             "is_silence": False,
         })
@@ -152,7 +158,8 @@ def merge_consecutive(results: list[dict]) -> list[dict]:
         prev = merged[-1]
         if (r["root"] == prev["root"]
                 and r["quality"] == prev["quality"]
-                and r["ext"] == prev["ext"]):
+                and r["ext"] == prev["ext"]
+                and r.get("bass", 12) == prev.get("bass", 12)):
             prev["end_ms"] = r["end_ms"]
             prev["confidence"] = max(prev["confidence"], r["confidence"])
         else:

@@ -9,19 +9,21 @@ model:
   n_root: 12
   n_quality: 6
   n_ext: 15
+  n_bass: 13
   head_hidden: 128
   ext_head_hidden: 256
   ext_head_mid: 64
+  bass_head_hidden: 128
   dropout: 0.2
-  detach_logits: false
+  detach_logits: true
   pooling: "mean"
 
 train:
   phase: 2
   epochs: 20
   batch_size: 16
-  lr_head: 5.0e-5
-  lr_lora: 1.0e-4
+  lr_head: 2.0e-4
+  lr_lora: 5.0e-5
   weight_decay: 0.01
   warmup_ratio: 0.1
   grad_clip: 1.0

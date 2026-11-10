@@ -101,6 +101,7 @@ class SampleWriterHandler(BaseProcessingHandler):
                     "root_id":      c.get("root_id"),
                     "quality_id":   c.get("quality_id"),
                     "ext_id":       c.get("ext_id"),
+                    "bass_id":      c.get("bass_id", 12),
                 }
                 for c in data.chord_timeline
             ]

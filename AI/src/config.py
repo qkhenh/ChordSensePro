@@ -14,9 +14,11 @@ class ModelCfg:
     n_root: int = 12
     n_quality: int = 6
     n_ext: int = 15
+    n_bass: int = 13
     head_hidden: int = 128
     ext_head_hidden: int = 256
     ext_head_mid: int = 64
+    bass_head_hidden: int = 128
     dropout: float = 0.3
     detach_logits: bool = True
     pooling: str = "mean"
@@ -33,7 +35,7 @@ class TrainCfg:
     warmup_ratio: float = 0.05
     grad_clip: float = 1.0
     early_stop_patience: int = 3
-    loss_weights: list[float] = field(default_factory=lambda: [0.5, 0.5, 0.0])
+    loss_weights: list[float] = field(default_factory=lambda: [0.4, 0.3, 0.2, 0.1])
     focal_gamma: float = 2.0
     fp16: bool = True
     seed: int = 42

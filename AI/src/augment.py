@@ -51,3 +51,10 @@ def pitch_shift_root(root_id: int, n_steps: int) -> int:
         return root_id
     return (root_id + n_steps) % 12
 
+
+def pitch_shift_bass(bass_id: int, n_steps: int) -> int:
+    if bass_id < 0 or bass_id >= 12:
+        return bass_id
+    return (bass_id + n_steps) % 12
+
+

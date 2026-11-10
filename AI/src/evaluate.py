@@ -5,11 +5,12 @@ from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
 
 
 ROOT_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-QUALITY_NAMES = ["major", "minor", "dim", "aug", "sus2", "sus4"]
+QUALITY_NAMES = ["major", "minor", "dominant", "diminished", "sus2", "sus4"]
 EXT_NAMES = [
-    "none", "7", "maj7", "m7", "dim7", "aug7", "9", "maj9", "m9",
-    "add9", "6", "m6", "sus4", "dom7", "b5",
+    "none", "b5", "#5", "maj7", "min7", "dom7", "add9", "b9", "nat9",
+    "#9", "nat11", "#11", "nat13", "b13", "alt",
 ]
+BASS_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "none"]
 
 
 def _masked(pred: np.ndarray, true: np.ndarray, ignore: int = -100):
@@ -24,6 +25,8 @@ def compute_metrics(
     qual_true: np.ndarray,
     ext_pred: np.ndarray,
     ext_true: np.ndarray,
+    bass_pred: np.ndarray | None = None,
+    bass_true: np.ndarray | None = None,
 ) -> dict[str, float]:
     results: dict[str, float] = {}
 
@@ -51,16 +54,38 @@ def compute_metrics(
         results["ext_acc"] = 0.0
         results["ext_f1_macro"] = 0.0
 
+    if bass_pred is not None and bass_true is not None:
+        bp, bt = _masked(bass_pred, bass_true)
+        if len(bt) > 0:
+            results["bass_acc"] = accuracy_score(bt, bp)
+            results["bass_f1_macro"] = f1_score(bt, bp, average="macro", zero_division=0)
+        else:
+            results["bass_acc"] = 0.0
+            results["bass_f1_macro"] = 0.0
+
     mask_all = (root_true != -100) & (qual_true != -100) & (ext_true != -100)
-    if mask_all.sum() > 0:
-        chord_correct = (
-            (root_pred[mask_all] == root_true[mask_all])
-            & (qual_pred[mask_all] == qual_true[mask_all])
-            & (ext_pred[mask_all] == ext_true[mask_all])
-        )
-        results["chord_acc"] = chord_correct.mean()
+    if bass_pred is not None and bass_true is not None:
+        mask_all = mask_all & (bass_true != -100)
+        if mask_all.sum() > 0:
+            chord_correct = (
+                (root_pred[mask_all] == root_true[mask_all])
+                & (qual_pred[mask_all] == qual_true[mask_all])
+                & (ext_pred[mask_all] == ext_true[mask_all])
+                & (bass_pred[mask_all] == bass_true[mask_all])
+            )
+            results["chord_acc"] = float(chord_correct.mean())
+        else:
+            results["chord_acc"] = 0.0
     else:
-        results["chord_acc"] = 0.0
+        if mask_all.sum() > 0:
+            chord_correct = (
+                (root_pred[mask_all] == root_true[mask_all])
+                & (qual_pred[mask_all] == qual_true[mask_all])
+                & (ext_pred[mask_all] == ext_true[mask_all])
+            )
+            results["chord_acc"] = float(chord_correct.mean())
+        else:
+            results["chord_acc"] = 0.0
 
     return results
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone, timedelta
 
 from src.data_ingest.infrastructure.mongo.raw_audio_job_repository import RawAudioJobRepository
 from src.data_ingest.domain.models.raw_audio_job import RawAudioJob, RawJobStatus
@@ -14,8 +15,30 @@ from src.shared.application.email_utils import notify_dag_failure, notify_batch_
 
 log = logging.getLogger(__name__)
 
-BATCH_SIZE = int(os.getenv("INGEST_BATCH_SIZE", "20"))
+BATCH_SIZE       = int(os.getenv("INGEST_BATCH_SIZE", "20"))
 PIPELINE_VERSION = int(os.getenv("PIPELINE_VERSION", "2"))
+STALE_MINUTES    = int(os.getenv("STALE_JOB_MINUTES", "30"))
+
+
+def reset_stale_jobs(**_context) -> None:
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=STALE_MINUTES)
+
+    async def _run() -> None:
+        db   = get_mongo_db()
+        repo = RawAudioJobRepository(db)
+        result = await db.raw_audio_jobs.update_many(
+            {"status": RawJobStatus.PROCESSING, "updated_at": {"$lt": cutoff}},
+            {"$set": {"status": RawJobStatus.PENDING}},
+        )
+        if result.modified_count:
+            log.info(f"[reset_stale_jobs] Reset {result.modified_count} stale Mongo jobs → pending")
+
+    asyncio.run(_run())
+
+    cq_repo = CrawlQueueRepository()
+    reset_count = cq_repo.reset_stale_running(cutoff)
+    if reset_count:
+        log.info(f"[reset_stale_jobs] Reset {reset_count} stale crawl_queue jobs → pending")
 
 
 def on_task_failure(context: dict) -> None:

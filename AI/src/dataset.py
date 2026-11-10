@@ -6,6 +6,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
+from src.augment import pitch_shift_bass, pitch_shift_root
 from src.config import Config
 
 
@@ -59,14 +60,15 @@ class ChordDataset(Dataset):
 
         crop_start_ms = crop_start / self.sr * 1000
         mid_ms = crop_start_ms + (self.cfg.crop_s * 500)
-        root_id, quality_id, ext_id = self._lookup_chord(song_id, mid_ms)
+        root_id, quality_id, ext_id, bass_id = self._lookup_chord(song_id, mid_ms)
 
         pitch_shift_n = 0
         if self.augment_fn is not None:
             crop, pitch_shift_n = self.augment_fn(crop, self.sr)
 
-        if pitch_shift_n != 0 and root_id != -100:
-            root_id = (root_id + pitch_shift_n) % 12
+        if pitch_shift_n != 0:
+            root_id = pitch_shift_root(root_id, pitch_shift_n)
+            bass_id = pitch_shift_bass(bass_id, pitch_shift_n)
 
         std = crop.std()
         if std > 1e-6:
@@ -77,25 +79,30 @@ class ChordDataset(Dataset):
             "root": torch.tensor(root_id, dtype=torch.long),
             "quality": torch.tensor(quality_id, dtype=torch.long),
             "ext": torch.tensor(ext_id, dtype=torch.long),
+            "bass": torch.tensor(bass_id, dtype=torch.long),
             "song_id": song_id,
         }
 
-    def _lookup_chord(self, song_id: str, time_ms: float) -> tuple[int, int, int]:
+    def _lookup_chord(self, song_id: str, time_ms: float) -> tuple[int, int, int, int]:
         chords = self._chords_by_song.get(song_id)
         if chords is None or chords.empty:
-            return -100, -100, -100
+            return -100, -100, -100, -100
 
         mask = (chords["start_ms"] <= time_ms) & (chords["end_ms"] > time_ms)
         matches = chords.loc[mask]
 
         if matches.empty:
-            return -100, -100, -100
+            return -100, -100, -100, -100
 
         row = matches.iloc[0]
 
         root_id = int(row["root_id"]) if pd.notna(row["root_id"]) else -100
         quality_id = int(row["quality_id"]) if pd.notna(row["quality_id"]) else -100
         ext_id = int(row["ext_id"]) if pd.notna(row["ext_id"]) else -100
+        if "bass_id" in row and pd.notna(row["bass_id"]):
+            bass_id = int(row["bass_id"])
+        else:
+            bass_id = -100 if root_id == -100 else 12
 
-        return root_id, quality_id, ext_id
+        return root_id, quality_id, ext_id, bass_id
 

@@ -1,8 +1,10 @@
 import pytest
 
 from src.data_processing.application.mappers.harte_mapper import (
+    BASS_NONE_ID,
     LabelStatus,
     map_harte,
+    parse_bass_id,
 )
 from src.shared.domain.value_objects import ChordExtension as E
 from src.shared.domain.value_objects import ChordQuality as Q
@@ -203,5 +205,26 @@ class TestSixthDegreeInIntervalForm:
     def test_sixth_with_seventh_is_the_13th(self):
         assert _triple("F:(3,5,6,7,9)") == (LabelStatus.OK, R.F, Q.major, E.nat13)
         assert _triple("F:(3,5,b7,6)") == (LabelStatus.OK, R.F, Q.dominant, E.nat13)
+
+
+class TestBassParsing:
+    """Slash chord bass note parsing (0..11 = C..B, 12 = none / root position)."""
+
+    @pytest.mark.parametrize("label, root_id, expected_bass", [
+        ("C:maj",       0,  BASS_NONE_ID),  # no slash -> 12
+        ("C:maj/1",     0,  BASS_NONE_ID),  # /1 is root position -> 12
+        ("G:(1,5)/1",   7,  BASS_NONE_ID),  # /1 -> 12
+        ("C:maj/C",     0,  BASS_NONE_ID),  # bass note equals root -> 12
+        ("D:maj/5",     2,  9),             # D + 7 semitones = A (9)
+        ("C:maj/3",     0,  4),             # C + 4 semitones = E (4)
+        ("D:min/b3",    2,  5),             # D + 3 semitones = F (5)
+        ("D:maj/G",     2,  7),             # explicit note G (7)
+        ("C:maj/Bb",    0,  10),            # explicit flat note Bb -> A# (10)
+        ("C:maj/9",     0,  BASS_NONE_ID),  # unmapped interval -> fallback 12
+    ])
+    def test_parse_bass_id(self, label, root_id, expected_bass):
+        assert parse_bass_id(label, root_id) == expected_bass
+        assert map_harte(label).bass_id == expected_bass
+
 
 

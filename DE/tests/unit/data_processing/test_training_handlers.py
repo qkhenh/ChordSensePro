@@ -109,12 +109,15 @@ def test_label_handler_v2_fills_chord_timeline():
         {"start_ms": 0, "end_ms": 2000, "label_raw": "C:maj7"},
         {"start_ms": 2000, "end_ms": 4000, "label_raw": "N"},
         {"start_ms": 4000, "end_ms": 6000, "label_raw": "C:6"},
+        {"start_ms": 6000, "end_ms": 8000, "label_raw": "D:maj/5"},
     ]
     out = LabelHandler().handle(data)
     assert out.chord_timeline[0]["label_status"] == "ok"
     assert out.chord_timeline[0]["root_id"] == 0
+    assert out.chord_timeline[0]["bass_id"] == 12
     assert out.chord_timeline[1]["label_status"] == "no_chord"
     assert out.chord_timeline[2]["label_status"] == "partial"
+    assert out.chord_timeline[3]["bass_id"] == 9
 
 
 def test_annotation_handler_v2_builds_timeline(tmp_path: Path):

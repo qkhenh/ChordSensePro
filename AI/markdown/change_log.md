@@ -2,6 +2,106 @@
 
 ---
 
+## 2026-11-10 — Triển khai Improvement Plan v3 (Phase A, B, C1, D) + Benchmark CUDA
+
+### Phase A — DE: Parse `bass_id` & Export Dataset v3
+- Thêm [`parse_bass_id()`](file:///d:/qkhenh/Project/ChordSensePro/DE/src/data_processing/application/mappers/harte_mapper.py#L41-L60) vào `harte_mapper.py`:
+  - Map 13 classes: `0..11` (`C..B`), `12` (`none` = không đảo bass / bass trùng root).
+  - `/1` (4.570 dòng) và trường hợp bass trùng root (`C:maj/C`) được gộp thống nhất về `12` (`none`).
+- Viết [`DE/scripts/export_dataset_v3.py`](file:///d:/qkhenh/Project/ChordSensePro/DE/scripts/export_dataset_v3.py) tạo `DE/data/export/v3/` từ `v2` (giữ nguyên `v2/` làm backup an toàn, dùng hardlink cho 6.222 file `.npy` tốn 0 GB dung lượng phụ):
+  - Tổng: **216.216** chord rows | **14.467** slash chords thật sự (`bass != root`, **6.69%**), `none`: 201.749 (**93.31%**).
+  - Cập nhật `classes.json` (thêm `"bass"` 13 classes + `"bass_distribution"`) và `config.yaml` (`pipeline_version: 3`).
+
+### Phase B — AI: Nâng cấp Model v3 lên 4 Cascaded Heads (`root → quality → ext → bass`)
+- [`AI/src/config.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/config.py): Thêm `n_bass: int = 13`, `bass_head_hidden: int = 128` vào `ModelCfg`; `loss_weights` 4 phần tử `[0.4, 0.3, 0.2, 0.1]` vào `TrainCfg`; `data_dir` mặc định trỏ tới `../DE/data/export/v3`.
+- [`AI/src/model.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/model.py): Thêm `self.head_bass = ChordHead(1057, 128, 13)` vào `ChordModel`; `forward()` trả 4 logits `(root, quality, ext, bass)`.
+- [`AI/src/dataset.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/dataset.py): Đọc `bass_id` từ `chords.parquet` (fallback `12` nếu chạy trên data v2), hỗ trợ dịch `bass_id` khi bật pitch-shift (`0 <= bass_id < 12`).
+- [`AI/src/losses.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/losses.py): Thêm `ce_bass = nn.CrossEntropyLoss(ignore_index=-100)` vào `ChordLoss`, chống `NaN` khi cả batch bị mask.
+- [`AI/src/train.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/train.py) & [`AI/src/evaluate.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/evaluate.py): Xử lý 4 heads trong `train_one_epoch` / `validate`, tính `bass_acc` và `bass_f1_macro`.
+- [`AI/src/export_onnx.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/export_onnx.py), [`AI/src/infer.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/infer.py), [`AI/src/extract_embeddings.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/extract_embeddings.py): Cập nhật xuất và suy luận 4 outputs (`bass_logits`).
+
+### Phase C1 — Tạo 4 Config YAML & Cập nhật Colab Notebook
+- Tạo 4 file config tại `AI/configs/`:
+  - [`v3_5s_p1.yaml`](file:///d:/qkhenh/Project/ChordSensePro/AI/configs/v3_5s_p1.yaml), [`v3_5s_p2.yaml`](file:///d:/qkhenh/Project/ChordSensePro/AI/configs/v3_5s_p2.yaml) (`crop_s: 5`, `batch_size: 16`, LoRA `r=32`, `[q_proj, v_proj, k_proj]`)
+  - [`v3_3s_p1.yaml`](file:///d:/qkhenh/Project/ChordSensePro/AI/configs/v3_3s_p1.yaml), [`v3_3s_p2.yaml`](file:///d:/qkhenh/Project/ChordSensePro/AI/configs/v3_3s_p2.yaml) (`crop_s: 3`, `batch_size: 24`, LoRA `r=32`, `[q_proj, v_proj, k_proj]`)
+- Cập nhật [`AI/notebooks/colab_train.ipynb`](file:///d:/qkhenh/Project/ChordSensePro/AI/notebooks/colab_train.ipynb): Tự động chạy `export_dataset_v3.py` trên Colab từ `/content/data_v2` sang `/content/data_v3` trong ~3s (không cần upload lại 15 GB audio lên Drive).
+
+### Phase D — Cải thiện `serve.py` + Fix bug tên hợp âm + Benchmark RTX 3050 CUDA
+- Thêm `_smooth_jitter()` (temporal smoothing) khử nhiễu nhảy hợp âm 1 frame (`A → B → A` thành `A`).
+- Cập nhật `ONNXPredictor.predict()` tự động tương thích cả model ONNX 3-output (v2) và 4-output (v3).
+- Cập nhật `chord_name()` hỗ trợ slash chord (`Cmaj7/E`, `Bm7/F#`) và đồng bộ bảng `CHORD_SUFFIX` chuẩn từ `value_objects.py` (fix lỗi ghép chuỗi `min + m7 -> Bmm7` thành `Bm7`, `maj + nat9 -> C9` thành `Cmaj9`).
+- **Benchmark ONNX v2 P2 trên RTX 3050 (CUDAExecutionProvider):** `mean = 89.2ms`, `p95 = 89.7ms` (nhanh hơn 37.5× so với CPU).
+- **Unit tests:** `DE/tests/unit` (**231 passed**), `AI/tests` (**32 passed**, thêm `test_serve.py`).
+
+### Fix các lỗi từ Code Review (v3)
+1. **LR Phase 2 (`v3_5s_p2.yaml`, `v3_3s_p2.yaml`, `phase2_lora.yaml`):** Sửa `lr_head: 2.0e-4`, `lr_lora: 5.0e-5` (đảm bảo `lr_lora < lr_head` tránh overfit backbone).
+2. **`detach_logits` Phase 2:** Chuyển `detach_logits: true` trong cả `v3_5s_p2.yaml`, `v3_3s_p2.yaml`, `phase2_lora.yaml` để tránh gradient cascade gây nhiễu giữa các head khi fine-tune LoRA.
+3. **`evaluate.py` (`chord_acc`):** Cập nhật `chord_acc` kiểm tra đủ cả 4 head (`root == quality == ext == bass`) khi truyền `bass_pred` và `bass_true`.
+4. **`infer.py` (Confidence check):** Đồng bộ kiểm tra `if avg_conf < confidence_threshold:` giống `serve.py` thay vì chỉ kiểm tra `root_conf`.
+5. **`serve.py` & `config.py` (Backward compatibility):** Giữ default `CLASSES_JSON` và `Config.data_dir` về `v2` kèm danh sách fallback tự động tìm cả `v3` và `v2`; đưa `from collections import Counter` lên đầu file `serve.py`.
+6. **`augment.py` & `losses.py`:** Thêm hàm `pitch_shift_bass(bass_id, n_steps)` (kèm unit test) và bổ sung `torch.isnan(l_ext)` guard trong `ChordLoss`.
+
+---
+
+## 2026-11-09 (tối) — Deploy serve.py + phát hiện issues + lập plan v3
+
+### Deploy ONNX inference server (`serve.py`)
+
+Viết [`AI/src/serve.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/serve.py) — FastAPI + ONNX Runtime:
+- `GET /health`, `POST /predict` (audio file), `POST /predict_npy` (raw int16)
+- Sliding window 5s / step 1s, RMS gate, valid_combo_mask, merge consecutive
+- `chord_name()` → human-readable chord string
+
+### Bugs & fixes trong quá trình deploy
+
+| # | Lỗi | Nguyên nhân | Fix | Prod? |
+|---|------|-------------|-----|-------|
+| 1 | ORT GPU 1.31.1 không dùng CUDA | Yêu cầu CUDA 13, máy có 12.6 | Downgrade `onnxruntime-gpu==1.20.0` | ✅ |
+| 2 | ORT 1.20.0 vẫn không tìm cuBLAS DLL | DLL nằm trong `torch/lib` | Prepend `torch/lib` vào `os.environ["PATH"]` | ✅ |
+| 3 | `cannot access local variable 'torchaudio'` | `import` trong try block tạo local var | Dùng `importlib.import_module()` | ✅ |
+| 4 | `TorchCodec is required` khi load MP3 | torchaudio 2.11 đổi backend sang torchcodec | Thay bằng `librosa.load()` | ✅ |
+| 5 | PowerShell `-c` inline SyntaxError | Dấu `"` lồng nhau | Dùng script `.py` riêng | ❌ |
+
+### Test kết quả v2 — phát hiện 5 vấn đề
+
+Test `D:\Untitled.wav` (54.5s, CPU): 20 segments, 67s. Test `D:\full.mp3`.
+
+| # | Vấn đề | Mức độ |
+|---|--------|--------|
+| 1 | Output overlap — cùng timestamp 2 chord | 🔴 |
+| 2 | Chord nhảy loạn (C# → C#m → C#) | 🟡 |
+| 3 | Quality/ext kém — toàn ra trưởng/thứ | 🔴 |
+| 4 | Slash chord không detect | 🔴 |
+| 5 | Chord ngắn (<2s) bị crop 5s nuốt | 🟡 |
+
+### Fix đã áp dụng
+
+- ✅ **Frame-level voting** trong `serve.py` — thay window-level output bằng per-frame majority vote → merge → output clean, không overlap
+
+### Lập plan v3
+
+Xem [`30_improvement_plan_v3.md`](file:///d:/qkhenh/Project/ChordSensePro/AI/markdown/30_improvement_plan_v3.md):
+- **Phase A:** DE parse `bass_id` từ `label_raw` (12,809 slash chord có sẵn), re-export dataset v3
+- **Phase B:** AI model thêm `head_bass` (13 classes), sửa 7 files
+- **Phase C:** Train 4 runs: 5s P1+P2, 3s P1+P2 trên Colab L4
+- **Phase D:** serve.py temporal smoothing + bass output
+- **Phase E:** Manual test + benchmark
+
+### Files mới / sửa
+
+| File | Thay đổi |
+|------|---------|
+| `AI/src/serve.py` | Viết mới → fix 5 bugs → frame-level voting |
+| `AI/markdown/30_improvement_plan_v3.md` | Plan cải thiện v3 |
+| `AI/markdown/model_results_log.md` | Log kết quả model, tư liệu so sánh |
+
+### Commit
+
+- `55bf5e9` — "fix(AI): fix ONNX export for LoRA checkpoint + add serve.py + update docs"
+- Các fix sau commit chưa push (serve.py librosa + voting)
+
+---
+
 ## 2026-11-09 — Kết quả training Phase 1 + Phase 2
 
 ### Phase 1 (MERT frozen, ~550K params)

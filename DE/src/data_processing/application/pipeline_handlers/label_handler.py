@@ -18,6 +18,7 @@ class LabelHandler(BaseProcessingHandler):
                 chord["root_id"] = mapped.root_id
                 chord["quality_id"] = mapped.quality_id
                 chord["ext_id"] = mapped.ext_id
+                chord["bass_id"] = mapped.bass_id
         else:
             for segment in data.segments:
                 if segment.chord_label is None:

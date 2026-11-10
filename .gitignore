@@ -11,6 +11,7 @@ __pycache__/
 venv/
 env/
 *.onnx
+*.onnx.data
 *.pt
 *.pth
 *.bin
@@ -21,6 +22,9 @@ checkpoints/
 outputs/
 .cache/
 .pytest_cache/
+
+# AI results (models too large for git — use Google Drive / DVC)
+AI/results/
 
 # LaTeX
 *.aux

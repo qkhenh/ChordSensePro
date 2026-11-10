@@ -72,8 +72,8 @@ def extract_split(
             embeddings_all.append(pooled.cpu())
 
             mid_ms = s / cfg.sample_rate * 1000 + cfg.crop_s * 500
-            root_id, qual_id, ext_id = _lookup(chords, mid_ms)
-            labels_all.append((sid, s, root_id, qual_id, ext_id))
+            root_id, qual_id, ext_id, bass_id = _lookup(chords, mid_ms)
+            labels_all.append((sid, s, root_id, qual_id, ext_id, bass_id))
 
         if (i + 1) % 100 == 0:
             log.info(f"  [{split}] {i+1}/{len(song_ids)} songs processed")
@@ -85,18 +85,22 @@ def extract_split(
     log.info(f"[{split}] Saved {emb_tensor.shape[0]} embeddings, shape={emb_tensor.shape}")
 
 
-def _lookup(chords: pd.DataFrame | None, time_ms: float) -> tuple[int, int, int]:
+def _lookup(chords: pd.DataFrame | None, time_ms: float) -> tuple[int, int, int, int]:
     if chords is None or chords.empty:
-        return -100, -100, -100
+        return -100, -100, -100, -100
     mask = (chords["start_ms"] <= time_ms) & (chords["end_ms"] > time_ms)
     matches = chords.loc[mask]
     if matches.empty:
-        return -100, -100, -100
+        return -100, -100, -100, -100
     row = matches.iloc[0]
     root_id = int(row["root_id"]) if pd.notna(row["root_id"]) else -100
     qual_id = int(row["quality_id"]) if pd.notna(row["quality_id"]) else -100
     ext_id = int(row["ext_id"]) if pd.notna(row["ext_id"]) else -100
-    return root_id, qual_id, ext_id
+    if "bass_id" in row and pd.notna(row["bass_id"]):
+        bass_id = int(row["bass_id"])
+    else:
+        bass_id = -100 if root_id == -100 else 12
+    return root_id, qual_id, ext_id, bass_id
 
 
 def main():

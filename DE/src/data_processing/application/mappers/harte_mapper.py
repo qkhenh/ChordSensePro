@@ -19,6 +19,46 @@ class LabelStatus(str, Enum):
 ROOT_IDS      = {r: i for i, r in enumerate(RootNote)}
 QUALITY_IDS   = {q: i for i, q in enumerate(ChordQuality)}
 EXTENSION_IDS = {e: i for i, e in enumerate(ChordExtension)}
+BASS_NONE_ID  = 12
+
+INTERVAL_SEMITONES: dict[str, int] = {
+    "1": 0,
+    "b2": 1, "2": 2, "#2": 3,
+    "b3": 3, "3": 4, "#3": 5,
+    "4": 5, "#4": 6,
+    "b5": 6, "5": 7, "#5": 8,
+    "b6": 8, "6": 9, "#6": 10,
+    "b7": 10, "7": 11,
+}
+
+NOTE_TO_ID: dict[str, int] = {
+    "C": 0, "C#": 1, "Db": 1, "D": 2, "D#": 3, "Eb": 3,
+    "E": 4, "F": 5, "F#": 6, "Gb": 6, "G": 7, "G#": 8,
+    "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11,
+}
+
+
+def parse_bass_id(label_raw: str | None, root_id: int | None) -> int:
+    """Parse bass note class (0..11 = C..B, 12 = none / root position)."""
+    if not label_raw or root_id is None or root_id < 0 or "/" not in label_raw:
+        return BASS_NONE_ID
+
+    _, _, bass_str = label_raw.strip().rpartition("/")
+    if not bass_str or ")" in bass_str:
+        return BASS_NONE_ID
+
+    if bass_str in INTERVAL_SEMITONES:
+        semitones = INTERVAL_SEMITONES[bass_str]
+        if semitones == 0:
+            return BASS_NONE_ID
+        bass_id = (root_id + semitones) % 12
+        return BASS_NONE_ID if bass_id == root_id else bass_id
+
+    if bass_str in NOTE_TO_ID:
+        bass_id = NOTE_TO_ID[bass_str]
+        return BASS_NONE_ID if bass_id == root_id else bass_id
+
+    return BASS_NONE_ID
 
 
 @dataclass(frozen=True)
@@ -28,6 +68,7 @@ class MappedChord:
     root:      RootNote | None = None
     quality:   ChordQuality | None = None
     extension: ChordExtension | None = None
+    bass_id:   int = BASS_NONE_ID
 
     @property
     def root_id(self) -> int | None:
@@ -229,6 +270,8 @@ def map_harte(label: str | None) -> MappedChord:
     if root is None:
         return MappedChord(LabelStatus.UNMAPPED)
 
+    bass_id = parse_bass_id(raw, ROOT_IDS[root])
+
     m = _REST_RE.match(rest.strip())
     if m is None:
         return MappedChord(LabelStatus.UNMAPPED)
@@ -238,7 +281,7 @@ def map_harte(label: str | None) -> MappedChord:
 
     # Power chord / unison written as an interval list: 'F#:(1,5)' → only the root is reliable
     if shorthand == "" and degrees and all(d in ("1", "5") for d in degrees):
-        return MappedChord(LabelStatus.PARTIAL, root, None, None)
+        return MappedChord(LabelStatus.PARTIAL, root, None, None, bass_id)
 
     # Interval-list label without shorthand: 'F:(3,5,b7,13)', 'F:(4,5,b7)' (sus), 'A:(1,2,4,5)'
     if shorthand == "" and any(d in ("3", "b3", "4", "2") for d in degrees):
@@ -246,7 +289,7 @@ def map_harte(label: str | None) -> MappedChord:
         if applied is None:
             return MappedChord(LabelStatus.UNMAPPED)
         status = LabelStatus.OK if applied[1] is not None else LabelStatus.PARTIAL
-        return MappedChord(status, root, applied[0], applied[1])
+        return MappedChord(status, root, applied[0], applied[1], bass_id)
 
     if shorthand not in _SHORTHAND:
         return MappedChord(LabelStatus.UNMAPPED)
@@ -259,4 +302,4 @@ def map_harte(label: str | None) -> MappedChord:
         quality, ext = applied
 
     status = LabelStatus.OK if (quality is not None and ext is not None) else LabelStatus.PARTIAL
-    return MappedChord(status, root, quality, ext)
+    return MappedChord(status, root, quality, ext, bass_id)

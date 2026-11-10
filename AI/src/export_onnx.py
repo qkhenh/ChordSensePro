@@ -22,8 +22,8 @@ class ExportWrapper(torch.nn.Module):
         self.model = model
 
     def forward(self, wav: torch.Tensor):
-        r, q, e = self.model(wav)
-        return r, q, e
+        r, q, e, b = self.model(wav)
+        return r, q, e, b
 
 
 def export_onnx(
@@ -59,12 +59,13 @@ def export_onnx(
         (dummy,),
         output_path,
         input_names=["wav"],
-        output_names=["root_logits", "quality_logits", "ext_logits"],
+        output_names=["root_logits", "quality_logits", "ext_logits", "bass_logits"],
         dynamic_axes={
             "wav": {0: "batch"},
             "root_logits": {0: "batch"},
             "quality_logits": {0: "batch"},
             "ext_logits": {0: "batch"},
+            "bass_logits": {0: "batch"},
         },
         opset_version=opset,
         do_constant_folding=True,

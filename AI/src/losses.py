@@ -40,35 +40,52 @@ class ChordLoss(nn.Module):
         ext_class_weight: torch.Tensor | None = None,
     ):
         super().__init__()
-        self.w = weights or [0.3, 0.3, 0.4]
+        w = list(weights) if weights is not None else [0.3, 0.25, 0.25, 0.2]
+        if len(w) == 3:
+            w.append(0.0)
+        self.w = w
         self.ce_root = nn.CrossEntropyLoss(ignore_index=-100)
         self.ce_quality = nn.CrossEntropyLoss(ignore_index=-100)
         self.focal_ext = FocalLoss(gamma=focal_gamma, weight=ext_class_weight, ignore_index=-100)
+        self.ce_bass = nn.CrossEntropyLoss(ignore_index=-100)
 
     def forward(
         self,
         root_logits: torch.Tensor,
         quality_logits: torch.Tensor,
         ext_logits: torch.Tensor,
+        bass_logits: torch.Tensor,
         root_targets: torch.Tensor,
         quality_targets: torch.Tensor,
         ext_targets: torch.Tensor,
+        bass_targets: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, float]]:
         l_root = self.ce_root(root_logits, root_targets)
         l_qual = self.ce_quality(quality_logits, quality_targets)
         l_ext = self.focal_ext(ext_logits, ext_targets)
+        l_bass = self.ce_bass(bass_logits, bass_targets)
 
         if torch.isnan(l_root):
             l_root = torch.tensor(0.0, device=root_logits.device)
         if torch.isnan(l_qual):
             l_qual = torch.tensor(0.0, device=root_logits.device)
+        if torch.isnan(l_ext):
+            l_ext = torch.tensor(0.0, device=root_logits.device)
+        if torch.isnan(l_bass):
+            l_bass = torch.tensor(0.0, device=root_logits.device)
 
-        total = self.w[0] * l_root + self.w[1] * l_qual + self.w[2] * l_ext
+        total = (
+            self.w[0] * l_root
+            + self.w[1] * l_qual
+            + self.w[2] * l_ext
+            + self.w[3] * l_bass
+        )
 
         details = {
             "loss_root": l_root.item(),
             "loss_quality": l_qual.item(),
             "loss_ext": l_ext.item(),
+            "loss_bass": l_bass.item(),
             "loss_total": total.item(),
         }
         return total, details

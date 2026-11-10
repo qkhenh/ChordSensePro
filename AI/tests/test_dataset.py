@@ -43,6 +43,7 @@ def dummy_data(tmp_path):
                     "root_id": j % 12,
                     "quality_id": j % 6,
                     "ext_id": j % 15,
+                    "bass_id": 12 if j % 2 == 0 else (j + 4) % 12,
                 })
 
         sid_short = "song_short"
@@ -55,6 +56,7 @@ def dummy_data(tmp_path):
             "root_id": 0,
             "quality_id": 0,
             "ext_id": 0,
+            "bass_id": 12,
         })
 
         df = pd.DataFrame(records)
@@ -96,9 +98,11 @@ def test_labels_valid_range(dummy_data):
         root = item["root"].item()
         quality = item["quality"].item()
         ext = item["ext"].item()
+        bass = item["bass"].item()
         assert root == -100 or (0 <= root < 12)
         assert quality == -100 or (0 <= quality < 6)
         assert ext == -100 or (0 <= ext < 15)
+        assert bass == -100 or (0 <= bass < 13)
 
 
 def test_val_deterministic(dummy_data):
@@ -109,6 +113,7 @@ def test_val_deterministic(dummy_data):
     item2 = ds[0]
     assert (item1["wav"] == item2["wav"]).all()
     assert item1["root"] == item2["root"]
+    assert item1["bass"] == item2["bass"]
 
 
 def test_lookup_no_chord_gap(dummy_data):
@@ -116,5 +121,5 @@ def test_lookup_no_chord_gap(dummy_data):
     cfg = Config(data_dir=str(data_dir), crop_s=crop_s, sample_rate=sr)
     ds = ChordDataset(cfg, split="train")
     result = ds._lookup_chord("nonexistent_song", 1000.0)
-    assert result == (-100, -100, -100)
+    assert result == (-100, -100, -100, -100)
 
