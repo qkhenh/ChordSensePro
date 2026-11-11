@@ -11,7 +11,7 @@ _SECTION_COLUMNS = (
 )
 
 _CHORD_COLUMNS = (
-    "song_id, start_ms, end_ms, label_raw, label_status, root_id, quality_id, ext_id"
+    "song_id, start_ms, end_ms, label_raw, label_status, root_id, quality_id, ext_id, bass_id"
 )
 
 DDL = """
@@ -38,8 +38,10 @@ CREATE TABLE IF NOT EXISTS training_chords (
     label_status VARCHAR(12)  NOT NULL,
     root_id      SMALLINT,
     quality_id   SMALLINT,
-    ext_id       SMALLINT
+    ext_id       SMALLINT,
+    bass_id      SMALLINT     DEFAULT 12
 );
+ALTER TABLE training_chords ADD COLUMN IF NOT EXISTS bass_id SMALLINT DEFAULT 12;
 CREATE INDEX IF NOT EXISTS idx_tc_song ON training_chords(song_id);
 """
 
@@ -77,7 +79,7 @@ class TrainingSectionRepository:
                 if chords:
                     rows = [
                         (c.song_id, c.start_ms, c.end_ms, c.label_raw,
-                         c.label_status, c.root_id, c.quality_id, c.ext_id)
+                         c.label_status, c.root_id, c.quality_id, c.ext_id, c.bass_id)
                         for c in chords
                     ]
                     execute_values(

@@ -65,15 +65,22 @@ def export_onnx(
         for name in ["root_logits", "quality_logits", "ext_logits", "bass_logits"]:
             dynamic_axes[name][1] = "time"
 
-    torch.onnx.export(
-        wrapper,
-        (dummy,),
-        output_path,
+    export_kwargs = dict(
         input_names=["wav"],
         output_names=["root_logits", "quality_logits", "ext_logits", "bass_logits"],
         dynamic_axes=dynamic_axes,
         opset_version=opset,
         do_constant_folding=True,
+    )
+    import inspect
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        export_kwargs["dynamo"] = False
+
+    torch.onnx.export(
+        wrapper,
+        (dummy,),
+        output_path,
+        **export_kwargs,
     )
     log.info(f"Exported ONNX to {output_path}")
 

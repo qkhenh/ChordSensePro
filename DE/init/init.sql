@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS training_chords (
     label_status VARCHAR(12)  NOT NULL,
     root_id      SMALLINT,
     quality_id   SMALLINT,
-    ext_id       SMALLINT
+    ext_id       SMALLINT,
+    bass_id      SMALLINT     DEFAULT 12
 );
 CREATE INDEX IF NOT EXISTS idx_tc_song ON training_chords(song_id);
 

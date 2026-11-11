@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 
 from src.augment import pitch_shift_bass, pitch_shift_root
 from src.config import Config
+from src.model import mert_frame_times_ms, mert_output_length
 
 
 class ChordDataset(Dataset):
@@ -27,8 +28,25 @@ class ChordDataset(Dataset):
         self.song_to_idx = {sid: i for i, sid in enumerate(self.song_ids)}
 
         self._chords_by_song: dict[str, pd.DataFrame] = {}
+        self._fast_chords: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
         for sid, group in chords_df.groupby("song_id"):
-            self._chords_by_song[sid] = group.sort_values("start_ms").reset_index(drop=True)
+            g = group.sort_values("start_ms").reset_index(drop=True)
+            self._chords_by_song[sid] = g
+
+            starts = g["start_ms"].to_numpy(dtype=np.float64)
+            ends = g["end_ms"].to_numpy(dtype=np.float64)
+            roots = np.where(g["root_id"].notna(), g["root_id"].fillna(-100).astype(np.int64), -100)
+            quals = np.where(g["quality_id"].notna(), g["quality_id"].fillna(-100).astype(np.int64), -100)
+            exts = np.where(g["ext_id"].notna(), g["ext_id"].fillna(-100).astype(np.int64), -100)
+            if "bass_id" in g.columns:
+                basses = np.where(
+                    g["bass_id"].notna(),
+                    g["bass_id"].fillna(-100).astype(np.int64),
+                    np.where(roots == -100, -100, 12),
+                )
+            else:
+                basses = np.where(roots == -100, -100, 12)
+            self._fast_chords[sid] = (starts, ends, roots, quals, exts, basses)
 
         self._audio_lengths: dict[str, int] = {}
         for sid in self.song_ids:
@@ -42,18 +60,72 @@ class ChordDataset(Dataset):
             if self._audio_lengths[sid] >= self.crop_samples
         ]
 
+        # Precompute labelled crop bounds [lo_sample, hi_sample] per song & sample index list
+        self._crop_bounds: dict[str, tuple[int, int]] = {}
+        # Each entry: (song_id, fixed_crop_start_or_None, min_eval_ms_or_None)
+        self._samples: list[tuple[str, int | None, float | None]] = []
+
+        for sid in self._valid_songs:
+            audio_len = self._audio_lengths[sid]
+            max_start = audio_len - self.crop_samples
+            fc = self._fast_chords.get(sid)
+            if fc is not None and len(fc[0]) > 0:
+                first_ms = float(fc[0][0])
+                last_ms = float(fc[1][-1])
+                start_s = int(first_ms / 1000.0 * self.sr)
+                end_minus_crop = int(last_ms / 1000.0 * self.sr) - self.crop_samples
+                lo = max(0, min(max_start, min(start_s, end_minus_crop)))
+                hi = max(lo, min(max_start, max(start_s, end_minus_crop)))
+                labelled_sec = max(0.0, (last_ms - first_ms) / 1000.0)
+            else:
+                lo, hi = 0, max_start
+                labelled_sec = audio_len / float(self.sr)
+
+            self._crop_bounds[sid] = (lo, hi)
+
+            if self.split == "train":
+                n_crops = min(6, max(1, int(round(labelled_sec / 15.0))))
+                for _ in range(n_crops):
+                    self._samples.append((sid, None, None))
+            else:
+                # Deterministic non-overlapping tiles across [lo, hi]
+                tiles: list[tuple[int, float | None]] = []
+                pos = lo
+                prev_end_ms: float | None = None
+                while pos <= hi:
+                    tiles.append((pos, prev_end_ms))
+                    prev_end_ms = (pos + self.crop_samples) / float(self.sr) * 1000.0
+                    if pos == hi:
+                        break
+                    if pos + self.crop_samples > hi:
+                        # Tail window anchored at hi; mask prefix already covered by previous tile
+                        tiles.append((hi, prev_end_ms))
+                        break
+                    pos += self.crop_samples
+
+                # Cap validation tiles on very long tracks to keep per-epoch val fast;
+                # `test` keeps 100% full-song coverage.
+                max_val_tiles = 6
+                if self.split == "val" and len(tiles) > max_val_tiles:
+                    idxs = np.linspace(0, len(tiles) - 1, max_val_tiles, dtype=int)
+                    for ti in idxs:
+                        # Evenly spaced non-adjacent tiles don't overlap -> no prefix mask needed
+                        self._samples.append((sid, tiles[int(ti)][0], None))
+                else:
+                    for t_pos, t_mask in tiles:
+                        self._samples.append((sid, t_pos, t_mask))
+
     def __len__(self) -> int:
-        return len(self._valid_songs)
+        return len(self._samples)
 
     def __getitem__(self, idx: int) -> dict:
-        song_id = self._valid_songs[idx]
-        audio_len = self._audio_lengths[song_id]
+        song_id, fixed_start, min_eval_ms = self._samples[idx]
+        lo, hi = self._crop_bounds[song_id]
 
-        max_start = audio_len - self.crop_samples
-        if self.split == "train":
-            crop_start = np.random.randint(0, max_start + 1)
+        if fixed_start is None:
+            crop_start = int(np.random.randint(lo, hi + 1))
         else:
-            crop_start = max_start // 2
+            crop_start = fixed_start
 
         audio = np.load(self.audio_dir / f"{song_id}.npy", mmap_mode="r")
         crop = audio[crop_start: crop_start + self.crop_samples].astype(np.float32) / 32768.0
@@ -69,8 +141,10 @@ class ChordDataset(Dataset):
             crop = (crop - crop.mean()) / std
 
         if self.cfg.model.frame_level:
-            n_frames = int(self.crop_samples / self.sr * 75)
-            root_arr, qual_arr, ext_arr, bass_arr = self._lookup_chord_frames(song_id, crop_start_ms, n_frames)
+            n_frames = mert_output_length(self.crop_samples)
+            root_arr, qual_arr, ext_arr, bass_arr = self._lookup_chord_frames(
+                song_id, crop_start_ms, n_frames, min_eval_ms=min_eval_ms
+            )
             if pitch_shift_n != 0:
                 valid_r = root_arr >= 0
                 root_arr = root_arr.copy()
@@ -104,64 +178,46 @@ class ChordDataset(Dataset):
         }
 
     def _lookup_chord(self, song_id: str, time_ms: float) -> tuple[int, int, int, int]:
-        chords = self._chords_by_song.get(song_id)
-        if chords is None or chords.empty:
+        fc = self._fast_chords.get(song_id)
+        if fc is None or len(fc[0]) == 0:
             return -100, -100, -100, -100
 
-        mask = (chords["start_ms"] <= time_ms) & (chords["end_ms"] > time_ms)
-        matches = chords.loc[mask]
-
-        if matches.empty:
+        starts, ends, roots, quals, exts, basses = fc
+        idx = int(np.searchsorted(starts, time_ms, side="right")) - 1
+        if idx < 0 or time_ms >= ends[idx]:
             return -100, -100, -100, -100
 
-        row = matches.iloc[0]
-
-        root_id = int(row["root_id"]) if pd.notna(row["root_id"]) else -100
-        quality_id = int(row["quality_id"]) if pd.notna(row["quality_id"]) else -100
-        ext_id = int(row["ext_id"]) if pd.notna(row["ext_id"]) else -100
-        if "bass_id" in row and pd.notna(row["bass_id"]):
-            bass_id = int(row["bass_id"])
-        else:
-            bass_id = -100 if root_id == -100 else 12
-
-        return root_id, quality_id, ext_id, bass_id
+        return int(roots[idx]), int(quals[idx]), int(exts[idx]), int(basses[idx])
 
     def _lookup_chord_frames(
-        self, song_id: str, crop_start_ms: float, n_frames: int
+        self,
+        song_id: str,
+        crop_start_ms: float,
+        n_frames: int,
+        min_eval_ms: float | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        chords = self._chords_by_song.get(song_id)
-        if chords is None or chords.empty:
-            return (
-                np.full(n_frames, -100, dtype=np.int64),
-                np.full(n_frames, -100, dtype=np.int64),
-                np.full(n_frames, -100, dtype=np.int64),
-                np.full(n_frames, -100, dtype=np.int64),
-            )
-
-        frame_times = crop_start_ms + np.arange(n_frames) * (1000.0 / 75.0)
-        starts = chords["start_ms"].values
-        ends = chords["end_ms"].values
+        fc = self._fast_chords.get(song_id)
         root_labels = np.full(n_frames, -100, dtype=np.int64)
         quality_labels = np.full(n_frames, -100, dtype=np.int64)
         ext_labels = np.full(n_frames, -100, dtype=np.int64)
         bass_labels = np.full(n_frames, -100, dtype=np.int64)
 
-        for ci in range(len(chords)):
-            mask = (frame_times >= starts[ci]) & (frame_times < ends[ci])
-            if not mask.any():
-                continue
-            row = chords.iloc[ci]
-            r = int(row["root_id"]) if pd.notna(row["root_id"]) else -100
-            q = int(row["quality_id"]) if pd.notna(row["quality_id"]) else -100
-            e = int(row["ext_id"]) if pd.notna(row["ext_id"]) else -100
-            if "bass_id" in row and pd.notna(row["bass_id"]):
-                b = int(row["bass_id"])
-            else:
-                b = -100 if r == -100 else 12
-            root_labels[mask] = r
-            quality_labels[mask] = q
-            ext_labels[mask] = e
-            bass_labels[mask] = b
+        if fc is None or len(fc[0]) == 0 or n_frames <= 0:
+            return root_labels, quality_labels, ext_labels, bass_labels
+
+        starts, ends, roots, quals, exts, basses = fc
+        frame_times = mert_frame_times_ms(crop_start_ms, n_frames, self.sr)
+        idx = np.searchsorted(starts, frame_times, side="right") - 1
+        safe_idx = np.maximum(idx, 0)
+        valid = (idx >= 0) & (frame_times < ends[safe_idx])
+        if min_eval_ms is not None:
+            valid &= frame_times >= min_eval_ms
+
+        if valid.any():
+            hit = safe_idx[valid]
+            root_labels[valid] = roots[hit]
+            quality_labels[valid] = quals[hit]
+            ext_labels[valid] = exts[hit]
+            bass_labels[valid] = basses[hit]
 
         return root_labels, quality_labels, ext_labels, bass_labels
-

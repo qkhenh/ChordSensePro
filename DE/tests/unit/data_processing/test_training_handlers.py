@@ -142,3 +142,28 @@ def test_annotation_handler_v2_drops_negative_end(tmp_path: Path):
     out = AnnotationHandler().handle(data)
     assert len(out.chord_timeline) == 1
     assert out.chord_timeline[0]["label_raw"] == "G:7"
+
+
+def test_training_chord_accepts_bass_id():
+    from src.training_data.domain.models.training_section import TrainingChord
+
+    row = {
+        "song_id": "s-1",
+        "start_ms": 0,
+        "end_ms": 2000,
+        "label_raw": "C:(3,5)/E",
+        "label_status": "ok",
+        "root_id": 0,
+        "quality_id": 0,
+        "ext_id": 0,
+        "bass_id": 4,
+    }
+    chord = TrainingChord(**row)
+    assert chord.bass_id == 4
+
+    default_chord = TrainingChord(
+        song_id="s-1", start_ms=0, end_ms=1000,
+        label_raw="C:maj", label_status="ok",
+        root_id=0, quality_id=0, ext_id=0,
+    )
+    assert default_chord.bass_id == 12

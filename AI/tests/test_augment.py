@@ -45,12 +45,12 @@ def test_augmenter_disabled():
 
 
 def test_augmenter_output_shape():
-    cfg = AugmentCfg(enabled=True, noise_prob=0.0, reverb_prob=0.0)
+    cfg = AugmentCfg(enabled=True, pitch_shift_range=[0, 0], noise_prob=0.0, reverb_prob=0.0)
     aug = Augmenter(cfg)
     audio = np.random.randn(120000).astype(np.float32) * 0.1
     out, shift = aug(audio, 24000)
     assert out.shape == audio.shape
-    assert isinstance(shift, (int, np.integer))
+    assert shift == 0
 
 
 def test_augmenter_gain_changes_amplitude():
@@ -69,3 +69,19 @@ def test_augmenter_noise():
     out, _ = aug(audio, 24000)
     assert not np.allclose(out, audio * (10.0 ** (0.0 / 20.0)), atol=1e-4)
 
+
+def test_augmenter_time_mask():
+    cfg = AugmentCfg(
+        enabled=True,
+        pitch_shift_range=[0, 0],
+        gain_db=0.0,
+        noise_prob=0.0,
+        time_mask_prob=1.0,
+        time_mask_max_ms=120,
+        n_time_masks=2,
+    )
+    aug = Augmenter(cfg)
+    audio = np.ones(24000 * 5, dtype=np.float32)
+    out, shift = aug(audio, 24000)
+    assert shift == 0
+    assert (out == 0.0).sum() >= int(0.06 * 24000)

@@ -42,12 +42,13 @@ def _degree(semitones: int) -> str | None:
     return _DEG_HIGH.get(semitones)
 
 
-def harmony_label(root_pitch_class: int, intervals: list[int]) -> str:
+def harmony_label(root_pitch_class: int, intervals: list[int], inversion: int = 0) -> str:
     """Hooktheory chord → Harte label, e.g. (7, [4,3,7]) → ``'G:(3,5,9)'`` (= Gadd9).
 
     ``intervals`` are successive steps above the root (``[4,3,4]`` = maj7). The result is an
     interval-list label (``Root:(deg,deg,...)``) except for added-6th chords, which use the
     ``maj6`` / ``min6`` shorthand because the interval-list parser has no 6th class.
+    When ``0 < inversion <= len(intervals)``, appends ``/<bass_note>`` if bass != root.
     """
     root = _ROOTS[root_pitch_class % 12]
     semitones: list[int] = []
@@ -58,17 +59,25 @@ def harmony_label(root_pitch_class: int, intervals: list[int]) -> str:
 
     degrees = [d for d in (_degree(s) for s in semitones) if d]
     if not degrees:
-        return f"{root}:(1)"                          # lone root → map_harte: PARTIAL (root only)
-
-    if "6" in degrees:
+        base_label = f"{root}:(1)"                    # lone root → map_harte: PARTIAL (root only)
+    elif "6" in degrees:
         has_b3, has_b5 = "b3" in degrees, "b5" in degrees
         if has_b3 and has_b5:                         # diminished seventh: stacked minor thirds
             degrees = ["bb7" if d == "6" else d for d in degrees]
+            base_label = f"{root}:({','.join(degrees)})"
         elif "b7" not in degrees and "7" not in degrees:
-            return f"{root}:{'min6' if has_b3 else 'maj6'}"
+            base_label = f"{root}:{'min6' if has_b3 else 'maj6'}"
         else:                                         # a 6th stacked on a seventh is the 13th
             degrees = ["13" if d == "6" else d for d in degrees]
-    return f"{root}:({','.join(degrees)})"
+            base_label = f"{root}:({','.join(degrees)})"
+    else:
+        base_label = f"{root}:({','.join(degrees)})"
+
+    if 0 < inversion <= len(semitones):
+        bass_pc = (root_pitch_class + semitones[inversion - 1]) % 12
+        if bass_pc != (root_pitch_class % 12):
+            return f"{base_label}/{_ROOTS[bass_pc]}"
+    return base_label
 
 
 def beat_to_time(beat: float, beats: list[float], times: list[float]) -> float:
@@ -118,7 +127,8 @@ def build_annotation(entry: dict, pad: float = DEFAULT_PAD_SEC, refined_only: bo
     for h in entry["annotations"]["harmony"]:
         try:
             onset, offset = float(h["onset"]), float(h["offset"])
-            label = harmony_label(h["root_pitch_class"], list(h["root_position_intervals"]))
+            inversion = int(h.get("inversion") or 0)
+            label = harmony_label(h["root_pitch_class"], list(h["root_position_intervals"]), inversion)
         except (KeyError, TypeError, ValueError):
             continue
         start = beat_to_time(onset, beats, times)

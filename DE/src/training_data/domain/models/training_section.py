@@ -27,4 +27,5 @@ class TrainingChord:
     root_id:      int | None
     quality_id:   int | None
     ext_id:       int | None
+    bass_id:      int = 12
 

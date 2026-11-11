@@ -59,7 +59,10 @@ class AugmentCfg:
     gain_db: float = 6.0
     noise_snr_range: list[int] = field(default_factory=lambda: [10, 30])
     noise_prob: float = 0.5
-    reverb_prob: float = 0.3
+    reverb_prob: float = 0.0
+    time_mask_prob: float = 0.0
+    time_mask_max_ms: int = 150
+    n_time_masks: int = 2
 
 
 @dataclass

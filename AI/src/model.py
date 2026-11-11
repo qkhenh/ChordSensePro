@@ -1,11 +1,65 @@
 from __future__ import annotations
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoModel
 
 from src.config import ModelCfg
+
+# Exact MERT-v1-330M / Wav2Vec2 7-layer conv feature extractor geometry
+MERT_CONV_KERNELS: tuple[int, ...] = (10, 3, 3, 3, 3, 2, 2)
+MERT_CONV_STRIDES: tuple[int, ...] = (5, 2, 2, 2, 2, 2, 2)
+MERT_HOP_SAMPLES: int = 320        # product of MERT_CONV_STRIDES
+MERT_RECEPTIVE_SAMPLES: int = 400  # receptive field of the 7 conv layers
+
+
+def mert_output_length(
+    input_length: int,
+    conv_kernels: tuple[int, ...] = MERT_CONV_KERNELS,
+    conv_strides: tuple[int, ...] = MERT_CONV_STRIDES,
+) -> int:
+    """Compute exact temporal sequence length output by MERT's CNN feature extractor."""
+    length = int(input_length)
+    for k, s in zip(conv_kernels, conv_strides):
+        length = (length - k) // s + 1
+    return max(0, length)
+
+
+def mert_frame_times_ms(
+    crop_start_ms: float,
+    n_frames: int,
+    sr: int = 24000,
+) -> np.ndarray:
+    """Return center timestamp (ms) of each MERT output frame."""
+    center_samples = np.arange(n_frames, dtype=np.float64) * MERT_HOP_SAMPLES + (MERT_RECEPTIVE_SAMPLES / 2.0)
+    return crop_start_ms + center_samples * (1000.0 / float(sr))
+
+
+class TemporalContextBlock(nn.Module):
+    """Lightweight depthwise-grouped Conv1d + channel mixing residual block for frame-level context."""
+
+    def __init__(self, dim: int, kernel_size: int = 5, groups: int = 16, dropout: float = 0.1):
+        super().__init__()
+        eff_groups = groups if dim % groups == 0 else 1
+        self.conv = nn.Conv1d(
+            dim,
+            dim,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+            groups=eff_groups,
+        )
+        self.act = nn.GELU()
+        self.drop = nn.Dropout(dropout)
+        self.proj = nn.Linear(dim, dim)
+        self.norm = nn.LayerNorm(dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = x
+        y = self.conv(x.transpose(1, 2)).transpose(1, 2)
+        y = self.proj(self.drop(self.act(y)))
+        return self.norm(residual + self.drop(y))
 
 
 class ChordHead(nn.Module):
@@ -55,6 +109,11 @@ class ChordModel(nn.Module):
         self.layer_weights = nn.Parameter(torch.zeros(cfg.n_layers))
 
         d = cfg.hidden_dim
+        self.temporal_context = (
+            TemporalContextBlock(d, kernel_size=5, groups=16, dropout=cfg.dropout)
+            if cfg.frame_level
+            else None
+        )
         self.head_root = ChordHead(d, cfg.head_hidden, cfg.n_root)
         self.head_quality = ChordHead(d + cfg.n_root, cfg.head_hidden, cfg.n_quality)
         self.head_ext = ExtensionHead(
@@ -105,29 +164,22 @@ class ChordModel(nn.Module):
         h = (w[:, None, None, None] * hidden_states).sum(0)
 
         if self.cfg.frame_level:
-            emb = h
+            emb = self.temporal_context(h) if self.temporal_context is not None else h
         else:
             emb = self._pool(h)
 
         root_logits = self.head_root(emb)
+        root_src = root_logits.detach() if self.cfg.detach_logits else root_logits
+        root_prob = F.softmax(root_src, dim=-1)
+        quality_logits = self.head_quality(torch.cat([emb, root_prob], dim=-1))
 
-        if self.cfg.detach_logits:
-            root_input = root_logits.detach()
-        else:
-            root_input = root_logits
-        quality_logits = self.head_quality(torch.cat([emb, root_input], dim=-1))
+        qual_src = quality_logits.detach() if self.cfg.detach_logits else quality_logits
+        qual_prob = F.softmax(qual_src, dim=-1)
+        ext_logits = self.head_ext(torch.cat([emb, root_prob, qual_prob], dim=-1))
 
-        if self.cfg.detach_logits:
-            quality_input = quality_logits.detach()
-        else:
-            quality_input = quality_logits
-        ext_logits = self.head_ext(torch.cat([emb, root_input, quality_input], dim=-1))
-
-        if self.cfg.detach_logits:
-            ext_input = ext_logits.detach()
-        else:
-            ext_input = ext_logits
-        bass_logits = self.head_bass(torch.cat([emb, root_input, quality_input, ext_input], dim=-1))
+        ext_src = ext_logits.detach() if self.cfg.detach_logits else ext_logits
+        ext_prob = F.softmax(ext_src, dim=-1)
+        bass_logits = self.head_bass(torch.cat([emb, root_prob, qual_prob, ext_prob], dim=-1))
 
         return root_logits, quality_logits, ext_logits, bass_logits
 

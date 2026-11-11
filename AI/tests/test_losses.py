@@ -3,12 +3,18 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pandas as pd
 import torch
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.losses import FocalLoss, ChordLoss
+from src.losses import (
+    ChordLoss,
+    FocalLoss,
+    compute_smoothed_class_weights,
+    default_bass_class_weight,
+)
 
 
 def test_focal_loss_basic():
@@ -23,7 +29,7 @@ def test_focal_loss_basic():
 
 def test_focal_loss_all_masked():
     fl = FocalLoss(gamma=2.0)
-    logits = torch.randn(8, 12)
+    logits = torch.randn(8, 12, requires_grad=True)
     targets = torch.full((8,), -100, dtype=torch.long)
     loss = fl(logits, targets)
     assert loss.item() == 0.0
@@ -47,6 +53,19 @@ def test_focal_loss_with_weight():
     targets = torch.randint(0, 12, (16,))
     loss = fl(logits, targets)
     assert not torch.isnan(loss)
+
+
+def test_default_bass_and_smoothed_class_weights(tmp_path):
+    bw = default_bass_class_weight()
+    assert bw.shape == (13,)
+    assert bw[12].item() == pytest.approx(0.25)
+    assert (bw[:12] == 1.0).all()
+
+    pq = tmp_path / "chords.parquet"
+    pd.DataFrame({"quality_id": [0] * 100 + [1] * 50 + [3] * 2}).to_parquet(pq)
+    qw = compute_smoothed_class_weights(pq, "quality_id", n_classes=6)
+    assert qw.shape == (6,)
+    assert qw[3] > qw[0]
 
 
 def test_chord_loss_shapes():
@@ -81,7 +100,7 @@ def test_chord_loss_all_masked_no_nan():
     et = torch.full((4,), -100, dtype=torch.long)
     bt = torch.full((4,), -100, dtype=torch.long)
 
-    loss, details = cl(r, q, e, b, rt, qt, et, bt)
+    loss, _ = cl(r, q, e, b, rt, qt, et, bt)
     assert not torch.isnan(loss)
 
 
@@ -96,7 +115,7 @@ def test_chord_loss_partial_labels():
     et = torch.tensor([-100, 1, 2, -100])
     bt = torch.tensor([12, 4, -100, 9])
 
-    loss, details = cl(r, q, e, b, rt, qt, et, bt)
+    loss, _ = cl(r, q, e, b, rt, qt, et, bt)
     assert not torch.isnan(loss)
     assert loss.item() > 0
 
@@ -120,18 +139,19 @@ def test_chord_loss_backward():
     assert b.grad is not None
 
 
-def test_chord_loss_frame_level():
+def test_chord_loss_frame_level_and_mismatch_guard():
     cl = ChordLoss()
-    r = torch.randn(2, 375, 12, requires_grad=True)
-    q = torch.randn(2, 375, 6, requires_grad=True)
-    e = torch.randn(2, 375, 15, requires_grad=True)
-    b = torch.randn(2, 375, 13, requires_grad=True)
+    r = torch.randn(2, 374, 12, requires_grad=True)
+    q = torch.randn(2, 374, 6, requires_grad=True)
+    e = torch.randn(2, 374, 15, requires_grad=True)
+    b = torch.randn(2, 374, 13, requires_grad=True)
+    # Deliberately pass 375 target frames to verify temporal length guard
     rt = torch.randint(0, 12, (2, 375))
     qt = torch.randint(0, 6, (2, 375))
     et = torch.randint(0, 15, (2, 375))
     bt = torch.randint(0, 13, (2, 375))
 
-    loss, details = cl(r, q, e, b, rt, qt, et, bt)
+    loss, _ = cl(r, q, e, b, rt, qt, et, bt)
     assert loss.shape == ()
     assert not torch.isnan(loss)
     assert loss.item() > 0
@@ -140,4 +160,3 @@ def test_chord_loss_frame_level():
     assert q.grad is not None
     assert e.grad is not None
     assert b.grad is not None
-

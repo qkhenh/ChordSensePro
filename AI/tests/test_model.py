@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from dataclasses import dataclass
 
 import torch
@@ -11,7 +11,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import ModelCfg
-from src.model import ChordModel, ChordHead, ExtensionHead
+from src.model import (
+    ChordHead,
+    ChordModel,
+    ExtensionHead,
+    TemporalContextBlock,
+    mert_frame_times_ms,
+    mert_output_length,
+)
 
 
 @dataclass
@@ -30,9 +37,18 @@ class FakeMERT(torch.nn.Module):
 
     def forward(self, wav, output_hidden_states=False):
         B = wav.shape[0]
-        T = 375
+        T = mert_output_length(wav.shape[-1])
         hs = tuple(torch.randn(B, T, self.hidden_dim) for _ in range(self.n_layers))
         return FakeMERTOutput(hidden_states=hs, last_hidden_state=hs[-1])
+
+
+def test_mert_output_length_and_frame_times():
+    assert mert_output_length(120000) == 374
+    assert mert_output_length(72000) == 224
+    times = mert_frame_times_ms(1000.0, 374, sr=24000)
+    assert times.shape == (374,)
+    assert times[0] == pytest.approx(1000.0 + 200.0 / 24.0)
+    assert (times[1] - times[0]) == pytest.approx(320.0 / 24.0)
 
 
 def test_chord_head_shape():
@@ -54,6 +70,13 @@ def test_bass_head_shape():
     x = torch.randn(4, 1024 + 12 + 6 + 15)
     out = head(x)
     assert out.shape == (4, 13)
+
+
+def test_temporal_context_block_preserves_shape():
+    blk = TemporalContextBlock(dim=1024, kernel_size=5, groups=16, dropout=0.1)
+    x = torch.randn(2, 374, 1024)
+    y = blk(x)
+    assert y.shape == (2, 374, 1024)
 
 
 def test_chord_model_forward():
@@ -141,10 +164,10 @@ def test_chord_model_frame_level():
     wav = torch.randn(2, 120000)
     r, q, e, b = model(wav)
 
-    assert r.shape == (2, 375, 12)
-    assert q.shape == (2, 375, 6)
-    assert e.shape == (2, 375, 15)
-    assert b.shape == (2, 375, 13)
+    assert r.shape == (2, 374, 12)
+    assert q.shape == (2, 374, 6)
+    assert e.shape == (2, 374, 15)
+    assert b.shape == (2, 374, 13)
 
 
 def test_trainable_params_no_lora():
@@ -160,4 +183,3 @@ def test_trainable_params_no_lora():
 
     total = sum(p.numel() for p in groups[0]["params"])
     assert total > 0
-

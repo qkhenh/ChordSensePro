@@ -66,6 +66,32 @@ def test_lone_root_and_power_chord_are_partial_root_only():
     assert map_harte(harmony_label(0, [7])).status == LabelStatus.PARTIAL
 
 
+@pytest.mark.parametrize("root_pc, intervals, inv, expected_label, expected_bass_id", [
+    (0, [4, 3], 0, "C:(3,5)", 12),
+    (0, [4, 3], 1, "C:(3,5)/E", 4),
+    (0, [4, 3], 2, "C:(3,5)/G", 7),
+    (0, [4, 3, 4], 3, "C:(3,5,7)/B", 11),
+    (0, [4, 3, 2], 1, "C:maj6/E", 4),
+    (9, [3, 4, 2], 2, "A:min6/E", 4),
+    (0, [4, 3], 5, "C:(3,5)", 12),       # out-of-range inversion safely ignored
+    (0, [12], 1, "C:(1)", 12),           # octave bass == root -> no slash
+])
+def test_harmony_label_inversions_and_bass_id(root_pc, intervals, inv, expected_label, expected_bass_id):
+    lbl = harmony_label(root_pc, intervals, inv)
+    assert lbl == expected_label
+    mapped = map_harte(lbl)
+    assert mapped.bass_id == expected_bass_id
+
+
+def test_build_annotation_preserves_inversion():
+    entry = _entry()
+    entry["annotations"]["harmony"][0]["inversion"] = 1  # C:(3,5)/E
+    ann = build_annotation(entry, pad=3.0)
+    assert ann is not None
+    assert ann["timeline"][0][2] == "C:(3,5)/E"
+    assert map_harte(ann["timeline"][0][2]).bass_id == 4
+
+
 # ── beat_to_time ─────────────────────────────────────────────────────────────
 
 def test_beat_to_time_interpolates_and_extrapolates():

@@ -42,15 +42,37 @@ except ImportError:
     _FASTAPI_AVAILABLE = False
 
 
+# Exact MERT-v1-330M CNN feature extractor geometry (kept standalone for lean ONNX serving)
+MERT_CONV_KERNELS: tuple[int, ...] = (10, 3, 3, 3, 3, 2, 2)
+MERT_CONV_STRIDES: tuple[int, ...] = (5, 2, 2, 2, 2, 2, 2)
+MERT_HOP_SAMPLES: int = 320
+MERT_RECEPTIVE_SAMPLES: int = 400
+
+
+def mert_output_length(
+    input_length: int,
+    conv_kernels: tuple[int, ...] = MERT_CONV_KERNELS,
+    conv_strides: tuple[int, ...] = MERT_CONV_STRIDES,
+) -> int:
+    length = int(input_length)
+    for k, s in zip(conv_kernels, conv_strides):
+        length = (length - k) // s + 1
+    return max(0, length)
+
+
 SAMPLE_RATE = int(os.environ.get("SERVE_SAMPLE_RATE", "24000"))
 CROP_S = int(os.environ.get("SERVE_CROP_S", "5"))
-STEP_S = float(os.environ.get("SERVE_STEP_S", "1.0"))
+STEP_S = float(os.environ.get("SERVE_STEP_S", "2.5"))
 RMS_THRESHOLD_DB = float(os.environ.get("SERVE_RMS_THRESHOLD_DB", "-40.0"))
-CONFIDENCE_THRESHOLD = float(os.environ.get("SERVE_CONFIDENCE_THRESHOLD", "0.3"))
+CONFIDENCE_THRESHOLD = float(os.environ.get("SERVE_CONFIDENCE_THRESHOLD", "0.30"))
+MIN_DURATION_MS = float(os.environ.get("SERVE_MIN_DURATION_MS", "160.0"))
+USE_DEMUCS_DEFAULT = os.environ.get("SERVE_USE_DEMUCS", "1").lower() in ("1", "true", "yes")
+DEMUCS_MODEL = os.environ.get("SERVE_DEMUCS_MODEL", "htdemucs_ft")
+DEMUCS_SEGMENT = float(os.environ.get("SERVE_DEMUCS_SEGMENT", "6.0"))
 HOST = os.environ.get("SERVE_HOST", "0.0.0.0")
 PORT = int(os.environ.get("SERVE_PORT", "8000"))
-MODEL_PATH = os.environ.get("SERVE_MODEL_PATH", "results/model_p2.onnx")
-CLASSES_JSON = os.environ.get("SERVE_CLASSES_JSON", "../DE/data/export/v2/classes.json")
+MODEL_PATH = os.environ.get("SERVE_MODEL_PATH", "results/model_v4_5s_p2.onnx")
+CLASSES_JSON = os.environ.get("SERVE_CLASSES_JSON", "../DE/data/export/v3/classes.json")
 
 ROOT_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 QUALITY_NAMES = ["maj", "min", "dom", "dim", "sus2", "sus4"]
@@ -117,6 +139,128 @@ def chord_name(root_id: int, quality_id: int, ext_id: int, bass_id: int = 12) ->
     return name
 
 
+def weighted_chord_conf(
+    root_conf: float | np.ndarray,
+    qual_conf: float | np.ndarray,
+    ext_conf: float | np.ndarray,
+) -> float | np.ndarray:
+    """Compute chord confidence from root/quality/ext only (excluding dominant `bass=none`)."""
+    return 0.40 * root_conf + 0.35 * qual_conf + 0.25 * ext_conf
+
+
+class HarmonicSeparator:
+    """Demucs `htdemucs_ft` harmonic stem extractor (`other + bass`, matching DE training v2/v3)."""
+
+    HARMONIC_STEMS = ("other", "bass")
+
+    def __init__(
+        self,
+        model_name: str = DEMUCS_MODEL,
+        segment: float = DEMUCS_SEGMENT,
+        device: str | None = None,
+    ):
+        import torch
+        from demucs.pretrained import get_model
+
+        self.model_name = model_name
+        self.segment = segment
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = get_model(model_name)
+        self.model.to(self.device)
+        self.model.eval()
+        self.samplerate = int(getattr(self.model, "samplerate", 44100))
+        self.sources = list(getattr(self.model, "sources", ["drums", "bass", "other", "vocals"]))
+        log.info(
+            f"HarmonicSeparator ready: model={model_name}, sr={self.samplerate}, "
+            f"segment={segment}s, device={self.device}"
+        )
+
+    def separate_waveform(self, wav_float: np.ndarray, sr: int, target_sr: int = SAMPLE_RATE) -> np.ndarray:
+        """Separate `wav_float` (shape `(N,)` or `(C, N)` in `[-1, 1]`) -> mono `int16` at `target_sr`."""
+        import torch
+        from demucs.apply import apply_model
+
+        if wav_float.ndim == 1:
+            stereo = np.stack([wav_float, wav_float], axis=0).astype(np.float32)
+        elif wav_float.shape[0] <= 2 and wav_float.shape[0] < wav_float.shape[-1]:
+            stereo = wav_float[:2].astype(np.float32)
+            if stereo.shape[0] == 1:
+                stereo = np.repeat(stereo, 2, axis=0)
+        else:
+            stereo = wav_float.T[:2].astype(np.float32)
+            if stereo.shape[0] == 1:
+                stereo = np.repeat(stereo, 2, axis=0)
+
+        wav_t = torch.from_numpy(stereo)
+        if sr != self.samplerate:
+            if _TORCHAUDIO_AVAILABLE:
+                wav_t = torchaudio.functional.resample(wav_t, sr, self.samplerate)
+            else:
+                import librosa
+                ch0 = librosa.resample(stereo[0], orig_sr=sr, target_sr=self.samplerate)
+                ch1 = librosa.resample(stereo[1], orig_sr=sr, target_sr=self.samplerate)
+                wav_t = torch.from_numpy(np.stack([ch0, ch1], axis=0))
+
+        ref = wav_t.mean(0)
+        ref_mean = ref.mean()
+        ref_std = ref.std() + 1e-8
+        wav_norm = (wav_t - ref_mean) / ref_std
+
+        def _run_apply(dev: str):
+            self.model.to(dev)
+            with torch.no_grad():
+                out = apply_model(
+                    self.model,
+                    wav_norm.unsqueeze(0).to(dev),
+                    segment=self.segment,
+                    split=True,
+                    overlap=0.25,
+                    device=dev,
+                )[0]
+            return out.cpu() * ref_std + ref_mean
+
+        try:
+            stems = _run_apply(self.device)
+        except RuntimeError as exc:
+            if self.device == "cuda" and "out of memory" in str(exc).lower():
+                log.warning("Demucs CUDA OOM — falling back to CPU")
+                torch.cuda.empty_cache()
+                self.device = "cpu"
+                stems = _run_apply("cpu")
+            else:
+                raise
+
+        mix = None
+        for stem_name in self.HARMONIC_STEMS:
+            if stem_name in self.sources:
+                idx = self.sources.index(stem_name)
+                mix = stems[idx] if mix is None else (mix + stems[idx])
+
+        if mix is None:
+            raise RuntimeError(f"Demucs model {self.model_name} missing harmonic stems {self.HARMONIC_STEMS}")
+
+        peak = float(mix.abs().max().item()) if mix.numel() else 0.0
+        if peak > 0.99:
+            mix = mix * (0.99 / peak)
+
+        mono = mix.mean(dim=0)
+        if self.samplerate != target_sr:
+            if _TORCHAUDIO_AVAILABLE:
+                mono = torchaudio.functional.resample(mono.unsqueeze(0), self.samplerate, target_sr).squeeze(0)
+                mono_np = mono.numpy()
+            else:
+                import librosa
+                mono_np = librosa.resample(mono.numpy(), orig_sr=self.samplerate, target_sr=target_sr)
+        else:
+            mono_np = mono.numpy()
+
+        return (np.clip(mono_np, -1.0, 1.0) * 32767.0).astype(np.int16)
+
+    def separate_int16(self, audio_int16: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
+        wav_f = audio_int16.astype(np.float32) / 32768.0
+        return self.separate_waveform(wav_f, sr=sr, target_sr=sr)
+
+
 class ONNXPredictor:
     def __init__(self, model_path: str, classes_json: str | None = None):
         if not _ORT_AVAILABLE:
@@ -153,6 +297,52 @@ class ONNXPredictor:
                     log.info(f"Loaded valid_combo_mask from {cand}")
                     break
 
+    def predict_frame_probs(
+        self, wav_float32: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Return `(root_prob, qual_prob, ext_prob, bass_prob)` of shape `(T, C)` for frame-level models."""
+        inp = wav_float32[np.newaxis, :]
+        outputs = self.session.run(None, {self.input_name: inp})
+        r_logits, q_logits, e_logits = outputs[0], outputs[1], outputs[2]
+        root_prob = _softmax(r_logits[0], axis=-1)
+        qual_prob = _softmax(q_logits[0], axis=-1)
+        ext_prob = _softmax(e_logits[0], axis=-1)
+        if len(outputs) >= 4:
+            bass_prob = _softmax(outputs[3][0], axis=-1)
+        else:
+            bass_prob = np.zeros((len(root_prob), 13), dtype=np.float32)
+            bass_prob[:, 12] = 1.0
+        return root_prob, qual_prob, ext_prob, bass_prob
+
+    def decode_frame_probs(
+        self,
+        root_prob: np.ndarray,
+        qual_prob: np.ndarray,
+        ext_prob: np.ndarray,
+        bass_prob: np.ndarray,
+    ) -> np.ndarray:
+        root_ids = root_prob.argmax(axis=-1)
+        root_confs = root_prob[np.arange(len(root_ids)), root_ids]
+
+        qual_ids = qual_prob.argmax(axis=-1)
+        qual_confs = qual_prob[np.arange(len(qual_ids)), qual_ids]
+
+        if self.combo_mask is not None:
+            ext_masked = ext_prob.copy()
+            mask = self.combo_mask[qual_ids]
+            ext_masked[~mask] = 0.0
+            s = ext_masked.sum(axis=-1, keepdims=True)
+            ext_masked = np.where(s > 0, ext_masked / np.maximum(s, 1e-12), ext_masked)
+            ext_ids = ext_masked.argmax(axis=-1)
+            ext_confs = ext_masked[np.arange(len(ext_ids)), ext_ids]
+        else:
+            ext_ids = ext_prob.argmax(axis=-1)
+            ext_confs = ext_prob[np.arange(len(ext_ids)), ext_ids]
+
+        bass_ids = bass_prob.argmax(axis=-1)
+        avg_confs = weighted_chord_conf(root_confs, qual_confs, ext_confs)
+        return np.column_stack([root_ids, qual_ids, ext_ids, bass_ids, avg_confs])
+
     def predict(self, wav_float32: np.ndarray):
         inp = wav_float32[np.newaxis, :]
         outputs = self.session.run(None, {self.input_name: inp})
@@ -162,36 +352,12 @@ class ONNXPredictor:
             root_prob = _softmax(r_logits[0], axis=-1)
             qual_prob = _softmax(q_logits[0], axis=-1)
             ext_prob = _softmax(e_logits[0], axis=-1)
-
-            root_ids = root_prob.argmax(axis=-1)
-            root_confs = root_prob[np.arange(len(root_ids)), root_ids]
-
-            qual_ids = qual_prob.argmax(axis=-1)
-            qual_confs = qual_prob[np.arange(len(qual_ids)), qual_ids]
-
-            if self.combo_mask is not None:
-                ext_masked = ext_prob.copy()
-                mask = self.combo_mask[qual_ids]
-                ext_masked[~mask] = 0.0
-                s = ext_masked.sum(axis=-1, keepdims=True)
-                ext_masked = np.where(s > 0, ext_masked / np.maximum(s, 1e-12), ext_masked)
-                ext_ids = ext_masked.argmax(axis=-1)
-                ext_confs = ext_masked[np.arange(len(ext_ids)), ext_ids]
-            else:
-                ext_ids = ext_prob.argmax(axis=-1)
-                ext_confs = ext_prob[np.arange(len(ext_ids)), ext_ids]
-
             if len(outputs) >= 4:
-                b_logits = outputs[3]
-                bass_prob = _softmax(b_logits[0], axis=-1)
-                bass_ids = bass_prob.argmax(axis=-1)
-                bass_confs = bass_prob[np.arange(len(bass_ids)), bass_ids]
-                avg_confs = (root_confs + qual_confs + ext_confs + bass_confs) / 4.0
+                bass_prob = _softmax(outputs[3][0], axis=-1)
             else:
-                bass_ids = np.full(len(root_ids), 12, dtype=np.int64)
-                avg_confs = (root_confs + qual_confs + ext_confs) / 3.0
-
-            return np.column_stack([root_ids, qual_ids, ext_ids, bass_ids, avg_confs])
+                bass_prob = np.zeros((len(root_prob), 13), dtype=np.float32)
+                bass_prob[:, 12] = 1.0
+            return self.decode_frame_probs(root_prob, qual_prob, ext_prob, bass_prob)
 
         root_prob = _softmax(r_logits[0])
         qual_prob = _softmax(q_logits[0])
@@ -219,12 +385,10 @@ class ONNXPredictor:
             b_logits = outputs[3]
             bass_prob = _softmax(b_logits[0])
             bass_id = int(bass_prob.argmax())
-            bass_conf = float(bass_prob[bass_id])
-            avg_conf = (root_conf + qual_conf + ext_conf + bass_conf) / 4
         else:
             bass_id = 12
-            avg_conf = (root_conf + qual_conf + ext_conf) / 3
 
+        avg_conf = float(weighted_chord_conf(root_conf, qual_conf, ext_conf))
         return root_id, qual_id, ext_id, bass_id, avg_conf
 
 
@@ -247,7 +411,35 @@ def _normalize(wav: np.ndarray) -> np.ndarray:
     return wav
 
 
-def load_audio_bytes(data: bytes, target_sr: int, filename: str = "") -> np.ndarray:
+def _decode_raw_waveform(data: bytes, filename: str = "") -> tuple[np.ndarray, int]:
+    """Decode raw audio bytes preserving stereo channels `(C, N)` float32 in `[-1, 1]` + original SR."""
+    ext = Path(filename).suffix.lower() if filename else ""
+    if ext in ("", ".wav", ".flac", ".ogg"):
+        try:
+            import soundfile as sf
+            audio, sr = sf.read(io.BytesIO(data), dtype="float32", always_2d=True)
+            return audio.T, int(sr)
+        except Exception as exc:
+            log.debug(f"soundfile decode failed ({exc}), falling back to librosa")
+
+    import librosa
+    wav, sr_orig = librosa.load(io.BytesIO(data), sr=None, mono=False)
+    if wav.ndim == 1:
+        wav = np.stack([wav, wav], axis=0)
+    return wav.astype(np.float32), int(sr_orig)
+
+
+def load_audio_bytes(
+    data: bytes,
+    target_sr: int,
+    filename: str = "",
+    separate: bool = False,
+    separator: HarmonicSeparator | None = None,
+) -> np.ndarray:
+    if separate and separator is not None:
+        wav_stereo, sr_orig = _decode_raw_waveform(data, filename=filename)
+        return separator.separate_waveform(wav_stereo, sr=sr_orig, target_sr=target_sr)
+
     import importlib
     ext = Path(filename).suffix.lower() if filename else ""
 
@@ -259,7 +451,7 @@ def load_audio_bytes(data: bytes, target_sr: int, filename: str = "") -> np.ndar
             if wav.ndim > 1:
                 wav = wav.mean(axis=1)
             wav = wav.astype(np.float32)
-            if wav.max() > 1.0:
+            if np.abs(wav).max() > 1.0:
                 wav = wav / 32768.0
             if sr != target_sr:
                 ta = importlib.import_module("torchaudio")
@@ -269,7 +461,7 @@ def load_audio_bytes(data: bytes, target_sr: int, filename: str = "") -> np.ndar
                 wav = wav_t.squeeze(0).numpy()
             return (wav * 32767).clip(-32768, 32767).astype(np.int16)
         except Exception as exc:
-            log.debug(f"scipy WAV decode failed: {exc}, falling back to torchaudio")
+            log.debug(f"scipy WAV decode failed: {exc}, falling back to librosa")
 
     try:
         import librosa
@@ -281,6 +473,14 @@ def load_audio_bytes(data: bytes, target_sr: int, filename: str = "") -> np.ndar
         raise RuntimeError("librosa not installed: pip install librosa")
 
 
+def _triangle_weights(n: int) -> np.ndarray:
+    if n <= 1:
+        return np.ones(max(1, n), dtype=np.float32)
+    mid = (n - 1) / 2.0
+    w = 1.0 - np.abs(np.arange(n, dtype=np.float32) - mid) / (mid + 1.0)
+    return np.maximum(w, 0.1)
+
+
 def _infer_frame_level(
     predictor: ONNXPredictor,
     audio: np.ndarray,
@@ -289,10 +489,12 @@ def _infer_frame_level(
     step_s: float = STEP_S,
     rms_threshold_db: float = RMS_THRESHOLD_DB,
     confidence_threshold: float = CONFIDENCE_THRESHOLD,
+    min_duration_ms: float = MIN_DURATION_MS,
 ) -> list[dict[str, Any]]:
     crop_samples = crop_s * sample_rate
-    step_samples = int(step_s * sample_rate)
+    step_samples = max(MERT_HOP_SAMPLES, int(round(step_s * sample_rate / MERT_HOP_SAMPLES)) * MERT_HOP_SAMPLES)
     audio_len = len(audio)
+    duration_ms = round(audio_len / sample_rate * 1000.0, 1)
 
     windows: list[tuple[int, np.ndarray]] = []
     if audio_len < crop_samples:
@@ -309,36 +511,113 @@ def _infer_frame_level(
             if last != pos - step_samples:
                 windows.append((last, audio[last: last + crop_samples]))
 
-    total_frames = max(1, int(np.ceil(audio_len * 75.0 / sample_rate)))
-    frame_data: dict[int, dict] = {}
+    use_prob_fusion = isinstance(predictor, ONNXPredictor)
+    expected_crop_frames = mert_output_length(crop_samples)
+    total_frames = max(1, mert_output_length(max(audio_len, crop_samples)))
+    if audio_len < crop_samples:
+        total_frames = max(1, int(np.ceil(audio_len / MERT_HOP_SAMPLES)))
+
+    if use_prob_fusion:
+        acc_r = np.zeros((total_frames, 12), dtype=np.float32)
+        acc_q = np.zeros((total_frames, 6), dtype=np.float32)
+        acc_e = np.zeros((total_frames, 15), dtype=np.float32)
+        acc_b = np.zeros((total_frames, 13), dtype=np.float32)
+        acc_w = np.zeros(total_frames, dtype=np.float32)
+
+        for pos, crop in windows:
+            if not _rms_gate(crop, rms_threshold_db):
+                continue
+            wav = _normalize(crop)
+            rp, qp, ep, bp = predictor.predict_frame_probs(wav)
+            n_f = len(rp)
+            tw = _triangle_weights(n_f)
+            start_f = int(round(pos / float(MERT_HOP_SAMPLES)))
+            end_f = min(total_frames, start_f + n_f)
+            span = end_f - start_f
+            if span <= 0:
+                continue
+            w_col = tw[:span, None]
+            acc_r[start_f:end_f] += rp[:span] * w_col
+            acc_q[start_f:end_f] += qp[:span] * w_col
+            acc_e[start_f:end_f] += ep[:span] * w_col
+            acc_b[start_f:end_f] += bp[:span] * w_col
+            acc_w[start_f:end_f] += tw[:span]
+
+        active_mask = acc_w > 0
+        decoded = np.zeros((total_frames, 5), dtype=np.float32)
+        decoded[:, 0:3] = -1
+        decoded[:, 3] = 12
+        if active_mask.any():
+            inv_w = 1.0 / acc_w[active_mask, None]
+            decoded[active_mask] = predictor.decode_frame_probs(
+                acc_r[active_mask] * inv_w,
+                acc_q[active_mask] * inv_w,
+                acc_e[active_mask] * inv_w,
+                acc_b[active_mask] * inv_w,
+            )
+
+        frame_ms = MERT_HOP_SAMPLES / float(sample_rate) * 1000.0
+        frame_results: list[dict[str, Any]] = []
+        for g in range(total_frames):
+            silent = not bool(active_mask[g])
+            if silent:
+                r, q, e, b, c = -1, -1, -1, 12, 0.0
+            else:
+                r, q, e, b, c = (
+                    int(decoded[g, 0]),
+                    int(decoded[g, 1]),
+                    int(decoded[g, 2]),
+                    int(decoded[g, 3]),
+                    float(decoded[g, 4]),
+                )
+                if c < confidence_threshold:
+                    r, q, e, b = -1, -1, -1, 12
+            s_ms = round(g * frame_ms, 1)
+            e_ms = duration_ms if g == total_frames - 1 else round((g + 1) * frame_ms, 1)
+            frame_results.append({
+                "start_ms": s_ms,
+                "end_ms": e_ms,
+                "root_id": r,
+                "quality_id": q,
+                "ext_id": e,
+                "bass_id": b,
+                "chord": chord_name(r, q, e, b),
+                "confidence": round(c, 4),
+                "silent": silent,
+            })
+
+        min_frames = max(1, int(round(min_duration_ms / frame_ms)))
+        smoothed = _smooth_jitter(frame_results, max_jitter_frames=min_frames)
+        merged = _merge_consecutive(smoothed)
+        if merged:
+            merged[0]["start_ms"] = 0.0
+            merged[-1]["end_ms"] = duration_ms
+        return merged
+
+    # Fallback path for custom/mocked predictors returning `(T, 5)` directly
+    frame_data: dict[int, dict[str, Any]] = {}
+    observed_n_frames = expected_crop_frames
 
     for pos, crop in windows:
         silent = not _rms_gate(crop, rms_threshold_db)
-        start_frame = int(round(pos * 75.0 / sample_rate))
-
         if silent:
-            n_frames = int(crop_s * 75)
+            n_frames = observed_n_frames
+            start_frame = int(round(pos / float(crop_samples) * n_frames))
             for t in range(n_frames):
                 g = start_frame + t
-                if g >= total_frames:
-                    continue
                 if g not in frame_data:
                     frame_data[g] = {
-                        "root_id": -1,
-                        "quality_id": -1,
-                        "ext_id": -1,
-                        "bass_id": 12,
-                        "conf": 0.0,
-                        "silent": True,
+                        "root_id": -1, "quality_id": -1, "ext_id": -1,
+                        "bass_id": 12, "conf": 0.0, "silent": True,
                     }
         else:
             wav = _normalize(crop)
             preds = predictor.predict(wav)
             n_frames = len(preds)
+            observed_n_frames = n_frames
+            start_frame = int(round(pos / float(crop_samples) * n_frames))
             for t in range(n_frames):
                 g = start_frame + t
-                if g >= total_frames:
-                    continue
                 r, q, e, b, c = preds[t]
                 r, q, e, b = int(r), int(q), int(e), int(b)
                 c = float(c)
@@ -346,28 +625,22 @@ def _infer_frame_level(
                     r, q, e, b = -1, -1, -1, 12
                 if g not in frame_data or frame_data[g]["silent"] or c > frame_data[g]["conf"]:
                     frame_data[g] = {
-                        "root_id": r,
-                        "quality_id": q,
-                        "ext_id": e,
-                        "bass_id": b,
-                        "conf": c,
-                        "silent": False,
+                        "root_id": r, "quality_id": q, "ext_id": e,
+                        "bass_id": b, "conf": c, "silent": False,
                     }
 
-    frame_results: list[dict[str, Any]] = []
-    for g in range(total_frames):
+    max_g = max(frame_data.keys()) + 1 if frame_data else expected_crop_frames
+    step_ms = duration_ms / float(max(1, max_g))
+    frame_results = []
+    for g in range(max_g):
         fd = frame_data.get(g)
         if fd is None:
             r, q, e, b, c, s = -1, -1, -1, 12, 0.0, True
         else:
             r, q, e, b, c, s = fd["root_id"], fd["quality_id"], fd["ext_id"], fd["bass_id"], fd["conf"], fd["silent"]
-
-        start_ms = round(g * (1000.0 / 75.0), 1)
-        end_ms = round((g + 1) * (1000.0 / 75.0), 1)
-
         frame_results.append({
-            "start_ms": start_ms,
-            "end_ms": end_ms,
+            "start_ms": round(g * step_ms, 1),
+            "end_ms": duration_ms if g == max_g - 1 else round((g + 1) * step_ms, 1),
             "root_id": r,
             "quality_id": q,
             "ext_id": e,
@@ -377,7 +650,13 @@ def _infer_frame_level(
             "silent": s,
         })
 
-    return _merge_consecutive(frame_results)
+    min_frames = max(1, int(round(min_duration_ms / max(step_ms, 1.0))))
+    smoothed = _smooth_jitter(frame_results, max_jitter_frames=min_frames)
+    merged = _merge_consecutive(smoothed)
+    if merged:
+        merged[0]["start_ms"] = 0.0
+        merged[-1]["end_ms"] = duration_ms
+    return merged
 
 
 def infer_audio(
@@ -552,6 +831,7 @@ def _merge_consecutive(results: list[dict]) -> list[dict]:
 
 
 _predictor: ONNXPredictor | None = None
+_separator: HarmonicSeparator | None = None
 
 
 def get_predictor() -> ONNXPredictor:
@@ -561,15 +841,27 @@ def get_predictor() -> ONNXPredictor:
     return _predictor
 
 
+def get_separator() -> HarmonicSeparator:
+    global _separator
+    if _separator is None:
+        _separator = HarmonicSeparator(model_name=DEMUCS_MODEL, segment=DEMUCS_SEGMENT)
+    return _separator
+
+
 def create_app() -> "FastAPI":
     if not _FASTAPI_AVAILABLE:
         raise RuntimeError("fastapi not installed: pip install fastapi uvicorn")
 
-    app = FastAPI(title="ChordSense Pro — Chord Recognition API", version="1.0.0")
+    app = FastAPI(title="ChordSense Pro — Chord Recognition API", version="1.1.0")
 
     @app.get("/health")
     def health():
-        return {"status": "ok", "model": MODEL_PATH}
+        return {
+            "status": "ok",
+            "model": MODEL_PATH,
+            "demucs_model": DEMUCS_MODEL,
+            "demucs_default": USE_DEMUCS_DEFAULT,
+        }
 
     @app.post("/predict")
     async def predict(
@@ -577,17 +869,21 @@ def create_app() -> "FastAPI":
         step_s: float = Query(default=STEP_S, ge=0.1, le=5.0),
         rms_threshold_db: float = Query(default=RMS_THRESHOLD_DB),
         confidence_threshold: float = Query(default=CONFIDENCE_THRESHOLD, ge=0.0, le=1.0),
+        separate: bool = Query(default=USE_DEMUCS_DEFAULT, description="Strip vocals & drums via htdemucs_ft"),
     ):
-        if not file.filename.lower().endswith((".wav", ".mp3", ".flac", ".ogg", ".m4a")):
+        if not (file.filename or "").lower().endswith((".wav", ".mp3", ".flac", ".ogg", ".m4a")):
             raise HTTPException(status_code=400, detail="Unsupported file format")
 
         data = await file.read()
-        try:
-            audio = load_audio_bytes(data, SAMPLE_RATE, file.filename or "")
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail=f"Audio decode failed: {exc}")
-
         t_start = time.perf_counter()
+        try:
+            sep = get_separator() if separate else None
+            audio = load_audio_bytes(
+                data, SAMPLE_RATE, file.filename or "", separate=separate, separator=sep
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Audio decode/separation failed: {exc}")
+
         predictor = get_predictor()
         segments = infer_audio(
             predictor,
@@ -601,6 +897,8 @@ def create_app() -> "FastAPI":
 
         return JSONResponse({
             "duration_ms": round(len(audio) / SAMPLE_RATE * 1000, 1),
+            "separated": separate,
+            "demucs_model": DEMUCS_MODEL if separate else None,
             "segments": len(segments),
             "elapsed_ms": elapsed_ms,
             "chords": segments,
@@ -637,6 +935,7 @@ def main():
     parser.add_argument("--host", default=HOST)
     parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("--step_s", type=float, default=STEP_S)
+    parser.add_argument("--no-demucs-preload", action="store_true", help="Lazy-load htdemucs_ft on first request")
     parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args()
 
@@ -648,6 +947,8 @@ def main():
 
     log.info(f"Loading ONNX model: {_model_path}")
     _predictor = ONNXPredictor(_model_path, args.classes_json)
+    if USE_DEMUCS_DEFAULT and not args.no_demucs_preload:
+        get_separator()
     log.info("Model loaded. Starting server...")
 
     app = create_app()
@@ -656,4 +957,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
