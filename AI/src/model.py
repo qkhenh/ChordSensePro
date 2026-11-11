@@ -104,7 +104,10 @@ class ChordModel(nn.Module):
         w = F.softmax(self.layer_weights, dim=0)
         h = (w[:, None, None, None] * hidden_states).sum(0)
 
-        emb = self._pool(h)
+        if self.cfg.frame_level:
+            emb = h
+        else:
+            emb = self._pool(h)
 
         root_logits = self.head_root(emb)
 

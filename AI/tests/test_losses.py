@@ -119,3 +119,25 @@ def test_chord_loss_backward():
     assert e.grad is not None
     assert b.grad is not None
 
+
+def test_chord_loss_frame_level():
+    cl = ChordLoss()
+    r = torch.randn(2, 375, 12, requires_grad=True)
+    q = torch.randn(2, 375, 6, requires_grad=True)
+    e = torch.randn(2, 375, 15, requires_grad=True)
+    b = torch.randn(2, 375, 13, requires_grad=True)
+    rt = torch.randint(0, 12, (2, 375))
+    qt = torch.randint(0, 6, (2, 375))
+    et = torch.randint(0, 15, (2, 375))
+    bt = torch.randint(0, 13, (2, 375))
+
+    loss, details = cl(r, q, e, b, rt, qt, et, bt)
+    assert loss.shape == ()
+    assert not torch.isnan(loss)
+    assert loss.item() > 0
+    loss.backward()
+    assert r.grad is not None
+    assert q.grad is not None
+    assert e.grad is not None
+    assert b.grad is not None
+

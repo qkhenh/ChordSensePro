@@ -123,3 +123,38 @@ def test_lookup_no_chord_gap(dummy_data):
     result = ds._lookup_chord("nonexistent_song", 1000.0)
     assert result == (-100, -100, -100, -100)
 
+
+def test_frame_level_dataset(dummy_data):
+    data_dir, sr, crop_s = dummy_data
+    cfg = Config(data_dir=str(data_dir), crop_s=crop_s, sample_rate=sr)
+    cfg.model.frame_level = True
+    ds = ChordDataset(cfg, split="train")
+    item = ds[0]
+    expected_frames = int(crop_s * 75)
+    assert item["root"].shape == (expected_frames,)
+    assert item["quality"].shape == (expected_frames,)
+    assert item["ext"].shape == (expected_frames,)
+    assert item["bass"].shape == (expected_frames,)
+
+    for i in range(expected_frames):
+        r = item["root"][i].item()
+        q = item["quality"][i].item()
+        e = item["ext"][i].item()
+        b = item["bass"][i].item()
+        assert r == -100 or (0 <= r < 12)
+        assert q == -100 or (0 <= q < 6)
+        assert e == -100 or (0 <= e < 15)
+        assert b == -100 or (0 <= b < 13)
+
+
+def test_frame_level_lookup_empty(dummy_data):
+    data_dir, sr, crop_s = dummy_data
+    cfg = Config(data_dir=str(data_dir), crop_s=crop_s, sample_rate=sr)
+    cfg.model.frame_level = True
+    ds = ChordDataset(cfg, split="train")
+    r, q, e, b = ds._lookup_chord_frames("nonexistent_song", 0.0, 375)
+    assert (r == -100).all()
+    assert (q == -100).all()
+    assert (e == -100).all()
+    assert (b == -100).all()
+

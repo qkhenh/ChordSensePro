@@ -112,14 +112,14 @@ def validate(
         all_bass_pred.append(b.argmax(-1).cpu())
         all_bass_true.append(bass.cpu())
 
-    root_pred = torch.cat(all_root_pred).numpy()
-    root_true = torch.cat(all_root_true).numpy()
-    qual_pred = torch.cat(all_qual_pred).numpy()
-    qual_true = torch.cat(all_qual_true).numpy()
-    ext_pred = torch.cat(all_ext_pred).numpy()
-    ext_true = torch.cat(all_ext_true).numpy()
-    bass_pred = torch.cat(all_bass_pred).numpy()
-    bass_true = torch.cat(all_bass_true).numpy()
+    root_pred = torch.cat(all_root_pred).reshape(-1).numpy()
+    root_true = torch.cat(all_root_true).reshape(-1).numpy()
+    qual_pred = torch.cat(all_qual_pred).reshape(-1).numpy()
+    qual_true = torch.cat(all_qual_true).reshape(-1).numpy()
+    ext_pred = torch.cat(all_ext_pred).reshape(-1).numpy()
+    ext_true = torch.cat(all_ext_true).reshape(-1).numpy()
+    bass_pred = torch.cat(all_bass_pred).reshape(-1).numpy()
+    bass_true = torch.cat(all_bass_true).reshape(-1).numpy()
 
     metrics = compute_metrics(
         root_pred, root_true,

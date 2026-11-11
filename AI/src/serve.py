@@ -132,6 +132,11 @@ class ONNXPredictor:
 
         self.input_name = self.session.get_inputs()[0].name
 
+        outputs_meta = self.session.get_outputs()
+        self.is_frame_level = bool(
+            outputs_meta and outputs_meta[0].shape and len(outputs_meta[0].shape) == 3
+        )
+
         self.combo_mask: np.ndarray | None = None
         candidates = [classes_json] if classes_json else []
         candidates.extend([
@@ -148,10 +153,45 @@ class ONNXPredictor:
                     log.info(f"Loaded valid_combo_mask from {cand}")
                     break
 
-    def predict(self, wav_float32: np.ndarray) -> tuple[int, int, int, int, float]:
+    def predict(self, wav_float32: np.ndarray):
         inp = wav_float32[np.newaxis, :]
         outputs = self.session.run(None, {self.input_name: inp})
         r_logits, q_logits, e_logits = outputs[0], outputs[1], outputs[2]
+
+        if r_logits.ndim == 3:
+            root_prob = _softmax(r_logits[0], axis=-1)
+            qual_prob = _softmax(q_logits[0], axis=-1)
+            ext_prob = _softmax(e_logits[0], axis=-1)
+
+            root_ids = root_prob.argmax(axis=-1)
+            root_confs = root_prob[np.arange(len(root_ids)), root_ids]
+
+            qual_ids = qual_prob.argmax(axis=-1)
+            qual_confs = qual_prob[np.arange(len(qual_ids)), qual_ids]
+
+            if self.combo_mask is not None:
+                ext_masked = ext_prob.copy()
+                mask = self.combo_mask[qual_ids]
+                ext_masked[~mask] = 0.0
+                s = ext_masked.sum(axis=-1, keepdims=True)
+                ext_masked = np.where(s > 0, ext_masked / np.maximum(s, 1e-12), ext_masked)
+                ext_ids = ext_masked.argmax(axis=-1)
+                ext_confs = ext_masked[np.arange(len(ext_ids)), ext_ids]
+            else:
+                ext_ids = ext_prob.argmax(axis=-1)
+                ext_confs = ext_prob[np.arange(len(ext_ids)), ext_ids]
+
+            if len(outputs) >= 4:
+                b_logits = outputs[3]
+                bass_prob = _softmax(b_logits[0], axis=-1)
+                bass_ids = bass_prob.argmax(axis=-1)
+                bass_confs = bass_prob[np.arange(len(bass_ids)), bass_ids]
+                avg_confs = (root_confs + qual_confs + ext_confs + bass_confs) / 4.0
+            else:
+                bass_ids = np.full(len(root_ids), 12, dtype=np.int64)
+                avg_confs = (root_confs + qual_confs + ext_confs) / 3.0
+
+            return np.column_stack([root_ids, qual_ids, ext_ids, bass_ids, avg_confs])
 
         root_prob = _softmax(r_logits[0])
         qual_prob = _softmax(q_logits[0])
@@ -188,9 +228,9 @@ class ONNXPredictor:
         return root_id, qual_id, ext_id, bass_id, avg_conf
 
 
-def _softmax(x: np.ndarray) -> np.ndarray:
-    e = np.exp(x - x.max())
-    return e / e.sum()
+def _softmax(x: np.ndarray, axis: int = -1) -> np.ndarray:
+    e = np.exp(x - np.max(x, axis=axis, keepdims=True))
+    return e / e.sum(axis=axis, keepdims=True)
 
 
 def _rms_gate(crop: np.ndarray, threshold_db: float) -> bool:
@@ -241,6 +281,105 @@ def load_audio_bytes(data: bytes, target_sr: int, filename: str = "") -> np.ndar
         raise RuntimeError("librosa not installed: pip install librosa")
 
 
+def _infer_frame_level(
+    predictor: ONNXPredictor,
+    audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    crop_s: int = CROP_S,
+    step_s: float = STEP_S,
+    rms_threshold_db: float = RMS_THRESHOLD_DB,
+    confidence_threshold: float = CONFIDENCE_THRESHOLD,
+) -> list[dict[str, Any]]:
+    crop_samples = crop_s * sample_rate
+    step_samples = int(step_s * sample_rate)
+    audio_len = len(audio)
+
+    windows: list[tuple[int, np.ndarray]] = []
+    if audio_len < crop_samples:
+        pad = np.zeros(crop_samples, dtype=np.int16)
+        pad[:audio_len] = audio
+        windows.append((0, pad))
+    else:
+        pos = 0
+        while pos + crop_samples <= audio_len:
+            windows.append((pos, audio[pos: pos + crop_samples]))
+            pos += step_samples
+        if pos < audio_len:
+            last = audio_len - crop_samples
+            if last != pos - step_samples:
+                windows.append((last, audio[last: last + crop_samples]))
+
+    total_frames = max(1, int(np.ceil(audio_len * 75.0 / sample_rate)))
+    frame_data: dict[int, dict] = {}
+
+    for pos, crop in windows:
+        silent = not _rms_gate(crop, rms_threshold_db)
+        start_frame = int(round(pos * 75.0 / sample_rate))
+
+        if silent:
+            n_frames = int(crop_s * 75)
+            for t in range(n_frames):
+                g = start_frame + t
+                if g >= total_frames:
+                    continue
+                if g not in frame_data:
+                    frame_data[g] = {
+                        "root_id": -1,
+                        "quality_id": -1,
+                        "ext_id": -1,
+                        "bass_id": 12,
+                        "conf": 0.0,
+                        "silent": True,
+                    }
+        else:
+            wav = _normalize(crop)
+            preds = predictor.predict(wav)
+            n_frames = len(preds)
+            for t in range(n_frames):
+                g = start_frame + t
+                if g >= total_frames:
+                    continue
+                r, q, e, b, c = preds[t]
+                r, q, e, b = int(r), int(q), int(e), int(b)
+                c = float(c)
+                if c < confidence_threshold:
+                    r, q, e, b = -1, -1, -1, 12
+                if g not in frame_data or frame_data[g]["silent"] or c > frame_data[g]["conf"]:
+                    frame_data[g] = {
+                        "root_id": r,
+                        "quality_id": q,
+                        "ext_id": e,
+                        "bass_id": b,
+                        "conf": c,
+                        "silent": False,
+                    }
+
+    frame_results: list[dict[str, Any]] = []
+    for g in range(total_frames):
+        fd = frame_data.get(g)
+        if fd is None:
+            r, q, e, b, c, s = -1, -1, -1, 12, 0.0, True
+        else:
+            r, q, e, b, c, s = fd["root_id"], fd["quality_id"], fd["ext_id"], fd["bass_id"], fd["conf"], fd["silent"]
+
+        start_ms = round(g * (1000.0 / 75.0), 1)
+        end_ms = round((g + 1) * (1000.0 / 75.0), 1)
+
+        frame_results.append({
+            "start_ms": start_ms,
+            "end_ms": end_ms,
+            "root_id": r,
+            "quality_id": q,
+            "ext_id": e,
+            "bass_id": b,
+            "chord": chord_name(r, q, e, b),
+            "confidence": round(c, 4),
+            "silent": s,
+        })
+
+    return _merge_consecutive(frame_results)
+
+
 def infer_audio(
     predictor: ONNXPredictor,
     audio: np.ndarray,
@@ -250,6 +389,17 @@ def infer_audio(
     rms_threshold_db: float = RMS_THRESHOLD_DB,
     confidence_threshold: float = CONFIDENCE_THRESHOLD,
 ) -> list[dict[str, Any]]:
+    if getattr(predictor, "is_frame_level", False):
+        return _infer_frame_level(
+            predictor,
+            audio,
+            sample_rate=sample_rate,
+            crop_s=crop_s,
+            step_s=step_s,
+            rms_threshold_db=rms_threshold_db,
+            confidence_threshold=confidence_threshold,
+        )
+
     crop_samples = crop_s * sample_rate
     step_samples = int(step_s * sample_rate)
     audio_len = len(audio)

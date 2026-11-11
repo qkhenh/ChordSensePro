@@ -77,3 +77,81 @@ def test_compute_metrics_chord_acc_includes_bass():
     assert m["chord_acc"] == 0.5
 
 
+def test_infer_frame_level_basic():
+    from unittest.mock import MagicMock
+    from src.serve import infer_audio
+
+    sr = 24000
+    crop_s = 5
+    audio = np.random.randint(-20000, 20000, size=sr * crop_s, dtype=np.int16)
+
+    predictor = MagicMock()
+    predictor.is_frame_level = True
+    preds = np.zeros((375, 5), dtype=np.float32)
+    preds[:, 0] = 0
+    preds[:, 1] = 0
+    preds[:, 2] = 0
+    preds[:, 3] = 12
+    preds[:, 4] = 0.95
+    predictor.predict.return_value = preds
+
+    segments = infer_audio(predictor, audio, sample_rate=sr, crop_s=crop_s, step_s=1.0)
+    assert len(segments) == 1
+    assert segments[0]["chord"] == "C"
+    assert segments[0]["start_ms"] == 0.0
+    assert segments[0]["end_ms"] == 5000.0
+
+
+def test_infer_frame_level_transition():
+    from unittest.mock import MagicMock
+    from src.serve import _infer_frame_level
+
+    sr = 24000
+    crop_s = 5
+    audio = np.random.randint(-20000, 20000, size=sr * crop_s, dtype=np.int16)
+
+    predictor = MagicMock()
+    predictor.is_frame_level = True
+    preds = np.zeros((375, 5), dtype=np.float32)
+    preds[:200, 0] = 0
+    preds[:200, 1] = 0
+    preds[:200, 2] = 0
+    preds[:200, 3] = 12
+    preds[:200, 4] = 0.9
+
+    preds[200:, 0] = 7
+    preds[200:, 1] = 0
+    preds[200:, 2] = 0
+    preds[200:, 3] = 12
+    preds[200:, 4] = 0.95
+    predictor.predict.return_value = preds
+
+    segments = _infer_frame_level(predictor, audio, sample_rate=sr, crop_s=crop_s, step_s=5.0)
+    assert len(segments) == 2
+    assert segments[0]["chord"] == "C"
+    assert segments[1]["chord"] == "G"
+
+
+def test_infer_frame_level_low_confidence():
+    from unittest.mock import MagicMock
+    from src.serve import _infer_frame_level
+
+    sr = 24000
+    crop_s = 5
+    audio = np.random.randint(-20000, 20000, size=sr * crop_s, dtype=np.int16)
+
+    predictor = MagicMock()
+    predictor.is_frame_level = True
+    preds = np.zeros((375, 5), dtype=np.float32)
+    preds[:, 0] = 0
+    preds[:, 1] = 0
+    preds[:, 2] = 0
+    preds[:, 3] = 12
+    preds[:, 4] = 0.1
+    predictor.predict.return_value = preds
+
+    segments = _infer_frame_level(predictor, audio, sample_rate=sr, crop_s=crop_s, step_s=5.0, confidence_threshold=0.3)
+    assert len(segments) == 1
+    assert segments[0]["chord"] == "N"
+
+

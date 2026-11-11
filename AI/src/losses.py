@@ -60,6 +60,17 @@ class ChordLoss(nn.Module):
         ext_targets: torch.Tensor,
         bass_targets: torch.Tensor,
     ) -> tuple[torch.Tensor, dict[str, float]]:
+        if root_logits.dim() == 3:
+            B, T, C = root_logits.shape
+            root_logits = root_logits.reshape(B * T, -1)
+            quality_logits = quality_logits.reshape(B * T, -1)
+            ext_logits = ext_logits.reshape(B * T, -1)
+            bass_logits = bass_logits.reshape(B * T, -1)
+            root_targets = root_targets.reshape(B * T)
+            quality_targets = quality_targets.reshape(B * T)
+            ext_targets = ext_targets.reshape(B * T)
+            bass_targets = bass_targets.reshape(B * T)
+
         l_root = self.ce_root(root_logits, root_targets)
         l_qual = self.ce_quality(quality_logits, quality_targets)
         l_ext = self.focal_ext(ext_logits, ext_targets)

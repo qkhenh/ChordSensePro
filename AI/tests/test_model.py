@@ -115,6 +115,38 @@ def test_chord_model_center_pooling():
     assert b.shape == (2, 13)
 
 
+def test_chord_model_frame_level():
+    cfg = ModelCfg(
+        name="fake",
+        n_layers=25,
+        hidden_dim=1024,
+        n_root=12,
+        n_quality=6,
+        n_ext=15,
+        n_bass=13,
+        head_hidden=128,
+        ext_head_hidden=256,
+        ext_head_mid=64,
+        bass_head_hidden=128,
+        dropout=0.3,
+        detach_logits=True,
+        pooling="mean",
+        frame_level=True,
+    )
+
+    with patch("src.model.AutoModel") as mock_auto:
+        mock_auto.from_pretrained.return_value = FakeMERT(25, 1024)
+        model = ChordModel(cfg)
+
+    wav = torch.randn(2, 120000)
+    r, q, e, b = model(wav)
+
+    assert r.shape == (2, 375, 12)
+    assert q.shape == (2, 375, 6)
+    assert e.shape == (2, 375, 15)
+    assert b.shape == (2, 375, 13)
+
+
 def test_trainable_params_no_lora():
     cfg = ModelCfg(name="fake")
 

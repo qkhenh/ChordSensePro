@@ -22,6 +22,7 @@ class ModelCfg:
     dropout: float = 0.3
     detach_logits: bool = True
     pooling: str = "mean"
+    frame_level: bool = False
 
 
 @dataclass
@@ -176,6 +177,8 @@ def _apply_env_overrides(cfg: Config) -> None:
         cfg.model.name = _env("MERT_MODEL")
     if _env("POOLING"):
         cfg.model.pooling = _env("POOLING")
+    if _env_bool("FRAME_LEVEL") is not None:
+        cfg.model.frame_level = _env_bool("FRAME_LEVEL")
     if _env_bool("DETACH_LOGITS") is not None:
         cfg.model.detach_logits = _env_bool("DETACH_LOGITS")
     if _env_float("DROPOUT") is not None:

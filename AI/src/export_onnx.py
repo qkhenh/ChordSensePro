@@ -54,19 +54,24 @@ def export_onnx(
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
+    dynamic_axes = {
+        "wav": {0: "batch"},
+        "root_logits": {0: "batch"},
+        "quality_logits": {0: "batch"},
+        "ext_logits": {0: "batch"},
+        "bass_logits": {0: "batch"},
+    }
+    if cfg.model.frame_level:
+        for name in ["root_logits", "quality_logits", "ext_logits", "bass_logits"]:
+            dynamic_axes[name][1] = "time"
+
     torch.onnx.export(
         wrapper,
         (dummy,),
         output_path,
         input_names=["wav"],
         output_names=["root_logits", "quality_logits", "ext_logits", "bass_logits"],
-        dynamic_axes={
-            "wav": {0: "batch"},
-            "root_logits": {0: "batch"},
-            "quality_logits": {0: "batch"},
-            "ext_logits": {0: "batch"},
-            "bass_logits": {0: "batch"},
-        },
+        dynamic_axes=dynamic_axes,
         opset_version=opset,
         do_constant_folding=True,
     )
