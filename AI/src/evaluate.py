@@ -216,11 +216,12 @@ def evaluate_split(
                 r, q, e, b = r[:, :T], q[:, :T], e[:, :T], b[:, :T]
                 rt, qt, et, bt = rt[:, :T], qt[:, :T], et[:, :T], bt[:, :T]
 
+            r, q, e, b = r.float(), q.float(), e.float(), b.float()
             rp = r.argmax(-1)
             qp = q.argmax(-1)
             if combo_mask is not None:
                 valid_ext = combo_mask[qp]
-                e_masked = e.masked_fill(~valid_ext, -1e9)
+                e_masked = e.masked_fill(~valid_ext, -1e4)
                 ep = e_masked.argmax(-1)
             else:
                 ep = e.argmax(-1)
