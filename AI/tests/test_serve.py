@@ -16,9 +16,15 @@ from src.serve import (
     HarmonicSeparator,
     _infer_frame_level,
     _merge_consecutive,
+    _prune_short_segments,
     _smooth_jitter,
     _vote_and_merge,
+    apply_key_spelling,
+    canonical_bass_id,
+    canonicalize_chord_tuple,
     chord_name,
+    decode_musical_sequence,
+    detect_prefer_flats,
     infer_audio,
     mert_output_length as serve_mert_len,
     weighted_chord_conf,
@@ -196,3 +202,89 @@ def test_harmonic_separator_sums_other_and_bass():
         out_i16 = sep.separate_waveform(wav_in, sr=24000, target_sr=24000)
         assert out_i16.shape == (24000,)
         assert out_i16.dtype == np.int16
+
+
+def test_merge_consecutive_folds_root_bass_into_none():
+    assert canonical_bass_id(9, 9) == 12
+    assert canonical_bass_id(9, 0) == 0
+    segs = [
+        {"start_ms": 0.0, "end_ms": 500.0, "root_id": 9, "quality_id": 1, "ext_id": 0, "bass_id": 12, "chord": "Am", "confidence": 0.70, "silent": False},
+        {"start_ms": 500.0, "end_ms": 1000.0, "root_id": 9, "quality_id": 1, "ext_id": 0, "bass_id": 9, "chord": "Am", "confidence": 0.80, "silent": False},
+        {"start_ms": 1000.0, "end_ms": 1500.0, "root_id": 9, "quality_id": 1, "ext_id": 0, "bass_id": 12, "chord": "Am", "confidence": 0.75, "silent": False},
+    ]
+    merged = _merge_consecutive(segs)
+    assert len(merged) == 1
+    assert merged[0]["chord"] == "Am"
+    assert merged[0]["bass_id"] == 12
+    assert merged[0]["start_ms"] == 0.0
+    assert merged[0]["end_ms"] == 1500.0
+
+
+def test_symmetric_dim7_canonicalization():
+    # Adim7/C (9, 3, 5, 0) and F#dim7/C (6, 3, 5, 0) both equal Cdim7 (0, 3, 5, 12)
+    assert canonicalize_chord_tuple(9, 3, 5, 0) == (0, 3, 5, 12)
+    assert canonicalize_chord_tuple(6, 3, 5, 0) == (0, 3, 5, 12)
+    assert canonicalize_chord_tuple(3, 3, 5, 0) == (0, 3, 5, 12)
+
+
+def test_prune_short_segments_staircase():
+    segs = [
+        {"start_ms": 0.0, "end_ms": 1200.0, "root_id": 2, "quality_id": 1, "ext_id": 4, "bass_id": 12, "chord": "Dm7", "confidence": 0.85, "silent": False},
+        {"start_ms": 1200.0, "end_ms": 1240.0, "root_id": 9, "quality_id": 3, "ext_id": 0, "bass_id": 12, "chord": "Adim", "confidence": 0.52, "silent": False},
+        {"start_ms": 1240.0, "end_ms": 1290.0, "root_id": 5, "quality_id": 3, "ext_id": 5, "bass_id": 0, "chord": "Fdim7/C", "confidence": 0.54, "silent": False},
+        {"start_ms": 1290.0, "end_ms": 2400.0, "root_id": 5, "quality_id": 2, "ext_id": 5, "bass_id": 12, "chord": "F7", "confidence": 0.92, "silent": False},
+    ]
+    pruned = _prune_short_segments(segs, min_duration_ms=300.0)
+    assert len(pruned) == 2
+    assert [p["chord"] for p in pruned] == ["Dm7", "F7"]
+    assert all((p["end_ms"] - p["start_ms"]) >= 300.0 for p in pruned)
+
+
+def test_decode_musical_sequence_suppresses_arpeggio_flicker():
+    n = 150  # ~2.0 seconds at 75 Hz
+    rp = np.full((n, 12), 0.01, dtype=np.float32)
+    qp = np.full((n, 6), 0.02, dtype=np.float32)
+    ep = np.full((n, 15), 0.01, dtype=np.float32)
+    bp = np.full((n, 13), 0.01, dtype=np.float32)
+
+    # Sustained Dm7 (root=2, qual=1, ext=4, bass=12)
+    rp[:, 2] = 0.89
+    qp[:, 1] = 0.90
+    ep[:, 4] = 0.65
+    ep[:, 8] = 0.21  # m9 secondary
+    bp[:, 12] = 0.88
+
+    # Inject a 4-frame (~53ms) single-note arpeggio blip on root=9 (A) + m9 flicker
+    rp[60:64, 2] = 0.25
+    rp[60:64, 9] = 0.64
+    ep[30:42, 4] = 0.30
+    ep[30:42, 8] = 0.56
+
+    decoded = decode_musical_sequence(rp, qp, ep, bp, frame_ms=13.333)
+    assert np.all(decoded[:, 0] == 2)   # Root stays D throughout
+    assert np.all(decoded[:, 1] == 1)   # Quality stays minor throughout
+    assert np.all(decoded[:, 2] == 4)   # Extension consolidated to m7 without splitting
+    assert np.all(decoded[:, 3] == 12)  # Bass stays none
+
+
+def test_key_aware_flat_vs_sharp_spelling():
+    dm_prog = [
+        {"start_ms": 0.0, "end_ms": 2000.0, "root_id": 2, "quality_id": 1, "ext_id": 4, "bass_id": 12, "chord": "Dm7", "confidence": 0.85, "silent": False},
+        {"start_ms": 2000.0, "end_ms": 4000.0, "root_id": 10, "quality_id": 0, "ext_id": 3, "bass_id": 12, "chord": "A#maj7", "confidence": 0.87, "silent": False},
+        {"start_ms": 4000.0, "end_ms": 6000.0, "root_id": 7, "quality_id": 1, "ext_id": 4, "bass_id": 12, "chord": "Gm7", "confidence": 0.90, "silent": False},
+        {"start_ms": 6000.0, "end_ms": 8000.0, "root_id": 9, "quality_id": 2, "ext_id": 5, "bass_id": 12, "chord": "A7", "confidence": 0.80, "silent": False},
+    ]
+    assert detect_prefer_flats(dm_prog) is True
+    spelled = apply_key_spelling(dm_prog)
+    assert spelled[1]["chord"] == "Bbmaj7"
+
+    e_maj_prog = [
+        {"start_ms": 0.0, "end_ms": 2000.0, "root_id": 4, "quality_id": 0, "ext_id": 0, "bass_id": 12, "chord": "E", "confidence": 0.9, "silent": False},
+        {"start_ms": 2000.0, "end_ms": 4000.0, "root_id": 11, "quality_id": 0, "ext_id": 0, "bass_id": 12, "chord": "B", "confidence": 0.9, "silent": False},
+        {"start_ms": 4000.0, "end_ms": 6000.0, "root_id": 1, "quality_id": 1, "ext_id": 0, "bass_id": 12, "chord": "C#m", "confidence": 0.9, "silent": False},
+        {"start_ms": 6000.0, "end_ms": 8000.0, "root_id": 9, "quality_id": 0, "ext_id": 0, "bass_id": 12, "chord": "A", "confidence": 0.9, "silent": False},
+    ]
+    assert detect_prefer_flats(e_maj_prog) is False
+    spelled_e = apply_key_spelling(e_maj_prog)
+    assert spelled_e[2]["chord"] == "C#m"
+

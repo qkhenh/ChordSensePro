@@ -2,6 +2,66 @@
 
 ---
 
+## 2026-11-11 — Hoàn tất Model v4 Frame-Level (~75 Hz), Rescue Slash-Chord Data, Retrain L4 & Benchmark Test
+
+### 1. Buổi sáng sớm (`75f5920`, `3541e1f`) — Khởi tạo Kiến trúc v4 Frame-Level
+- Chuyển đổi kiến trúc từ clip-level mean-pooling sang **frame-level classification (~75 Hz, ~13.3ms/frame)**:
+  - [`AI/src/model.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/model.py): Thêm cờ `frame_level: bool`, bỏ bước `_pool()` để dự đoán chuỗi `(B, T, C)` trực tiếp trên từng frame MERT.
+  - [`AI/src/dataset.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/dataset.py): Thêm `_lookup_chord_frames()` gán nhãn chuỗi thời gian cho từng cửa sổ 5s.
+  - Tạo configs [`v4_5s_p1.yaml`](file:///d:/qkhenh/Project/ChordSensePro/AI/configs/v4_5s_p1.yaml), [`v4_5s_p2.yaml`](file:///d:/qkhenh/Project/ChordSensePro/AI/configs/v4_5s_p2.yaml) và tài liệu [`40_plan_v4_frame_level.md`](file:///d:/qkhenh/Project/ChordSensePro/AI/markdown/40_plan_v4_frame_level.md).
+  - Làm gọn cell Setup tự thân (self-contained) trong [`AI/notebooks/colab_train.ipynb`](file:///d:/qkhenh/Project/ChordSensePro/AI/notebooks/colab_train.ipynb).
+
+### 2. Buổi sáng (`cd68166`) — Triển khai Master Plan `50_bugfix_plan.md` (Stages 1 → 3)
+
+#### Stage 1 — DE: Sửa DB Schema & Khôi phục `bass_id` cho Hooktheory (~78% dataset)
+- Cập nhật [`training_section.py`](file:///d:/qkhenh/Project/ChordSensePro/DE/src/training_data/domain/models/training_section.py), [`training_section_repository.py`](file:///d:/qkhenh/Project/ChordSensePro/DE/src/training_data/infrastructure/repositories/training_section_repository.py) và [`init.sql`](file:///d:/qkhenh/Project/ChordSensePro/DE/init/init.sql) bổ sung cột `bass_id SMALLINT DEFAULT 12`.
+- Sửa [`hooktheory.py`](file:///d:/qkhenh/Project/ChordSensePro/DE/src/data_processing/application/annotation_parsers/hooktheory.py) (`harmony_label` & `build_annotation`) đọc trường `inversion` cho mọi nhánh (bao gồm cả `maj6`/`min6`, chặn biên an toàn `0 < inversion <= len(semitones)`).
+- Viết và chạy [`DE/scripts/backfill_hooktheory_bass.py`](file:///d:/qkhenh/Project/ChordSensePro/DE/scripts/backfill_hooktheory_bass.py):
+  - Khớp **4.806 / 4.806** bài Hooktheory trong PostgreSQL, cập nhật **238.422** dòng trong `training_chords` và **6.067** file annotation JSON.
+  - Xuất lại `chords.parquet` + `classes.json` cho `export/v2` & `export/v3` (giữ nguyên 15 GB `.npy`, không cần crawl lại audio): tỷ lệ slash chords thực sự tăng gấp đôi từ `14.467` (`6.69%`) lên **`29.606 / 216.216` (`13.69%`)** (`train: 13.66%`, `val: 13.65%`, `test: 13.96%`).
+
+#### Stage 2 — AI Core: Sửa lỗi căn thời gian 374 vs 375, Loss, Scheduler & Nâng cấp Model v4
+- [`AI/src/model.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/model.py):
+  - Tính chính xác hình học 7 lớp CNN của MERT qua `mert_output_length()` (`120.000 samples → 374 frames`, `72.000 → 224 frames`) và tâm thời gian `mert_frame_times_ms()`.
+  - Thêm `TemporalContextBlock` (`Conv1d(1024, 1024, k=5, groups=16)` + `GELU` + `Linear` + residual `LayerNorm`).
+  - Đổi truyền logits thô sang **Softmax Cascade** (`F.softmax` probabilities truyền qua `root → quality → ext → bass`).
+- [`AI/src/dataset.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/dataset.py):
+  - Vector hóa `_lookup_chord_frames` bằng `np.searchsorted`, khóa biên cắt `[first_ms, last_ms]` để tránh cắt trúng vùng không nhãn.
+  - Multi-crop theo độ dài bài cho `train` (**10.198 crops/epoch** trên 4.324 bài), giới hạn tối đa 6 tiles cách đều cho `val` (**6.232 tiles**), và lát gạch kín 100% bài không trùng lắp cho `test` (**7.812 tiles** trên 647 bài, dùng `min_eval_ms` che phần lẻ cuối bài).
+- [`AI/src/losses.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/losses.py):
+  - Đổi `head_bass` sang `FocalLoss(gamma=2.0)` với `default_bass_class_weight` (`[1.0]*12 + [0.25]` cho lớp `none`) chống học vẹt lớp đa số; thêm `compute_smoothed_class_weights` cho `quality` và `ext`.
+- [`AI/src/train.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/train.py) & [`AI/src/augment.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/augment.py):
+  - Thêm `build_scheduler()` (`SequentialLR`: Linear warmup + CosineAnnealingLR cập nhật theo từng batch hợp lệ dưới AMP).
+  - Tắt CPU pitch-shift (`[0, 0]`), bổ sung waveform `time_mask_prob: 0.3` siêu nhẹ.
+- [`AI/src/export_onnx.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/export_onnx.py): Truyền `dynamo=False` vào `torch.onnx.export` tương thích PyTorch 2.9+ với forward hooks 25 lớp của MERT.
+
+#### Stage 3 — Inference, Demucs `htdemucs_ft` & Evaluation CLI
+- [`AI/src/serve.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/serve.py) & [`AI/test_v3.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/test_v3.py):
+  - Tích hợp `HarmonicSeparator(model_name="htdemucs_ft", segment=6.0)` tách stereo 44.1 kHz và trộn đúng `other + bass` đồng bộ 100% với pipeline DE.
+  - Sửa công thức `weighted_chord_conf` (`0.40*root + 0.35*qual + 0.25*ext`, loại bỏ `bass=none` khỏi điểm tự tin).
+  - Bổ sung cộng dồn xác suất chồng lấp trọng số tam giác (**Triangle-weighted Overlap-Add**) trong `_infer_frame_level`.
+- [`AI/src/evaluate.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/evaluate.py): Thêm CLI `python -m src.evaluate` chấm toàn bộ split kèm các chỉ số chuyên biệt `bass_slash_acc`, `bass_slash_f1`, `chord_no_bass_acc`.
+- **Unit tests:** Pass tuyệt đối **288 / 288 tests** (`47 passed` trong `AI/tests`, `241 passed` trong `DE/tests/unit`).
+
+### 3. Buổi chiều (`08dfd20` + Uncommitted local CLI updates) — Retrain Colab L4, Benchmark 647 bài Test & Nghe kiểm thử thực tế
+- **Retrain thành công trên Colab L4:** Huấn luyện `v4_5s_p1` → `v4_5s_p2`, xuất và tải model [`AI/results/model_v4_5s_p2.onnx`](file:///d:/qkhenh/Project/ChordSensePro/AI/results/model_v4_5s_p2.onnx) (`1.28 GB`) về máy local.
+- **Fix lỗi tràn số FP16 khi eval (`08dfd20`):** Sửa `e.masked_fill(~valid_ext, -1e9)` trong [`AI/src/evaluate.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/evaluate.py#L219-L225) ép kiểu `.float()` và dùng `-1e4` để tránh `RuntimeError: value cannot be converted to type c10::Half without overflow`.
+- **Kết quả Benchmark chính thức trên tập `test` (647 bài, 7.812 tiles phủ 100% bài hát ở ~75 Hz):**
+  - `root_acc`: **77.84%** (`root_f1_macro`: **77.35%**) — tăng **+16.8pp** so với `v3-A` (`61.0%`).
+  - `quality_acc`: **69.88%** (`quality_f1_macro`: **43.75%**) — tăng **+9.3pp** so với `v3-A`.
+  - `ext_acc`: **68.97%** (`ext_f1_macro`: **16.91%**) — tăng **+8.6pp** so với `v3-A`.
+  - `bass_acc`: **84.80%** | **`bass_slash_f1`: 50.28%** (`bass_slash_acc`: **37.79%**) — xóa bỏ hoàn toàn lỗi đoán mò `none` của `v3-A`.
+  - `chord_no_bass_acc` (khớp 3 heads): **50.09%** | `chord_acc` (khớp cả 4 heads): **45.80%** | `test_loss`: **0.6425**.
+- **Cải thiện tiện ích CLI local:**
+  - Bật `progress=True` trong `HarmonicSeparator.separate_waveform` (`AI/src/serve.py`) để hiển thị thanh tiến độ `%` khi tách nhạc Demucs.
+  - Cập nhật [`AI/test_v3.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/test_v3.py): Hỗ trợ biến môi trường `TEST_AUDIO`/`AUDIO_PATH`, `TEST_MODEL`, cờ `--demucs-model` và ưu tiên mặc định `D:\Untitled.wav`.
+- **Kiểm thử thực tế trên `D:\Untitled.wav` & Lập kế hoạch xử lý tiếng tỉa rải dây:**
+  - Model bắt chuẩn xác vòng hòa thanh giọng `Dm` ở đầu các ô nhịp (`Dm7 → Cdim7 → F7/C → F7 → Bbmaj7 → Am → Abdim → Gm7 → Edim7/E7 → A7#5 → Dm7`).
+  - Phát hiện 4 nguyên nhân khiến output bị cắt vụn (`0.01s`) khi nhạc công đánh tỉa/arpeggio: (1) `_smooth_jitter` bỏ lọt nhiễu bậc thang `A → B → C`, (2) chưa gộp `bass_id == root_id` về `12` làm xẻ nhỏ `Am`/`Gm`, (3) Greedy Argmax từng 13.3ms thiếu quán tính chuyển trạng thái, (4) chưa bám lưới phách (beat grid).
+  - Lập kế hoạch khắc phục chi tiết tại [`60_postprocess_arpeggio_plan.md`](file:///d:/qkhenh/Project/ChordSensePro/AI/markdown/60_postprocess_arpeggio_plan.md) (Sticky Viterbi + Beat-Sync + Canonical Root-Bass + Iterative Short-Segment Pruning).
+
+---
+
 ## 2026-11-10 — Triển khai Improvement Plan v3 (Phase A, B, C1, D) + Benchmark CUDA
 
 ### Phase A — DE: Parse `bass_id` & Export Dataset v3

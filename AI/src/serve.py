@@ -65,7 +65,15 @@ CROP_S = int(os.environ.get("SERVE_CROP_S", "5"))
 STEP_S = float(os.environ.get("SERVE_STEP_S", "2.5"))
 RMS_THRESHOLD_DB = float(os.environ.get("SERVE_RMS_THRESHOLD_DB", "-40.0"))
 CONFIDENCE_THRESHOLD = float(os.environ.get("SERVE_CONFIDENCE_THRESHOLD", "0.30"))
-MIN_DURATION_MS = float(os.environ.get("SERVE_MIN_DURATION_MS", "160.0"))
+MIN_DURATION_MS = float(os.environ.get("SERVE_MIN_DURATION_MS", "300.0"))
+MIN_EXT_DURATION_MS = float(os.environ.get("SERVE_MIN_EXT_DURATION_MS", "1000.0"))
+SLASH_BASS_THRESHOLD = float(os.environ.get("SERVE_SLASH_BASS_THRESHOLD", "0.50"))
+RARE_EXT_THRESHOLD = float(os.environ.get("SERVE_RARE_EXT_THRESHOLD", "0.48"))
+ROOT_SWITCH_PENALTY = float(os.environ.get("SERVE_ROOT_SWITCH_PENALTY", "5.5"))
+QUAL_SWITCH_PENALTY = float(os.environ.get("SERVE_QUAL_SWITCH_PENALTY", "3.5"))
+BASS_SWITCH_PENALTY = float(os.environ.get("SERVE_BASS_SWITCH_PENALTY", "3.5"))
+EXT_SWITCH_PENALTY = float(os.environ.get("SERVE_EXT_SWITCH_PENALTY", "6.0"))
+AUTO_KEY_SPELLING = os.environ.get("SERVE_AUTO_KEY_SPELLING", "1").lower() in ("1", "true", "yes")
 USE_DEMUCS_DEFAULT = os.environ.get("SERVE_USE_DEMUCS", "1").lower() in ("1", "true", "yes")
 DEMUCS_MODEL = os.environ.get("SERVE_DEMUCS_MODEL", "htdemucs_ft")
 DEMUCS_SEGMENT = float(os.environ.get("SERVE_DEMUCS_SEGMENT", "6.0"))
@@ -75,6 +83,22 @@ MODEL_PATH = os.environ.get("SERVE_MODEL_PATH", "results/model_v4_5s_p2.onnx")
 CLASSES_JSON = os.environ.get("SERVE_CLASSES_JSON", "../DE/data/export/v3/classes.json")
 
 ROOT_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+ROOT_NAMES_FLAT = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
+ULTRA_RARE_EXT_IDS: tuple[int, ...] = (1, 7, 9, 10, 11, 12, 13, 14)
+
+# Krumhansl-Kessler key profiles for automatic sharp/flat enharmonic spelling
+_KK_MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88], dtype=np.float64)
+_KK_MINOR = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17], dtype=np.float64)
+_FLAT_MAJOR_ROOTS = {5, 10, 3, 8, 1}   # F, Bb, Eb, Ab, Db
+_FLAT_MINOR_ROOTS = {2, 7, 0, 5, 10}   # Dm, Gm, Cm, Fm, Bbm
+_QUALITY_INTERVALS: dict[int, tuple[int, ...]] = {
+    0: (0, 4, 7),  # maj
+    1: (0, 3, 7),  # min
+    2: (0, 4, 7),  # dom
+    3: (0, 3, 6),  # dim
+    4: (0, 2, 7),  # sus2
+    5: (0, 5, 7),  # sus4
+}
 QUALITY_NAMES = ["maj", "min", "dom", "dim", "sus2", "sus4"]
 EXT_NAMES = ["", "b5", "#5", "maj7", "m7", "7", "add9", "b9", "9", "#9", "11", "#11", "13", "b13", "alt"]
 
@@ -124,10 +148,37 @@ CHORD_SUFFIX: dict[tuple[int, int], str] = {
 }
 
 
-def chord_name(root_id: int, quality_id: int, ext_id: int, bass_id: int = 12) -> str:
+def canonical_bass_id(root_id: int, bass_id: int) -> int:
+    """Normalize root-position bass (`bass == root` or out-of-range) to `12` (`none`)."""
+    if root_id < 0 or bass_id < 0 or bass_id >= 12 or bass_id == root_id:
+        return 12
+    return int(bass_id)
+
+
+def canonicalize_chord_tuple(
+    root_id: int, quality_id: int, ext_id: int, bass_id: int = 12
+) -> tuple[int, int, int, int]:
+    """Canonicalize root-bass identity and symmetric diminished-7th slash inversions."""
+    if root_id < 0:
+        return -1, -1, -1, 12
+    b = canonical_bass_id(root_id, bass_id)
+    # Symmetric dim7: Cdim7 == Ebdim7/C == F#dim7/C == Adim7/C -> spell with bass as root
+    if quality_id == 3 and ext_id == 5 and 0 <= b < 12 and (root_id - b) % 3 == 0:
+        return b, 3, 5, 12
+    return int(root_id), int(quality_id), int(ext_id), b
+
+
+def chord_name(
+    root_id: int,
+    quality_id: int,
+    ext_id: int,
+    bass_id: int = 12,
+    prefer_flats: bool = False,
+) -> str:
     if root_id < 0:
         return "N"
-    r = ROOT_NAMES[root_id]
+    names = ROOT_NAMES_FLAT if prefer_flats else ROOT_NAMES
+    r = names[root_id]
     suffix = CHORD_SUFFIX.get((quality_id, ext_id))
     if suffix is None:
         q = QUALITY_NAMES[quality_id]
@@ -135,7 +186,7 @@ def chord_name(root_id: int, quality_id: int, ext_id: int, bass_id: int = 12) ->
         suffix = QUALITY_SUFFIX[q] + EXT_SUFFIX[e]
     name = r + suffix
     if 0 <= bass_id < 12 and bass_id != root_id:
-        name += "/" + ROOT_NAMES[bass_id]
+        name += "/" + names[bass_id]
     return name
 
 
@@ -216,6 +267,7 @@ class HarmonicSeparator:
                     split=True,
                     overlap=0.25,
                     device=dev,
+                    progress=True,
                 )[0]
             return out.cpu() * ref_std + ref_mean
 
@@ -320,12 +372,15 @@ class ONNXPredictor:
         qual_prob: np.ndarray,
         ext_prob: np.ndarray,
         bass_prob: np.ndarray,
+        slash_bass_threshold: float = SLASH_BASS_THRESHOLD,
     ) -> np.ndarray:
+        n = len(root_prob)
+        idx = np.arange(n)
         root_ids = root_prob.argmax(axis=-1)
-        root_confs = root_prob[np.arange(len(root_ids)), root_ids]
+        root_confs = root_prob[idx, root_ids]
 
         qual_ids = qual_prob.argmax(axis=-1)
-        qual_confs = qual_prob[np.arange(len(qual_ids)), qual_ids]
+        qual_confs = qual_prob[idx, qual_ids]
 
         if self.combo_mask is not None:
             ext_masked = ext_prob.copy()
@@ -334,12 +389,28 @@ class ONNXPredictor:
             s = ext_masked.sum(axis=-1, keepdims=True)
             ext_masked = np.where(s > 0, ext_masked / np.maximum(s, 1e-12), ext_masked)
             ext_ids = ext_masked.argmax(axis=-1)
-            ext_confs = ext_masked[np.arange(len(ext_ids)), ext_ids]
+            ext_confs = ext_masked[idx, ext_ids]
         else:
-            ext_ids = ext_prob.argmax(axis=-1)
-            ext_confs = ext_prob[np.arange(len(ext_ids)), ext_ids]
+            ext_ids = ext_prob.copy().argmax(axis=-1)
+            ext_confs = ext_prob[idx, ext_ids]
 
-        bass_ids = bass_prob.argmax(axis=-1)
+        bp = bass_prob.copy()
+        if bp.shape[-1] >= 13 and n > 0:
+            bp[idx, 12] += bp[idx, root_ids]
+            bp[idx, root_ids] = 0.0
+            slash_best = bp[:, :12].argmax(axis=-1)
+            slash_conf = bp[idx, slash_best]
+            use_slash = (slash_conf >= slash_bass_threshold) & (slash_conf > bp[:, 12])
+            bass_ids = np.where(use_slash, slash_best, 12)
+        else:
+            bass_ids = np.full(n, 12, dtype=np.int64)
+
+        for t in range(n):
+            r_c, q_c, e_c, b_c = canonicalize_chord_tuple(
+                int(root_ids[t]), int(qual_ids[t]), int(ext_ids[t]), int(bass_ids[t])
+            )
+            root_ids[t], qual_ids[t], ext_ids[t], bass_ids[t] = r_c, q_c, e_c, b_c
+
         avg_confs = weighted_chord_conf(root_confs, qual_confs, ext_confs)
         return np.column_stack([root_ids, qual_ids, ext_ids, bass_ids, avg_confs])
 
@@ -481,6 +552,413 @@ def _triangle_weights(n: int) -> np.ndarray:
     return np.maximum(w, 0.1)
 
 
+def _smooth_prob_sequence(prob: np.ndarray, kernel_frames: int = 7) -> np.ndarray:
+    """Smooth `(T, C)` probability trajectory with a symmetric triangular window."""
+    n = len(prob)
+    if n <= 2 or kernel_frames <= 1:
+        return prob.copy()
+    k = min(kernel_frames, n if n % 2 == 1 else max(1, n - 1))
+    if k <= 1:
+        return prob.copy()
+    half = k // 2
+    kernel = (half + 1 - np.abs(np.arange(k, dtype=np.float32) - half))
+    kernel /= kernel.sum()
+    padded = np.pad(prob, ((half, half), (0, 0)), mode="edge")
+    out = np.empty_like(prob, dtype=np.float32)
+    for c in range(prob.shape[1]):
+        out[:, c] = np.convolve(padded[:, c], kernel, mode="valid")
+    s = out.sum(axis=-1, keepdims=True)
+    return np.where(s > 0, out / np.maximum(s, 1e-12), prob)
+
+
+def _compute_onset_weights(audio: np.ndarray, n_frames: int) -> np.ndarray:
+    """Give ~2x voting weight to chord attacks (strums/downbeats) vs decaying arpeggio tails."""
+    if n_frames <= 0 or len(audio) == 0:
+        return np.ones(max(1, n_frames), dtype=np.float32)
+    hop = MERT_HOP_SAMPLES
+    needed = n_frames * hop
+    wav = audio[:needed].astype(np.float32) / 32768.0
+    if len(wav) < needed:
+        wav = np.pad(wav, (0, needed - len(wav)))
+    frames = wav.reshape(n_frames, hop)
+    rms = np.sqrt(np.mean(frames * frames, axis=1) + 1e-10)
+    flux = np.maximum(0.0, np.diff(rms, prepend=rms[0]))
+    p90 = float(np.percentile(flux, 90)) if len(flux) > 4 else float(flux.max())
+    norm_flux = np.clip(flux / max(p90, 1e-5), 0.0, 1.5)
+    attack_env = np.zeros(n_frames, dtype=np.float32)
+    cur = 0.0
+    decay = 0.88
+    for i in range(n_frames):
+        cur = max(float(norm_flux[i]), cur * decay)
+        attack_env[i] = cur
+    return 1.0 + attack_env
+
+
+def _viterbi_root_quality(
+    root_prob: np.ndarray,
+    qual_prob: np.ndarray,
+    root_switch_penalty: float = ROOT_SWITCH_PENALTY,
+    qual_switch_penalty: float = QUAL_SWITCH_PENALTY,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exact 72-state `(root, quality)` Sticky Viterbi in O(T * 72) vectorized NumPy."""
+    n = len(root_prob)
+    if n == 0:
+        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)
+    log_r = np.log(np.clip(root_prob, 1e-7, 1.0))
+    log_q = np.log(np.clip(qual_prob, 1e-7, 1.0))
+    log_obs = (log_r[:, :, None] + 0.85 * log_q[:, None, :]).reshape(n, 72)
+
+    pen_r = max(float(root_switch_penalty), float(qual_switch_penalty), 0.0)
+    pen_q = max(float(qual_switch_penalty), 0.0)
+
+    backptr = np.zeros((n, 72), dtype=np.int32)
+    dp = log_obs[0].astype(np.float64)
+    states_72 = np.arange(72, dtype=np.int32)
+    root_base = np.arange(12, dtype=np.int32) * 6
+
+    for t in range(1, n):
+        best_score = dp.copy()
+        best_idx = states_72.copy()
+
+        dp_rq = dp.reshape(12, 6)
+        best_q_in_r = dp_rq.argmax(axis=1)
+        same_r_idx = np.repeat(root_base + best_q_in_r, 6)
+        same_r_score = dp[same_r_idx] - pen_q
+        use_same_r = same_r_score > best_score
+        best_score = np.where(use_same_r, same_r_score, best_score)
+        best_idx = np.where(use_same_r, same_r_idx, best_idx)
+
+        g_best = int(dp.argmax())
+        g_score = dp[g_best] - pen_r
+        use_g = g_score > best_score
+        best_score = np.where(use_g, g_score, best_score)
+        best_idx = np.where(use_g, g_best, best_idx)
+
+        backptr[t] = best_idx
+        dp = best_score + log_obs[t]
+
+    path = np.empty(n, dtype=np.int32)
+    path[-1] = int(dp.argmax())
+    for t in range(n - 1, 0, -1):
+        path[t - 1] = backptr[t, path[t]]
+
+    return (path // 6).astype(np.int64), (path % 6).astype(np.int64)
+
+
+def _viterbi_sticky_1d(log_obs: np.ndarray, switch_penalty: float) -> np.ndarray:
+    """Exact K-state Sticky Viterbi in O(T * K) vectorized NumPy."""
+    n, k = log_obs.shape
+    if n == 0:
+        return np.empty(0, dtype=np.int64)
+    pen = max(float(switch_penalty), 0.0)
+    backptr = np.zeros((n, k), dtype=np.int32)
+    dp = log_obs[0].astype(np.float64)
+    states = np.arange(k, dtype=np.int32)
+
+    for t in range(1, n):
+        g_best = int(dp.argmax())
+        g_score = dp[g_best] - pen
+        use_switch = g_score > dp
+        backptr[t] = np.where(use_switch, g_best, states)
+        dp = np.where(use_switch, g_score, dp) + log_obs[t]
+
+    path = np.empty(n, dtype=np.int64)
+    path[-1] = int(dp.argmax())
+    for t in range(n - 1, 0, -1):
+        path[t - 1] = backptr[t, path[t]]
+    return path
+
+
+def decode_musical_sequence(
+    root_prob: np.ndarray,
+    qual_prob: np.ndarray,
+    ext_prob: np.ndarray,
+    bass_prob: np.ndarray,
+    combo_mask: np.ndarray | None = None,
+    onset_weights: np.ndarray | None = None,
+    frame_ms: float = 13.333,
+    min_ext_duration_ms: float = MIN_EXT_DURATION_MS,
+    slash_bass_threshold: float = SLASH_BASS_THRESHOLD,
+    rare_ext_threshold: float = RARE_EXT_THRESHOLD,
+    root_switch_penalty: float = ROOT_SWITCH_PENALTY,
+    qual_switch_penalty: float = QUAL_SWITCH_PENALTY,
+    bass_switch_penalty: float = BASS_SWITCH_PENALTY,
+    ext_switch_penalty: float = EXT_SWITCH_PENALTY,
+) -> np.ndarray:
+    """Decode continuous `(T, C)` probabilities into musically stable `(T, 5)` chord trajectories."""
+    n = len(root_prob)
+    if n == 0:
+        return np.zeros((0, 5), dtype=np.float32)
+
+    rp_s = _smooth_prob_sequence(root_prob, kernel_frames=7)
+    qp_s = _smooth_prob_sequence(qual_prob, kernel_frames=7)
+    ep_s = _smooth_prob_sequence(ext_prob, kernel_frames=7)
+    bp_s = _smooth_prob_sequence(bass_prob, kernel_frames=7)
+
+    ow = onset_weights if (onset_weights is not None and len(onset_weights) == n) else np.ones(n, dtype=np.float32)
+    hop_scale = 13.333 / max(frame_ms, 1.0)
+
+    root_ids, qual_ids = _viterbi_root_quality(
+        rp_s,
+        qp_s,
+        root_switch_penalty=root_switch_penalty * hop_scale,
+        qual_switch_penalty=qual_switch_penalty * hop_scale,
+    )
+
+    bass_ids = np.full(n, 12, dtype=np.int64)
+    ext_ids = np.zeros(n, dtype=np.int64)
+    ext_confs = np.zeros(n, dtype=np.float32)
+
+    min_ext_frames = max(1, int(round(min_ext_duration_ms / max(frame_ms, 1.0))))
+
+    span_start = 0
+    while span_start < n:
+        r_cur = int(root_ids[span_start])
+        q_cur = int(qual_ids[span_start])
+        span_end = span_start + 1
+        while span_end < n and root_ids[span_end] == r_cur and qual_ids[span_end] == q_cur:
+            span_end += 1
+
+        bp_seg = bp_s[span_start:span_end].copy()
+        if bp_seg.shape[-1] >= 13:
+            bp_seg[:, 12] += bp_seg[:, r_cur]
+            bp_seg[:, r_cur] = 0.0
+            s_sum = bp_seg.sum(axis=-1, keepdims=True)
+            bp_seg = np.where(s_sum > 0, bp_seg / np.maximum(s_sum, 1e-12), bp_seg)
+
+            log_bp = np.log(np.clip(bp_seg, 1e-7, 1.0))
+            slash_max = bp_seg[:, :12].max(axis=-1)
+            weak_slash = slash_max < slash_bass_threshold
+            log_bp[weak_slash, 12] += 0.75
+            b_path = _viterbi_sticky_1d(log_bp, bass_switch_penalty * hop_scale)
+
+            b_pos = 0
+            seg_len = span_end - span_start
+            while b_pos < seg_len:
+                b_val = int(b_path[b_pos])
+                b_end = b_pos + 1
+                while b_end < seg_len and b_path[b_end] == b_val:
+                    b_end += 1
+                if b_val < 12:
+                    mean_slash_p = float(bp_seg[b_pos:b_end, b_val].mean())
+                    mean_rq_p = 0.5 * float(
+                        rp_s[span_start + b_pos: span_start + b_end, r_cur].mean()
+                        + qp_s[span_start + b_pos: span_start + b_end, q_cur].mean()
+                    )
+                    if mean_slash_p < slash_bass_threshold or mean_rq_p < 0.45:
+                        b_path[b_pos:b_end] = 12
+                b_pos = b_end
+            bass_ids[span_start:span_end] = b_path
+
+        span_start = span_end
+
+    span_start = 0
+    while span_start < n:
+        r_cur = int(root_ids[span_start])
+        q_cur = int(qual_ids[span_start])
+        b_cur = int(bass_ids[span_start])
+        span_end = span_start + 1
+        while (
+            span_end < n
+            and root_ids[span_end] == r_cur
+            and qual_ids[span_end] == q_cur
+            and bass_ids[span_end] == b_cur
+        ):
+            span_end += 1
+
+        ep_seg = ep_s[span_start:span_end].copy()
+        ow_seg = ow[span_start:span_end]
+        if combo_mask is not None:
+            valid_e = combo_mask[q_cur]
+            ep_seg[:, ~valid_e] = 0.0
+            s_e = ep_seg.sum(axis=-1, keepdims=True)
+            ep_seg = np.where(s_e > 0, ep_seg / np.maximum(s_e, 1e-12), ep_seg)
+
+        w_sum = max(float(ow_seg.sum()), 1e-8)
+        mean_ep = (ep_seg * ow_seg[:, None]).sum(axis=0) / w_sum
+
+        gated = ep_seg.copy()
+        for u_id in ULTRA_RARE_EXT_IDS:
+            if u_id < gated.shape[1] and mean_ep[u_id] < rare_ext_threshold:
+                gated[:, u_id] = 0.0
+        row_sums = gated.sum(axis=-1, keepdims=True)
+        if np.all(row_sums > 1e-8):
+            ep_seg = gated / row_sums
+            mean_ep = (ep_seg * ow_seg[:, None]).sum(axis=0) / w_sum
+
+        dom_ext = int(mean_ep.argmax())
+        seg_len = span_end - span_start
+        if seg_len < 2 * min_ext_frames:
+            e_path = np.full(seg_len, dom_ext, dtype=np.int64)
+        else:
+            log_ep = np.log(np.clip(ep_seg, 1e-7, 1.0))
+            e_path = _viterbi_sticky_1d(log_ep, ext_switch_penalty * hop_scale)
+            changed = True
+            while changed:
+                changed = False
+                runs: list[list[int]] = []
+                p = 0
+                while p < seg_len:
+                    q_end = p + 1
+                    while q_end < seg_len and e_path[q_end] == e_path[p]:
+                        q_end += 1
+                    runs.append([p, q_end, int(e_path[p])])
+                    p = q_end
+                if len(runs) <= 1:
+                    break
+                shortest_i = min(range(len(runs)), key=lambda idx_r: runs[idx_r][1] - runs[idx_r][0])
+                sh_s, sh_e, _ = runs[shortest_i]
+                if (sh_e - sh_s) < min_ext_frames:
+                    if shortest_i == 0:
+                        rep_ext = runs[1][2]
+                    elif shortest_i == len(runs) - 1:
+                        rep_ext = runs[-2][2]
+                    else:
+                        left_len = runs[shortest_i - 1][1] - runs[shortest_i - 1][0]
+                        right_len = runs[shortest_i + 1][1] - runs[shortest_i + 1][0]
+                        rep_ext = runs[shortest_i - 1][2] if left_len >= right_len else runs[shortest_i + 1][2]
+                    e_path[sh_s:sh_e] = rep_ext
+                    changed = True
+
+        ext_ids[span_start:span_end] = e_path
+        ext_confs[span_start:span_end] = ep_seg[np.arange(seg_len), e_path]
+        span_start = span_end
+
+    idx_all = np.arange(n)
+    root_confs = rp_s[idx_all, root_ids]
+    qual_confs = qp_s[idx_all, qual_ids]
+    avg_confs = weighted_chord_conf(root_confs, qual_confs, ext_confs)
+
+    for t in range(n):
+        r_c, q_c, e_c, b_c = canonicalize_chord_tuple(
+            int(root_ids[t]), int(qual_ids[t]), int(ext_ids[t]), int(bass_ids[t])
+        )
+        root_ids[t], qual_ids[t], ext_ids[t], bass_ids[t] = r_c, q_c, e_c, b_c
+
+    return np.column_stack([root_ids, qual_ids, ext_ids, bass_ids, avg_confs])
+
+
+def detect_prefer_flats(segments: list[dict[str, Any]]) -> bool:
+    """Estimate song key via Krumhansl-Kessler profiles to choose flat (`Bb`) vs sharp (`A#`) spelling."""
+    pc_hist = np.zeros(12, dtype=np.float64)
+    for seg in segments:
+        r = int(seg.get("root_id", -1))
+        q = int(seg.get("quality_id", -1))
+        if r < 0 or seg.get("silent", False):
+            continue
+        dur = max(0.0, float(seg["end_ms"]) - float(seg["start_ms"]))
+        w = dur * max(float(seg.get("confidence", 0.5)), 0.1)
+        pc_hist[r] += 1.5 * w
+        for iv in _QUALITY_INTERVALS.get(q, (0, 4, 7)):
+            pc_hist[(r + iv) % 12] += w
+
+    if pc_hist.sum() <= 1e-6:
+        return False
+
+    best_score = -1e18
+    best_is_flat = False
+    for tonic in range(12):
+        rot = np.roll(pc_hist, -tonic)
+        maj_score = float(np.dot(rot, _KK_MAJOR))
+        if maj_score > best_score:
+            best_score = maj_score
+            best_is_flat = tonic in _FLAT_MAJOR_ROOTS
+        min_score = float(np.dot(rot, _KK_MINOR))
+        if min_score > best_score:
+            best_score = min_score
+            best_is_flat = tonic in _FLAT_MINOR_ROOTS
+    return best_is_flat
+
+
+def apply_key_spelling(
+    segments: list[dict[str, Any]], prefer_flats: bool | None = None
+) -> list[dict[str, Any]]:
+    if not segments:
+        return segments
+    use_flats = detect_prefer_flats(segments) if prefer_flats is None else bool(prefer_flats)
+    out = []
+    for seg in segments:
+        s = seg.copy()
+        r, q, e, b = canonicalize_chord_tuple(
+            int(s["root_id"]),
+            int(s["quality_id"]),
+            int(s["ext_id"]),
+            int(s.get("bass_id", 12)),
+        )
+        s["root_id"], s["quality_id"], s["ext_id"], s["bass_id"] = r, q, e, b
+        s["chord"] = chord_name(r, q, e, b, prefer_flats=use_flats)
+        out.append(s)
+    return out
+
+
+def _prune_short_segments(
+    segments: list[dict[str, Any]],
+    min_duration_ms: float = MIN_DURATION_MS,
+) -> list[dict[str, Any]]:
+    """Iteratively absorb micro-segments `< min_duration_ms` (including staircase `A -> B -> C`)."""
+    if len(segments) <= 1 or min_duration_ms <= 0:
+        return _merge_consecutive(segments)
+
+    cur = _merge_consecutive(segments)
+    while len(cur) > 1:
+        candidates = [
+            i
+            for i, seg in enumerate(cur)
+            if (float(seg["end_ms"]) - float(seg["start_ms"])) < min_duration_ms
+            and not (seg.get("silent", False) and (float(seg["end_ms"]) - float(seg["start_ms"])) >= min_duration_ms)
+        ]
+        if not candidates:
+            break
+
+        idx = min(candidates, key=lambda i: float(cur[i]["end_ms"]) - float(cur[i]["start_ms"]))
+        seg = cur[idx]
+
+        left = cur[idx - 1] if idx > 0 else None
+        right = cur[idx + 1] if idx + 1 < len(cur) else None
+
+        target: dict[str, Any] | None = None
+        if left is not None and right is not None:
+            left_active = not left.get("silent", False) and left["root_id"] >= 0
+            right_active = not right.get("silent", False) and right["root_id"] >= 0
+            if left_active and not right_active:
+                target = left
+            elif right_active and not left_active:
+                target = right
+            else:
+                same_l = seg["root_id"] >= 0 and left["root_id"] == seg["root_id"]
+                same_r = seg["root_id"] >= 0 and right["root_id"] == seg["root_id"]
+                if same_l and not same_r:
+                    target = left
+                elif same_r and not same_l:
+                    target = right
+                else:
+                    l_score = (float(left["end_ms"]) - float(left["start_ms"])) * max(float(left["confidence"]), 0.05)
+                    r_score = (float(right["end_ms"]) - float(right["start_ms"])) * max(float(right["confidence"]), 0.05)
+                    target = left if l_score >= r_score else right
+        elif left is not None:
+            target = left
+        else:
+            target = right
+
+        if target is None:
+            break
+
+        cur[idx] = {
+            "start_ms": seg["start_ms"],
+            "end_ms": seg["end_ms"],
+            "root_id": target["root_id"],
+            "quality_id": target["quality_id"],
+            "ext_id": target["ext_id"],
+            "bass_id": target.get("bass_id", 12),
+            "chord": target["chord"],
+            "confidence": target["confidence"],
+            "silent": target["silent"],
+        }
+        cur = _merge_consecutive(cur)
+
+    return cur
+
+
 def _infer_frame_level(
     predictor: ONNXPredictor,
     audio: np.ndarray,
@@ -544,19 +1022,33 @@ def _infer_frame_level(
             acc_w[start_f:end_f] += tw[:span]
 
         active_mask = acc_w > 0
+        frame_ms = MERT_HOP_SAMPLES / float(sample_rate) * 1000.0
+        onset_weights = _compute_onset_weights(audio, total_frames)
+
         decoded = np.zeros((total_frames, 5), dtype=np.float32)
         decoded[:, 0:3] = -1
         decoded[:, 3] = 12
-        if active_mask.any():
-            inv_w = 1.0 / acc_w[active_mask, None]
-            decoded[active_mask] = predictor.decode_frame_probs(
-                acc_r[active_mask] * inv_w,
-                acc_q[active_mask] * inv_w,
-                acc_e[active_mask] * inv_w,
-                acc_b[active_mask] * inv_w,
-            )
 
-        frame_ms = MERT_HOP_SAMPLES / float(sample_rate) * 1000.0
+        f_idx = 0
+        while f_idx < total_frames:
+            if not active_mask[f_idx]:
+                f_idx += 1
+                continue
+            f_end = f_idx + 1
+            while f_end < total_frames and active_mask[f_end]:
+                f_end += 1
+            inv_w = 1.0 / acc_w[f_idx:f_end, None]
+            decoded[f_idx:f_end] = decode_musical_sequence(
+                acc_r[f_idx:f_end] * inv_w,
+                acc_q[f_idx:f_end] * inv_w,
+                acc_e[f_idx:f_end] * inv_w,
+                acc_b[f_idx:f_end] * inv_w,
+                combo_mask=predictor.combo_mask,
+                onset_weights=onset_weights[f_idx:f_end],
+                frame_ms=frame_ms,
+            )
+            f_idx = f_end
+
         frame_results: list[dict[str, Any]] = []
         for g in range(total_frames):
             silent = not bool(active_mask[g])
@@ -570,8 +1062,6 @@ def _infer_frame_level(
                     int(decoded[g, 3]),
                     float(decoded[g, 4]),
                 )
-                if c < confidence_threshold:
-                    r, q, e, b = -1, -1, -1, 12
             s_ms = round(g * frame_ms, 1)
             e_ms = duration_ms if g == total_frames - 1 else round((g + 1) * frame_ms, 1)
             frame_results.append({
@@ -586,9 +1076,17 @@ def _infer_frame_level(
                 "silent": silent,
             })
 
-        min_frames = max(1, int(round(min_duration_ms / frame_ms)))
-        smoothed = _smooth_jitter(frame_results, max_jitter_frames=min_frames)
-        merged = _merge_consecutive(smoothed)
+        merged = _prune_short_segments(frame_results, min_duration_ms=min_duration_ms)
+        for seg in merged:
+            if not seg["silent"] and seg["confidence"] < confidence_threshold:
+                seg["root_id"] = -1
+                seg["quality_id"] = -1
+                seg["ext_id"] = -1
+                seg["bass_id"] = 12
+                seg["chord"] = "N"
+        merged = _merge_consecutive(merged)
+        if AUTO_KEY_SPELLING:
+            merged = apply_key_spelling(merged)
         if merged:
             merged[0]["start_ms"] = 0.0
             merged[-1]["end_ms"] = duration_ms
@@ -619,7 +1117,7 @@ def _infer_frame_level(
             for t in range(n_frames):
                 g = start_frame + t
                 r, q, e, b, c = preds[t]
-                r, q, e, b = int(r), int(q), int(e), int(b)
+                r, q, e, b = canonicalize_chord_tuple(int(r), int(q), int(e), int(b))
                 c = float(c)
                 if c < confidence_threshold:
                     r, q, e, b = -1, -1, -1, 12
@@ -650,9 +1148,9 @@ def _infer_frame_level(
             "silent": s,
         })
 
-    min_frames = max(1, int(round(min_duration_ms / max(step_ms, 1.0))))
-    smoothed = _smooth_jitter(frame_results, max_jitter_frames=min_frames)
-    merged = _merge_consecutive(smoothed)
+    merged = _prune_short_segments(frame_results, min_duration_ms=min_duration_ms)
+    if AUTO_KEY_SPELLING:
+        merged = apply_key_spelling(merged)
     if merged:
         merged[0]["start_ms"] = 0.0
         merged[-1]["end_ms"] = duration_ms
@@ -667,6 +1165,7 @@ def infer_audio(
     step_s: float = STEP_S,
     rms_threshold_db: float = RMS_THRESHOLD_DB,
     confidence_threshold: float = CONFIDENCE_THRESHOLD,
+    min_duration_ms: float = MIN_DURATION_MS,
 ) -> list[dict[str, Any]]:
     if getattr(predictor, "is_frame_level", False):
         return _infer_frame_level(
@@ -677,6 +1176,7 @@ def infer_audio(
             step_s=step_s,
             rms_threshold_db=rms_threshold_db,
             confidence_threshold=confidence_threshold,
+            min_duration_ms=min_duration_ms,
         )
 
     crop_samples = crop_s * sample_rate
@@ -730,7 +1230,7 @@ def _vote_and_merge(
     for pred in raw_preds:
         frame_start = pred["pos"] // step_samples
         frames_covered = (crop_samples + step_samples - 1) // step_samples
-        b_id = pred.get("bass_id", 12)
+        b_id = canonical_bass_id(pred["root_id"], pred.get("bass_id", 12))
         for fi in range(frame_start, min(frame_start + frames_covered, total_frames)):
             votes[fi].append((pred["root_id"], pred["quality_id"], pred["ext_id"], b_id, pred["conf"], pred["silent"]))
 
@@ -770,11 +1270,11 @@ def _vote_and_merge(
 
 
 def _chord_key(r: dict) -> tuple[int, int, int, int]:
-    return (
-        r["root_id"],
-        r["quality_id"],
-        r["ext_id"],
-        r.get("bass_id", 12),
+    return canonicalize_chord_tuple(
+        int(r["root_id"]),
+        int(r["quality_id"]),
+        int(r["ext_id"]),
+        int(r.get("bass_id", 12)),
     )
 
 
@@ -791,18 +1291,16 @@ def _smooth_jitter(results: list[dict], max_jitter_frames: int = 1) -> list[dict
             run_end += 1
         run_len = run_end - i + 1
 
-        if (
-            run_len <= max_jitter_frames
-            and run_end + 1 < n
-            and _chord_key(out[i - 1]) == _chord_key(out[run_end + 1])
-            and _chord_key(out[i]) != _chord_key(out[i - 1])
-        ):
-            ref = out[i - 1]
+        if run_len <= max_jitter_frames and run_end + 1 < n and _chord_key(out[i]) != _chord_key(out[i - 1]):
+            if _chord_key(out[i - 1]) == _chord_key(out[run_end + 1]):
+                ref = out[i - 1]
+            else:
+                ref = out[i - 1] if out[i - 1].get("confidence", 0.0) >= out[run_end + 1].get("confidence", 0.0) else out[run_end + 1]
             for k in range(i, run_end + 1):
                 out[k]["root_id"] = ref["root_id"]
                 out[k]["quality_id"] = ref["quality_id"]
                 out[k]["ext_id"] = ref["ext_id"]
-                out[k]["bass_id"] = ref.get("bass_id", 12)
+                out[k]["bass_id"] = canonical_bass_id(ref["root_id"], ref.get("bass_id", 12))
                 out[k]["chord"] = ref["chord"]
                 out[k]["silent"] = ref["silent"]
         i = run_end + 1
@@ -813,20 +1311,29 @@ def _smooth_jitter(results: list[dict], max_jitter_frames: int = 1) -> list[dict
 def _merge_consecutive(results: list[dict]) -> list[dict]:
     if not results:
         return results
-    merged = [results[0].copy()]
+    first = results[0].copy()
+    r0, q0, e0, b0 = _chord_key(first)
+    first["root_id"], first["quality_id"], first["ext_id"], first["bass_id"] = r0, q0, e0, b0
+    if r0 >= 0 and first.get("chord") in (None, "", "N"):
+        first["chord"] = chord_name(r0, q0, e0, b0)
+    merged = [first]
+
     for r in results[1:]:
         prev = merged[-1]
-        same = (
-            r["root_id"] == prev["root_id"]
-            and r["quality_id"] == prev["quality_id"]
-            and r["ext_id"] == prev["ext_id"]
-            and r.get("bass_id", 12) == prev.get("bass_id", 12)
-        )
-        if same:
+        rc, qc, ec, bc = _chord_key(r)
+        same = (rc, qc, ec, bc) == (prev["root_id"], prev["quality_id"], prev["ext_id"], prev.get("bass_id", 12))
+        if same and bool(r.get("silent", False)) == bool(prev.get("silent", False)):
+            w_prev = max(float(prev["end_ms"]) - float(prev["start_ms"]), 1.0)
+            w_cur = max(float(r["end_ms"]) - float(r["start_ms"]), 1.0)
+            prev["confidence"] = round(
+                (float(prev["confidence"]) * w_prev + float(r["confidence"]) * w_cur) / (w_prev + w_cur),
+                4,
+            )
             prev["end_ms"] = r["end_ms"]
-            prev["confidence"] = max(prev["confidence"], r["confidence"])
         else:
-            merged.append(r.copy())
+            item = r.copy()
+            item["root_id"], item["quality_id"], item["ext_id"], item["bass_id"] = rc, qc, ec, bc
+            merged.append(item)
     return merged
 
 

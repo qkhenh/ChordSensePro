@@ -14,7 +14,7 @@ Tư liệu so sánh kết quả giữa các phiên bản model.
 | v2 | 5s | ✗ | P2 (LoRA) | E14/19 | 1.0266 | 62.8% | 61.8% | 60.0% | — | 27.9 (L4) | baseline |
 | **v3-A** | 5s | ✗ | P1 (frozen) | ~E11 | — | ~51.8% | ~53.5% | ~59.8% | ~97.1% | — | +bass head, ext train sớm |
 | **v3-A** | 5s | ✗ | P2 (LoRA) | E10/15 | 0.9233 | 61.0% | 60.6% | 60.4% | 97.1% | — | r=32, +k_proj, early stop |
-| **v4** | 5s | — | — | — | — | — | — | — | — | — | frame-level head (planned) |
+| **v4** | 5s | ✓ (light) | **P2 (LoRA, `test` 647 bài)** | Best | **0.6425** | **77.8%** | **69.9%** | **69.0%** | **84.8%** (`slash F1: 50.3%`) | — | **Frame-level ~75Hz + Conv1d + Softmax Cascade** (`chord_no_bass=50.1%`, `chord_acc=45.8%`) |
 
 ---
 
