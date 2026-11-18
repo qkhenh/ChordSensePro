@@ -2,6 +2,31 @@
 
 ---
 
+## 2026-11-18 — Xây dựng Toàn Bộ Kiến Trúc & Pipeline Model v5 (Jazz-Ready: Joint Conditional Heads, 20s–60s Bi-Conformer, LocalKey, Sustain Tension & 145-State Skeleton CRF)
+
+### 1. Chẩn đoán thực nghiệm trên `D:\TestPIANO.wav` & Thiết kế `70_plan_v5_jazz_context.md`
+- Soi trực tiếp phổ Chroma CQT, RMS và xác suất thô của `model_v4_5s_p2.onnx` trên `D:\TestPIANO.wav` (cả có và không Demucs):
+  - Xác định nguyên nhân toán học gây ảo giác `Cm` trong bài Tone `C Major`: **Marginal Factorized Heads Bug** (4 head biên độc lập lấy `Root = C` của `Cmaj9` ghép với `Quality = min` cộng dồn từ upper-structure `Em7 + Am7`).
+  - Xác định nguyên nhân đoạn im lặng đầu bài (`0.00s–1.12s`, `-68.6 dBFS`) ra `C`: `_rms_gate` xét cả cửa sổ 5s, z-score normalize khuếch đại nhiễu `-68 dB` lên `2,700×`, và thiếu lớp im lặng `N`.
+  - Xác định nguyên nhân nhảy `Gsus2/F` khi chạy giai điệu `G-D-B-C-D-G` trên nền `F`: thiếu phân tách dải tần và thiếu bộ lọc thời lượng ngân (sustain) của nốt màu.
+- Lập bản đặc tả [`70_plan_v5_jazz_context.md`](file:///d:/qkhenh/Project/ChordSensePro/AI/markdown/70_plan_v5_jazz_context.md) giữ nguyên 100% từ vựng 41 `VALID_COMBOS`, dùng thẳng `DE/data/export/v3` (0% đụng tới DE/Docker, 0 GB upload lại data).
+
+### 2. Triển khai trọn bộ Source Code, Configs, Tests & Colab Notebook cho Model v5
+- **Nền tảng Nhạc lý & Kiến trúc Mạng:**
+  - [`AI/src/music_theory.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/music_theory.py): Ánh xạ song ánh 41 `VALID_COMBOS` ↔ 12 Họ Sườn Guide-Tone (`145` trạng thái tính cả `N`), bảng xoay tròn tương đối `REL_PITCH_INDEX`, trích xuất `shell_chroma` / `full_chroma`, và ước lượng `local_key_id (0..23)`.
+  - [`AI/src/conformer.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/conformer.py): `BiConformerEncoder` (4 lớp Macaron + RoPE Multi-Head Attention + Depthwise GLU Conv1d `k=15`) và `MultiScaleSustainLayer` (`80ms` vs `520ms` geometric sustain filter phân biệt nốt giai điệu đi nhanh với nốt màu ngân dài).
+  - [`AI/src/crf.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/crf.py): `MarginalLinearChainCRF(num_tags=145)` hỗ trợ marginalize chính xác qua các khoảng khuyết nhãn `-100` + `viterbi_crf_numpy` có `Onset-Decay Locking`.
+  - [`AI/src/model.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/model.py) & [`AI/src/losses.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/losses.py): `ChordModelV5` (Chunked 5s MERT + DualChroma + Sustain + Bi-Conformer + `LocalKeyHead` + `Roll(-r) RootConditionedTypeHead` + `145-state CRF` + `merge_lora()`) và `ChordLossV5` (6 thành phần phân tầng).
+- **Data Pipeline `20s`, `MelodyOverlayAugmenter` & Huấn luyện 3 Pha:**
+  - [`AI/src/augment.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/augment.py): Thêm `apply_v5_musical_augment` (tổng hợp câu giai điệu đi nhanh giữ nguyên nhãn hợp âm + chế độ nốt bậc 9 ngân dài tự nâng nhãn `maj → add9` + chèn intro/outro im lặng `N`).
+  - [`AI/src/dataset.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/dataset.py) & [`AI/src/train.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/train.py): Hỗ trợ cửa sổ `20s` (`4 × 5s` chunks, giữ nguyên bài ngắn `< 20s`), Soft-Clamped Normalization (`-55 dBFS` floor), gán `root = 12 (N)` cho frame `< -45 dBFS`, `grad_accum_steps`, và **Phase 3 Full-Song (`60s`) Sequence Polish** trên cached `float16` embeddings.
+- **ONNX 2-Stage Export, Serving Ẩn `N` & Colab Notebook:**
+  - [`AI/src/export_onnx.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/export_onnx.py): Gộp LoRA `merge_and_unload()`, xuất cặp `encoder.onnx` + `decoder.onnx` + `.meta.json`.
+  - [`AI/src/serve.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/serve.py), [`AI/src/infer.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/infer.py), [`AI/test_v3.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/test_v3.py): Tự động phát hiện nhạc cụ độc tấu (`detect_solo_clean_audio`) để bypass Demucs, chạy giải mã 2-stage ONNX toàn bài, và **mặc định lọc bỏ hoàn toàn các đoạn `N` (im lặng) khỏi kết quả output**.
+  - Thêm configs [`v5_20s_p1.yaml`](file:///d:/qkhenh/Project/ChordSensePro/AI/configs/v5_20s_p1.yaml), [`v5_20s_p2.yaml`](file:///d:/qkhenh/Project/ChordSensePro/AI/configs/v5_20s_p2.yaml), [`v5_fullsong_p3.yaml`](file:///d:/qkhenh/Project/ChordSensePro/AI/configs/v5_fullsong_p3.yaml), cập nhật [`colab_train.ipynb`](file:///d:/qkhenh/Project/ChordSensePro/AI/notebooks/colab_train.ipynb) và bộ kiểm thử [`test_v5_model.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/tests/test_v5_model.py).
+
+---
+
 ## 2026-11-11 — Hoàn tất Model v4 Frame-Level (~75 Hz), Rescue Slash-Chord Data, Retrain L4 & Benchmark Test
 
 ### 1. Buổi sáng sớm (`75f5920`, `3541e1f`) — Khởi tạo Kiến trúc v4 Frame-Level

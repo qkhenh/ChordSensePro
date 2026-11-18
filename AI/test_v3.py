@@ -14,11 +14,16 @@ from src.serve import (
     MIN_DURATION_MS,
     HarmonicSeparator,
     ONNXPredictor,
+    _decode_raw_waveform,
+    detect_solo_clean_audio,
     infer_audio,
     load_audio_bytes,
 )
 
 DEFAULT_MODELS = [
+    str(AI_DIR / "results" / "model_v5_fullsong_p3.onnx"),
+    str(AI_DIR / "results" / "model_v5_p3.onnx"),
+    str(AI_DIR / "results" / "model_v5_20s_p2.onnx"),
     str(AI_DIR / "results" / "model_v4_5s_p2.onnx"),
     str(AI_DIR / "results" / "model_v3_5s_p2.onnx"),
 ]
@@ -31,21 +36,21 @@ def resolve_default_model() -> str:
     for m in DEFAULT_MODELS:
         if os.path.exists(m):
             return m
-    return DEFAULT_MODELS[0]
+    return DEFAULT_MODELS[3]
 
 
 def resolve_default_audio() -> str:
     env_a = os.environ.get("TEST_AUDIO") or os.environ.get("AUDIO_PATH")
     if env_a and os.path.exists(env_a):
         return env_a
-    for p in (r"D:\Untitled.wav", r"D:\full.mp3", r"D:\test.wav", r"D:\TestPIANO.wav"):
+    for p in (r"D:\TestPIANO.wav", r"D:\Untitled.wav", r"D:\full.mp3", r"D:\test.wav"):
         if os.path.exists(p):
             return p
     return r"D:\Untitled.wav"
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Real-song inference with Demucs htdemucs_ft (other + bass) + ONNX")
+    ap = argparse.ArgumentParser(description="Real-song inference (v5 2-stage Jazz CRF / v4) with Smart Demucs & ONNX")
     ap.add_argument("--audio", default=resolve_default_audio(), help="Path to mp3/wav/flac audio file (or set TEST_AUDIO env var)")
     ap.add_argument("--model", default=resolve_default_model(), help="Path to exported .onnx model (or set TEST_MODEL env var)")
     ap.add_argument("--classes-json", default=str(AI_DIR.parent / "DE" / "data" / "export" / "v3" / "classes.json"))
@@ -54,10 +59,17 @@ def main() -> None:
         default=os.environ.get("SERVE_DEMUCS_MODEL", os.environ.get("DEMUCS_MODEL", "htdemucs_ft")),
         help="Demucs model name (default: htdemucs_ft; use htdemucs for 4x faster)",
     )
+    ap.add_argument(
+        "--demucs-mode",
+        default=os.environ.get("SERVE_DEMUCS_MODE", "auto"),
+        choices=["auto", "always", "off"],
+        help="Stem separation mode: 'auto' bypasses Demucs on solo piano/guitar, 'always' forces Demucs, 'off' skips",
+    )
     ap.add_argument("--step-s", type=float, default=2.5)
     ap.add_argument("--conf", type=float, default=0.30)
     ap.add_argument("--min-ms", type=float, default=MIN_DURATION_MS, help="Minimum chord duration in ms (default: 300)")
-    ap.add_argument("--no-demucs", action="store_true", help="Skip stem separation (only for pre-separated stems)")
+    ap.add_argument("--no-demucs", action="store_true", help="Alias for --demucs-mode off")
+    ap.add_argument("--show-silence", action="store_true", help="Show N (silent) segments instead of hiding them")
     args = ap.parse_args()
 
     if not os.path.exists(args.audio):
@@ -72,16 +84,31 @@ def main() -> None:
     with open(args.audio, "rb") as f:
         raw_bytes = f.read()
 
+    mode = "off" if args.no_demucs else args.demucs_mode
+    need_sep = False
+    if mode == "always":
+        need_sep = True
+    elif mode == "auto":
+        wav_preview, sr_preview = _decode_raw_waveform(raw_bytes, filename=args.audio)
+        if detect_solo_clean_audio(wav_preview, sr_preview):
+            print("Auto-detected solo harmonic instrument (no drums/vocals) -> bypassing Demucs")
+            need_sep = False
+        else:
+            need_sep = True
+        del wav_preview
+
     sep = None
-    if not args.no_demucs:
+    if need_sep:
         print(f"Loading Demucs model: {args.demucs_model} (keeping stems: other + bass) ...")
         sep = HarmonicSeparator(model_name=args.demucs_model, segment=6.0)
+
     audio = load_audio_bytes(
         raw_bytes,
         target_sr=24000,
         filename=args.audio,
-        separate=(sep is not None),
+        separate=need_sep,
         separator=sep,
+        demucs_mode=("always" if need_sep else "off"),
     )
     if sep is not None:
         del sep
@@ -94,11 +121,17 @@ def main() -> None:
             pass
     prep_s = time.perf_counter() - t0
     dur_s = len(audio) / 24000.0
-    print(f"Audio duration: {dur_s:.1f}s | Prep + Demucs: {prep_s:.2f}s")
+    print(f"Audio duration: {dur_s:.1f}s | Prep: {prep_s:.2f}s")
 
     print(f"Loading ONNX model: {args.model}")
     pred = ONNXPredictor(args.model, args.classes_json)
-    print(f"Mode: {'frame-level (~75 Hz)' if pred.is_frame_level else 'clip-level'}")
+    if pred.is_v5:
+        mode_str = "Model v5 (2-stage: 5s MERT + Full-Song Bi-Conformer & 145-state Skeleton CRF)"
+    elif pred.is_frame_level:
+        mode_str = "Model v4 frame-level (~75 Hz)"
+    else:
+        mode_str = "clip-level"
+    print(f"Mode: {mode_str}")
 
     t1 = time.perf_counter()
     results = infer_audio(
@@ -107,6 +140,7 @@ def main() -> None:
         step_s=args.step_s,
         confidence_threshold=args.conf,
         min_duration_ms=args.min_ms,
+        include_silence=args.show_silence,
     )
     infer_s = time.perf_counter() - t1
 

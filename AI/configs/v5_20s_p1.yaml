@@ -1,0 +1,72 @@
+data_dir: "../DE/data/export/v3"
+crop_s: 20
+sample_rate: 24000
+
+model:
+  name: "m-a-p/MERT-v1-330M"
+  arch_version: 5
+  n_layers: 25
+  hidden_dim: 1024
+  n_root: 13
+  n_quality: 6
+  n_ext: 15
+  n_bass: 13
+  n_types: 41
+  n_skeletons: 12
+  n_keys: 24
+  head_hidden: 128
+  type_head_hidden: 192
+  bass_head_hidden: 128
+  context_dim: 256
+  conformer_layers: 4
+  conformer_heads: 4
+  conformer_conv_kernel: 15
+  crf_stride: 4
+  chunk_s: 5
+  silence_db_threshold: -45.0
+  dropout: 0.25
+  frame_level: true
+
+train:
+  phase: 1
+  epochs: 15
+  batch_size: 4
+  grad_accum_steps: 1
+  lr_head: 3.0e-4
+  lr_lora: 3.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.06
+  grad_clip: 1.0
+  early_stop_patience: 4
+  loss_weights: [0.35, 0.10, 0.25, 0.12, 0.10, 0.08]
+  focal_gamma: 2.0
+  fp16: true
+  seed: 42
+  num_workers: 2
+
+lora:
+  enabled: false
+  r: 32
+  alpha: 64
+  dropout: 0.1
+  target_modules: ["q_proj", "v_proj", "k_proj", "out_proj"]
+
+augment:
+  enabled: true
+  pitch_shift_range: [0, 0]
+  gain_db: 5.0
+  noise_snr_range: [18, 32]
+  noise_prob: 0.35
+  reverb_prob: 0.0
+  time_mask_prob: 0.15
+  time_mask_max_ms: 120
+  n_time_masks: 2
+  melody_overlay_prob: 0.35
+  sustained_tension_prob: 0.22
+  silence_intro_prob: 0.18
+
+eval:
+  bootstrap_n: 1000
+
+checkpoint_dir: "results/v5_20s_p1"
+results_csv: "results/v5_20s_p1/results.csv"

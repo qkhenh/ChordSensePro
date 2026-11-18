@@ -234,7 +234,7 @@ Trong `AI/src/dataset.py` (tách helper gọn vào `AI/src/music_theory.py`), ng
 
 ## 6. Thứ Tự Thực Hiện (Checklist Triển Khai)
 
-- [ ] **Bước 1 — Nền tảng Nhạc lý & Kiến trúc Mạng (`music_theory.py`, `conformer.py`, `crf.py`, `model.py`, `losses.py`):** Xây dựng toàn bộ kiến trúc `ChordModelV5` + `ChordLossV5` và kiểm chứng bằng unit tests.
-- [ ] **Bước 2 — Data Pipeline `20s` trên `export/v3` & `MelodyOverlayAugmenter` (`config.py`, `augment.py`, `dataset.py`, `train.py`):** Hoàn thiện nạp dữ liệu trực tiếp từ `v3`, gán `N` cho vùng không âm thanh, thêm `grad_accum_steps` và Phase 3 cache.
-- [ ] **Bước 3 — Export ONNX 2-Stage, Evaluation & Serving Lọc Bỏ `N` (`export_onnx.py`, `evaluate.py`, `serve.py`, `test_v3.py`):** Hỗ trợ xuất/chạy ONNX v5, Auto-Bypass Demucs cho Solo Instrument, ẩn hoàn toàn `N` khỏi kết quả hiển thị.
-- [ ] **Bước 4 — Configs & Colab Notebook (`v5_20s_p1.yaml`, `v5_20s_p2.yaml`, `v5_fullsong_p3.yaml`, `colab_train.ipynb`):** Sẵn sàng pull code trên Colab L4 chạy thẳng trên `/content/data_v3` đã có sẵn để lấy bảng số liệu thực tế so với `v4`.
+- [x] **Bước 1 — Nền tảng Nhạc lý & Kiến trúc Mạng (`music_theory.py`, `conformer.py`, `crf.py`, `model.py`, `losses.py`):** Xây dựng toàn bộ kiến trúc `ChordModelV5` + `ChordLossV5` và kiểm chứng bằng unit tests.
+- [x] **Bước 2 — Data Pipeline `20s` trên `export/v3` & `MelodyOverlayAugmenter` (`config.py`, `augment.py`, `dataset.py`, `train.py`):** Hoàn thiện nạp dữ liệu trực tiếp từ `v3`, gán `N` cho vùng không âm thanh, thêm `grad_accum_steps` và Phase 3 cache.
+- [x] **Bước 3 — Export ONNX 2-Stage, Evaluation & Serving Lọc Bỏ `N` (`export_onnx.py`, `evaluate.py`, `serve.py`, `test_v3.py`):** Hỗ trợ xuất/chạy ONNX v5, Auto-Bypass Demucs cho Solo Instrument, ẩn hoàn toàn `N` khỏi kết quả hiển thị.
+- [x] **Bước 4 — Configs & Colab Notebook (`v5_20s_p1.yaml`, `v5_20s_p2.yaml`, `v5_fullsong_p3.yaml`, `colab_train.ipynb`):** Sẵn sàng pull code trên Colab L4 chạy thẳng trên `/content/data_v3` đã có sẵn để lấy bảng số liệu thực tế so với `v4`.

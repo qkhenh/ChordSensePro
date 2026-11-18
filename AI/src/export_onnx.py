@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import inspect
+import json
 import logging
 import time
 from pathlib import Path
@@ -9,7 +11,7 @@ import numpy as np
 import torch
 
 from src.config import load_config
-from src.model import build_model
+from src.model import build_model, mert_output_length
 from src.train import load_checkpoint
 
 log = logging.getLogger(__name__)
@@ -26,6 +28,55 @@ class ExportWrapper(torch.nn.Module):
         return r, q, e, b
 
 
+class V5EncoderExportWrapper(torch.nn.Module):
+    """Exports MERT (with merged LoRA) + 25-layer weighted sum + 256d projection on 5s chunks."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, wav: torch.Tensor) -> torch.Tensor:
+        return self.model._encode_single_chunk_batch(wav)
+
+
+class V5DecoderExportWrapper(torch.nn.Module):
+    """Exports Full-Song Bi-Conformer + DualChroma + Sustain + LocalKey + Root-Conditioned Joint Head + CRF params."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, emb: torch.Tensor, frame_rms_db: torch.Tensor):
+        out = self.model.decode_context(emb, frame_rms_db=frame_rms_db)
+        return (
+            out["crf_emissions"],
+            self.model.crf.transitions,
+            self.model.crf.start_transitions,
+            self.model.crf.end_transitions,
+            out["type_logits_by_root"],
+            out["bass_logits"],
+            out["key_logits"],
+            out["sustain_env"],
+        )
+
+
+def companion_decoder_path(encoder_path: str | Path) -> Path:
+    p = Path(encoder_path)
+    return p.with_name(f"{p.stem}_decoder{p.suffix}")
+
+
+def companion_meta_path(encoder_path: str | Path) -> Path:
+    p = Path(encoder_path)
+    return p.with_suffix(".meta.json")
+
+
+def _base_onnx_kwargs(opset: int) -> dict:
+    kw = dict(opset_version=opset, do_constant_folding=True)
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        kw["dynamo"] = False
+    return kw
+
+
 def export_onnx(
     cfg_path: str,
     checkpoint_path: str,
@@ -33,9 +84,10 @@ def export_onnx(
     opset: int = 17,
 ) -> None:
     cfg = load_config(cfg_path)
+    is_v5 = getattr(cfg.model, "arch_version", 4) >= 5
     device = torch.device("cpu")
 
-    model = build_model(cfg.model).to(device)
+    model = build_model(cfg.model, sample_rate=cfg.sample_rate).to(device)
 
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     state = ckpt.get("model_state_dict", ckpt)
@@ -45,15 +97,78 @@ def export_onnx(
         model.apply_lora(cfg.lora)
 
     load_checkpoint(Path(checkpoint_path), model, strict=True)
+    if is_v5 and has_lora and hasattr(model, "merge_lora"):
+        log.info("Merging LoRA weights into MERT linear layers for zero-overhead ONNX graph")
+        model.merge_lora()
     model.eval()
 
-    wrapper = ExportWrapper(model)
-    wrapper.eval()
+    out_p = Path(output_path)
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+    common_kw = _base_onnx_kwargs(opset)
 
+    if is_v5:
+        chunk_samples = cfg.chunk_samples
+        t_chunk = mert_output_length(chunk_samples)
+
+        enc_wrapper = V5EncoderExportWrapper(model).eval()
+        dummy_wav = torch.randn(1, chunk_samples, device=device)
+        torch.onnx.export(
+            enc_wrapper,
+            (dummy_wav,),
+            str(out_p),
+            input_names=["wav"],
+            output_names=["emb"],
+            dynamic_axes={"wav": {0: "batch"}, "emb": {0: "batch", 1: "time"}},
+            **common_kw,
+        )
+        log.info(f"Exported v5 Acoustic Encoder ONNX -> {out_p}")
+
+        dec_path = companion_decoder_path(out_p)
+        dec_wrapper = V5DecoderExportWrapper(model).eval()
+        dummy_emb = torch.randn(1, t_chunk * 4, cfg.model.context_dim, device=device)
+        dummy_rms = torch.full((1, t_chunk * 4), -22.0, device=device)
+        torch.onnx.export(
+            dec_wrapper,
+            (dummy_emb, dummy_rms),
+            str(dec_path),
+            input_names=["emb", "frame_rms_db"],
+            output_names=[
+                "crf_emissions",
+                "crf_transitions",
+                "crf_start",
+                "crf_end",
+                "type_logits_by_root",
+                "bass_logits",
+                "key_logits",
+                "sustain_env",
+            ],
+            dynamic_axes={
+                "emb": {0: "batch", 1: "time"},
+                "frame_rms_db": {0: "batch", 1: "time"},
+                "crf_emissions": {0: "batch", 1: "crf_time"},
+                "type_logits_by_root": {0: "batch", 1: "time"},
+                "bass_logits": {0: "batch", 1: "time"},
+                "key_logits": {0: "batch", 1: "time"},
+                "sustain_env": {0: "batch", 1: "time"},
+            },
+            **common_kw,
+        )
+        log.info(f"Exported v5 Full-Song Context Decoder ONNX -> {dec_path}")
+
+        meta = {
+            "arch_version": 5,
+            "decoder_onnx": dec_path.name,
+            "sample_rate": cfg.sample_rate,
+            "chunk_s": cfg.model.chunk_s,
+            "context_dim": cfg.model.context_dim,
+            "crf_stride": cfg.model.crf_stride,
+            "silence_db_threshold": cfg.model.silence_db_threshold,
+        }
+        companion_meta_path(out_p).write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        return
+
+    wrapper = ExportWrapper(model).eval()
     dummy = torch.randn(1, cfg.crop_samples, device=device)
-
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-
     dynamic_axes = {
         "wav": {0: "batch"},
         "root_logits": {0: "batch"},
@@ -65,47 +180,39 @@ def export_onnx(
         for name in ["root_logits", "quality_logits", "ext_logits", "bass_logits"]:
             dynamic_axes[name][1] = "time"
 
-    export_kwargs = dict(
-        input_names=["wav"],
-        output_names=["root_logits", "quality_logits", "ext_logits", "bass_logits"],
-        dynamic_axes=dynamic_axes,
-        opset_version=opset,
-        do_constant_folding=True,
-    )
-    import inspect
-    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
-        export_kwargs["dynamo"] = False
-
     torch.onnx.export(
         wrapper,
         (dummy,),
-        output_path,
-        **export_kwargs,
+        str(out_p),
+        input_names=["wav"],
+        output_names=["root_logits", "quality_logits", "ext_logits", "bass_logits"],
+        dynamic_axes=dynamic_axes,
+        **common_kw,
     )
-    log.info(f"Exported ONNX to {output_path}")
+    log.info(f"Exported ONNX to {out_p}")
 
 
 def benchmark_pytorch(cfg_path: str, checkpoint_path: str, n_runs: int = 50) -> None:
     cfg = load_config(cfg_path)
+    is_v5 = getattr(cfg.model, "arch_version", 4) >= 5
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model = build_model(cfg.model).to(device)
-
+    model = build_model(cfg.model, sample_rate=cfg.sample_rate).to(device)
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     state = ckpt.get("model_state_dict", ckpt)
-    has_lora = any("lora_A" in k for k in state.keys())
-    if has_lora:
-        log.info("Benchmark: applying LoRA before loading checkpoint")
+    if any("lora_A" in k for k in state.keys()):
         model.apply_lora(cfg.lora)
-
     load_checkpoint(Path(checkpoint_path), model, strict=True)
+    if is_v5 and hasattr(model, "merge_lora"):
+        model.merge_lora()
     model.eval()
 
-    dummy = torch.randn(1, cfg.crop_samples, device=device)
+    n_samp = cfg.chunk_samples if is_v5 else cfg.crop_samples
+    dummy = torch.randn(1, n_samp, device=device)
 
     for _ in range(5):
         with torch.no_grad():
-            model(dummy)
+            model.encode_chunks(dummy) if is_v5 else model(dummy)
 
     if device.type == "cuda":
         torch.cuda.synchronize()
@@ -114,16 +221,19 @@ def benchmark_pytorch(cfg_path: str, checkpoint_path: str, n_runs: int = 50) -> 
     for _ in range(n_runs):
         t0 = time.perf_counter()
         with torch.no_grad():
-            model(dummy)
+            model.encode_chunks(dummy) if is_v5 else model(dummy)
         if device.type == "cuda":
             torch.cuda.synchronize()
         times.append(time.perf_counter() - t0)
 
-    times = np.array(times) * 1000
-    log.info(f"PyTorch {device} | mean={times.mean():.1f}ms | std={times.std():.1f}ms | p95={np.percentile(times, 95):.1f}ms")
+    times_ms = np.array(times) * 1000
+    log.info(
+        f"PyTorch {device} (5s chunk) | mean={times_ms.mean():.1f}ms | "
+        f"std={times_ms.std():.1f}ms | p95={np.percentile(times_ms, 95):.1f}ms"
+    )
 
 
-def benchmark_onnx(onnx_path: str, crop_samples: int, n_runs: int = 50) -> None:
+def benchmark_onnx(onnx_path: str, chunk_samples: int, n_runs: int = 50) -> None:
     try:
         import onnxruntime as ort
     except ImportError:
@@ -134,8 +244,7 @@ def benchmark_onnx(onnx_path: str, crop_samples: int, n_runs: int = 50) -> None:
     sess = ort.InferenceSession(onnx_path, providers=providers)
     actual_provider = sess.get_providers()[0]
 
-    dummy = np.random.randn(1, crop_samples).astype(np.float32)
-
+    dummy = np.random.randn(1, chunk_samples).astype(np.float32)
     for _ in range(5):
         sess.run(None, {"wav": dummy})
 
@@ -145,8 +254,31 @@ def benchmark_onnx(onnx_path: str, crop_samples: int, n_runs: int = 50) -> None:
         sess.run(None, {"wav": dummy})
         times.append(time.perf_counter() - t0)
 
-    times = np.array(times) * 1000
-    log.info(f"ONNX ({actual_provider}) | mean={times.mean():.1f}ms | std={times.std():.1f}ms | p95={np.percentile(times, 95):.1f}ms")
+    times_ms = np.array(times) * 1000
+    log.info(
+        f"ONNX Encoder ({actual_provider}) | mean={times_ms.mean():.1f}ms | "
+        f"std={times_ms.std():.1f}ms | p95={np.percentile(times_ms, 95):.1f}ms"
+    )
+
+    dec_p = companion_decoder_path(onnx_path)
+    if dec_p.exists():
+        dec_sess = ort.InferenceSession(str(dec_p), providers=providers)
+        # Benchmark full 60s song (4,488 frames @ 75Hz)
+        t_60s = 4488
+        d_emb = np.random.randn(1, t_60s, 256).astype(np.float32)
+        d_rms = np.full((1, t_60s), -20.0, dtype=np.float32)
+        for _ in range(5):
+            dec_sess.run(None, {"emb": d_emb, "frame_rms_db": d_rms})
+        d_times = []
+        for _ in range(n_runs):
+            t0 = time.perf_counter()
+            dec_sess.run(None, {"emb": d_emb, "frame_rms_db": d_rms})
+            d_times.append(time.perf_counter() - t0)
+        d_ms = np.array(d_times) * 1000
+        log.info(
+            f"ONNX Full-Song 60s Decoder ({actual_provider}) | mean={d_ms.mean():.2f}ms | "
+            f"p95={np.percentile(d_ms, 95):.2f}ms"
+        )
 
 
 def main():
@@ -163,12 +295,11 @@ def main():
     export_onnx(args.config, args.checkpoint, args.output)
 
     if args.benchmark:
-        benchmark_pytorch(args.config, args.checkpoint, args.n_runs)
-
         cfg = load_config(args.config)
-        benchmark_onnx(args.output, cfg.crop_samples, args.n_runs)
+        benchmark_pytorch(args.config, args.checkpoint, args.n_runs)
+        n_samp = cfg.chunk_samples if getattr(cfg.model, "arch_version", 4) >= 5 else cfg.crop_samples
+        benchmark_onnx(args.output, n_samp, args.n_runs)
 
 
 if __name__ == "__main__":
     main()
-

@@ -9,16 +9,28 @@ import yaml
 @dataclass
 class ModelCfg:
     name: str = "m-a-p/MERT-v1-330M"
+    arch_version: int = 4
     n_layers: int = 25
     hidden_dim: int = 1024
     n_root: int = 12
     n_quality: int = 6
     n_ext: int = 15
     n_bass: int = 13
+    n_types: int = 41
+    n_skeletons: int = 12
+    n_keys: int = 24
     head_hidden: int = 128
     ext_head_hidden: int = 256
     ext_head_mid: int = 64
     bass_head_hidden: int = 128
+    type_head_hidden: int = 192
+    context_dim: int = 256
+    conformer_layers: int = 4
+    conformer_heads: int = 4
+    conformer_conv_kernel: int = 15
+    crf_stride: int = 4
+    chunk_s: int = 5
+    silence_db_threshold: float = -45.0
     dropout: float = 0.3
     detach_logits: bool = True
     pooling: str = "mean"
@@ -30,6 +42,7 @@ class TrainCfg:
     phase: int = 1
     epochs: int = 10
     batch_size: int = 16
+    grad_accum_steps: int = 1
     lr_head: float = 2e-4
     lr_lora: float = 5e-5
     weight_decay: float = 0.01
@@ -41,6 +54,7 @@ class TrainCfg:
     fp16: bool = True
     seed: int = 42
     num_workers: int = 2
+    cache_dir: str = ""
 
 
 @dataclass
@@ -63,6 +77,9 @@ class AugmentCfg:
     time_mask_prob: float = 0.0
     time_mask_max_ms: int = 150
     n_time_masks: int = 2
+    melody_overlay_prob: float = 0.0
+    sustained_tension_prob: float = 0.2
+    silence_intro_prob: float = 0.0
 
 
 @dataclass
@@ -86,6 +103,10 @@ class Config:
     @property
     def crop_samples(self) -> int:
         return self.crop_s * self.sample_rate
+
+    @property
+    def chunk_samples(self) -> int:
+        return self.model.chunk_s * self.sample_rate
 
 
 def load_config(path: str | Path) -> Config:
@@ -178,6 +199,8 @@ def _apply_env_overrides(cfg: Config) -> None:
 
     if _env("MERT_MODEL"):
         cfg.model.name = _env("MERT_MODEL")
+    if _env_int("ARCH_VERSION") is not None:
+        cfg.model.arch_version = _env_int("ARCH_VERSION")
     if _env("POOLING"):
         cfg.model.pooling = _env("POOLING")
     if _env_bool("FRAME_LEVEL") is not None:
@@ -191,6 +214,10 @@ def _apply_env_overrides(cfg: Config) -> None:
         cfg.train.epochs = _env_int("EPOCHS")
     if _env_int("BATCH_SIZE") is not None:
         cfg.train.batch_size = _env_int("BATCH_SIZE")
+    if _env_int("GRAD_ACCUM_STEPS") is not None:
+        cfg.train.grad_accum_steps = _env_int("GRAD_ACCUM_STEPS")
+    if _env("CACHE_DIR"):
+        cfg.train.cache_dir = _env("CACHE_DIR")
     if _env_float("LR_HEAD") is not None:
         cfg.train.lr_head = _env_float("LR_HEAD")
     if _env_float("LR_LORA") is not None:
@@ -229,4 +256,3 @@ def _apply_env_overrides(cfg: Config) -> None:
         cfg.augment.gain_db = _env_float("GAIN_DB")
     if _env_float("NOISE_PROB") is not None:
         cfg.augment.noise_prob = _env_float("NOISE_PROB")
-

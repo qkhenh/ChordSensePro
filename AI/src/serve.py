@@ -11,6 +11,19 @@ from typing import Any
 
 import numpy as np
 
+from src.crf import viterbi_crf_numpy
+from src.music_theory import (
+    FLAT_KEY_IDS,
+    N_SKELETONS,
+    N_TYPES,
+    REL_PITCH_INDEX,
+    ROOT_SILENCE_ID,
+    SKEL_BASE_TYPE,
+    SKEL_TYPE_MASK,
+    TYPE_TENSION_REL_MASK,
+    TYPE_TO_QE,
+)
+
 # Add PyTorch bundled CUDA DLLs to PATH so onnxruntime-gpu can find them
 try:
     import torch as _torch
@@ -47,6 +60,7 @@ MERT_CONV_KERNELS: tuple[int, ...] = (10, 3, 3, 3, 3, 2, 2)
 MERT_CONV_STRIDES: tuple[int, ...] = (5, 2, 2, 2, 2, 2, 2)
 MERT_HOP_SAMPLES: int = 320
 MERT_RECEPTIVE_SAMPLES: int = 400
+NORM_STD_FLOOR: float = 1.8e-3  # -55 dBFS floor preventing silent hiss amplification
 
 
 def mert_output_length(
@@ -63,10 +77,10 @@ def mert_output_length(
 SAMPLE_RATE = int(os.environ.get("SERVE_SAMPLE_RATE", "24000"))
 CROP_S = int(os.environ.get("SERVE_CROP_S", "5"))
 STEP_S = float(os.environ.get("SERVE_STEP_S", "2.5"))
-RMS_THRESHOLD_DB = float(os.environ.get("SERVE_RMS_THRESHOLD_DB", "-40.0"))
+RMS_THRESHOLD_DB = float(os.environ.get("SERVE_RMS_THRESHOLD_DB", "-45.0"))
 CONFIDENCE_THRESHOLD = float(os.environ.get("SERVE_CONFIDENCE_THRESHOLD", "0.30"))
 MIN_DURATION_MS = float(os.environ.get("SERVE_MIN_DURATION_MS", "300.0"))
-MIN_EXT_DURATION_MS = float(os.environ.get("SERVE_MIN_EXT_DURATION_MS", "1000.0"))
+MIN_EXT_DURATION_MS = float(os.environ.get("SERVE_MIN_EXT_DURATION_MS", "500.0"))
 SLASH_BASS_THRESHOLD = float(os.environ.get("SERVE_SLASH_BASS_THRESHOLD", "0.50"))
 RARE_EXT_THRESHOLD = float(os.environ.get("SERVE_RARE_EXT_THRESHOLD", "0.48"))
 ROOT_SWITCH_PENALTY = float(os.environ.get("SERVE_ROOT_SWITCH_PENALTY", "5.5"))
@@ -75,18 +89,20 @@ BASS_SWITCH_PENALTY = float(os.environ.get("SERVE_BASS_SWITCH_PENALTY", "3.5"))
 EXT_SWITCH_PENALTY = float(os.environ.get("SERVE_EXT_SWITCH_PENALTY", "6.0"))
 AUTO_KEY_SPELLING = os.environ.get("SERVE_AUTO_KEY_SPELLING", "1").lower() in ("1", "true", "yes")
 USE_DEMUCS_DEFAULT = os.environ.get("SERVE_USE_DEMUCS", "1").lower() in ("1", "true", "yes")
+DEMUCS_MODE_DEFAULT = os.environ.get("SERVE_DEMUCS_MODE", "auto").lower()  # "auto" | "always" | "off"
 DEMUCS_MODEL = os.environ.get("SERVE_DEMUCS_MODEL", "htdemucs_ft")
 DEMUCS_SEGMENT = float(os.environ.get("SERVE_DEMUCS_SEGMENT", "6.0"))
 HOST = os.environ.get("SERVE_HOST", "0.0.0.0")
 PORT = int(os.environ.get("SERVE_PORT", "8000"))
-MODEL_PATH = os.environ.get("SERVE_MODEL_PATH", "results/model_v4_5s_p2.onnx")
+MODEL_PATH = os.environ.get("SERVE_MODEL_PATH", "results/model_v5_p3.onnx")
 CLASSES_JSON = os.environ.get("SERVE_CLASSES_JSON", "../DE/data/export/v3/classes.json")
 
 ROOT_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 ROOT_NAMES_FLAT = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
+KEY_DISPLAY_NAMES = [f"{n} major" for n in ROOT_NAMES_FLAT] + [f"{n}m" for n in ROOT_NAMES_FLAT]
 ULTRA_RARE_EXT_IDS: tuple[int, ...] = (1, 7, 9, 10, 11, 12, 13, 14)
 
-# Krumhansl-Kessler key profiles for automatic sharp/flat enharmonic spelling
+# Krumhansl-Kessler key profiles for automatic sharp/flat enharmonic spelling (v4 fallback)
 _KK_MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88], dtype=np.float64)
 _KK_MINOR = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17], dtype=np.float64)
 _FLAT_MAJOR_ROOTS = {5, 10, 3, 8, 1}   # F, Bb, Eb, Ab, Db
@@ -150,7 +166,7 @@ CHORD_SUFFIX: dict[tuple[int, int], str] = {
 
 def canonical_bass_id(root_id: int, bass_id: int) -> int:
     """Normalize root-position bass (`bass == root` or out-of-range) to `12` (`none`)."""
-    if root_id < 0 or bass_id < 0 or bass_id >= 12 or bass_id == root_id:
+    if root_id < 0 or root_id >= 12 or bass_id < 0 or bass_id >= 12 or bass_id == root_id:
         return 12
     return int(bass_id)
 
@@ -159,7 +175,7 @@ def canonicalize_chord_tuple(
     root_id: int, quality_id: int, ext_id: int, bass_id: int = 12
 ) -> tuple[int, int, int, int]:
     """Canonicalize root-bass identity and symmetric diminished-7th slash inversions."""
-    if root_id < 0:
+    if root_id < 0 or root_id >= 12:
         return -1, -1, -1, 12
     b = canonical_bass_id(root_id, bass_id)
     # Symmetric dim7: Cdim7 == Ebdim7/C == F#dim7/C == Adim7/C -> spell with bass as root
@@ -175,7 +191,7 @@ def chord_name(
     bass_id: int = 12,
     prefer_flats: bool = False,
 ) -> str:
-    if root_id < 0:
+    if root_id < 0 or root_id >= 12:
         return "N"
     names = ROOT_NAMES_FLAT if prefer_flats else ROOT_NAMES
     r = names[root_id]
@@ -197,6 +213,53 @@ def weighted_chord_conf(
 ) -> float | np.ndarray:
     """Compute chord confidence from root/quality/ext only (excluding dominant `bass=none`)."""
     return 0.40 * root_conf + 0.35 * qual_conf + 0.25 * ext_conf
+
+
+def detect_solo_clean_audio(wav_stereo_or_mono: np.ndarray, sr: int) -> bool:
+    """Fast (~30ms) detector for solo piano / clean harmonic instrument (no drums & no vocal fricatives).
+
+    Uses magnitude-domain HPSS median filtering (`perc_mag < 0.34`) and `4.5-10 kHz` sibilance/cymbal
+    magnitude ratio (`hf_mag < 0.008`), calibrated so solo piano bypasses Demucs while full-band mixes
+     ALWAYS run `htdemucs_ft`.
+    """
+    try:
+        from scipy.ndimage import median_filter
+        from scipy.signal import stft
+
+        mono = wav_stereo_or_mono.mean(axis=0) if wav_stereo_or_mono.ndim > 1 else wav_stereo_or_mono
+        mono = mono.astype(np.float32)
+        if len(mono) < sr * 2:
+            return False
+
+        win_len = min(len(mono), sr * 8)
+        if len(mono) > win_len:
+            hop_scan = max(1, sr)
+            best_pos, best_e = 0, -1.0
+            for p in range(0, len(mono) - win_len + 1, hop_scan):
+                e = float(np.mean(mono[p: p + win_len] ** 2))
+                if e > best_e:
+                    best_e = e
+                    best_pos = p
+            clip = mono[best_pos: best_pos + win_len]
+        else:
+            clip = mono
+
+        if float(np.max(np.abs(clip))) < 1e-3:
+            return True
+
+        freqs, _, zxx = stft(clip, fs=sr, nperseg=2048, noverlap=1536)
+        mag = np.abs(zxx)
+        harm = median_filter(mag, size=(1, 17))
+        perc = median_filter(mag, size=(17, 1))
+        perc_mag = float(perc.sum()) / float(harm.sum() + perc.sum() + 1e-8)
+
+        hf_mask = (freqs >= 4500.0) & (freqs <= min(10000.0, sr * 0.48))
+        hf_mag = float(mag[hf_mask].sum()) / float(mag.sum() + 1e-8) if hf_mask.any() else 0.0
+
+        return bool(perc_mag < 0.34 and hf_mag < 0.008)
+    except Exception as exc:
+        log.debug(f"detect_solo_clean_audio fallback ({exc})")
+        return False
 
 
 class HarmonicSeparator:
@@ -327,11 +390,35 @@ class ONNXPredictor:
         log.info(f"ONNX model loaded: {model_path} | provider: {active}")
 
         self.input_name = self.session.get_inputs()[0].name
-
         outputs_meta = self.session.get_outputs()
-        self.is_frame_level = bool(
-            outputs_meta and outputs_meta[0].shape and len(outputs_meta[0].shape) == 3
-        )
+
+        # Detect v5 2-stage ONNX (`encoder.onnx` + companion `encoder_decoder.onnx`)
+        p = Path(model_path)
+        meta_path = p.with_suffix(".meta.json")
+        self.v5_meta: dict[str, Any] = {}
+        if meta_path.exists():
+            try:
+                self.v5_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                self.v5_meta = {}
+
+        dec_name = self.v5_meta.get("decoder_onnx", f"{p.stem}_decoder{p.suffix}")
+        dec_path = p.with_name(dec_name)
+        self.decoder_session = None
+        self.is_v5 = False
+        if dec_path.exists():
+            self.decoder_session = ort.InferenceSession(str(dec_path), sess_options=opts, providers=providers)
+            self.is_v5 = True
+            self.is_frame_level = True
+            self.crf_stride = int(self.v5_meta.get("crf_stride", 4))
+            self.context_dim = int(self.v5_meta.get("context_dim", 256))
+            log.info(f"ONNX v5 Full-Song Context Decoder loaded: {dec_path}")
+        else:
+            self.is_frame_level = bool(
+                outputs_meta and outputs_meta[0].shape and len(outputs_meta[0].shape) == 3
+            )
+            self.crf_stride = 4
+            self.context_dim = 256
 
         self.combo_mask: np.ndarray | None = None
         candidates = [classes_json] if classes_json else []
@@ -349,10 +436,102 @@ class ONNXPredictor:
                     log.info(f"Loaded valid_combo_mask from {cand}")
                     break
 
+    def encode_chunk_v5(self, wav_float32: np.ndarray) -> np.ndarray:
+        """Run v5 acoustic encoder on a normalized 5s chunk `(N,)` -> `(T_chunk, 256)`."""
+        inp = wav_float32[np.newaxis, :].astype(np.float32)
+        emb = self.session.run(None, {self.input_name: inp})[0]
+        return emb[0]
+
+    def decode_song_v5(self, song_emb: np.ndarray, frame_rms_db: np.ndarray) -> dict[str, np.ndarray]:
+        """Run v5 context decoder on `(T_song, 256)` (chunking smoothly if song > 75s)."""
+        if self.decoder_session is None:
+            raise RuntimeError("v5 decoder_session is not initialized")
+
+        total_frames, c_dim = song_emb.shape
+        max_win_frames = 4500   # ~60s @ 75 Hz
+        step_frames = 2252      # ~30s step (divisible by crf_stride=4)
+        stride = self.crf_stride
+
+        if total_frames <= int(max_win_frames * 1.25):
+            outs = self.decoder_session.run(
+                None,
+                {
+                    "emb": song_emb[np.newaxis, :, :].astype(np.float32),
+                    "frame_rms_db": frame_rms_db[np.newaxis, :].astype(np.float32),
+                },
+            )
+            return {
+                "crf_emissions": outs[0][0],
+                "crf_transitions": outs[1],
+                "crf_start": outs[2],
+                "crf_end": outs[3],
+                "type_logits_by_root": outs[4][0],
+                "bass_logits": outs[5][0],
+                "key_logits": outs[6][0],
+                "sustain_env": outs[7][0],
+            }
+
+        # Overlap-add for very long tracks (>75s, e.g. 5-min Jazz recordings)
+        total_crf = int(np.ceil(total_frames / float(stride)))
+        acc_crf = np.zeros((total_crf, 1 + 12 * N_SKELETONS), dtype=np.float32)
+        acc_w_crf = np.zeros(total_crf, dtype=np.float32)
+        acc_type = np.zeros((total_frames, 12, N_TYPES), dtype=np.float32)
+        acc_bass = np.zeros((total_frames, 13), dtype=np.float32)
+        acc_key = np.zeros((total_frames, 24), dtype=np.float32)
+        acc_sust = np.zeros((total_frames, 12), dtype=np.float32)
+        acc_w = np.zeros(total_frames, dtype=np.float32)
+
+        crf_trans = crf_start = crf_end = None
+        pos = 0
+        starts = []
+        while pos + max_win_frames <= total_frames:
+            starts.append(pos)
+            pos += step_frames
+        if not starts or starts[-1] + max_win_frames < total_frames:
+            last_s = max(0, ((total_frames - max_win_frames) // stride) * stride)
+            if not starts or last_s != starts[-1]:
+                starts.append(last_s)
+
+        for s in starts:
+            e = min(total_frames, s + max_win_frames)
+            outs = self.decoder_session.run(
+                None,
+                {
+                    "emb": song_emb[np.newaxis, s:e, :].astype(np.float32),
+                    "frame_rms_db": frame_rms_db[np.newaxis, s:e].astype(np.float32),
+                },
+            )
+            crf_em, crf_trans, crf_start, crf_end = outs[0][0], outs[1], outs[2], outs[3]
+            tw = _triangle_weights(e - s)
+            acc_type[s:e] += outs[4][0] * tw[:, None, None]
+            acc_bass[s:e] += outs[5][0] * tw[:, None]
+            acc_key[s:e] += outs[6][0] * tw[:, None]
+            acc_sust[s:e] += outs[7][0] * tw[:, None]
+            acc_w[s:e] += tw
+
+            cs = s // stride
+            ce = min(total_crf, cs + len(crf_em))
+            tw_c = _triangle_weights(ce - cs)
+            acc_crf[cs:ce] += crf_em[: ce - cs] * tw_c[:, None]
+            acc_w_crf[cs:ce] += tw_c
+
+        inv_w = 1.0 / np.maximum(acc_w, 1e-6)
+        inv_wc = 1.0 / np.maximum(acc_w_crf, 1e-6)
+        return {
+            "crf_emissions": acc_crf * inv_wc[:, None],
+            "crf_transitions": crf_trans,
+            "crf_start": crf_start,
+            "crf_end": crf_end,
+            "type_logits_by_root": acc_type * inv_w[:, None, None],
+            "bass_logits": acc_bass * inv_w[:, None],
+            "key_logits": acc_key * inv_w[:, None],
+            "sustain_env": acc_sust * inv_w[:, None],
+        }
+
     def predict_frame_probs(
         self, wav_float32: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Return `(root_prob, qual_prob, ext_prob, bass_prob)` of shape `(T, C)` for frame-level models."""
+        """Return `(root_prob, qual_prob, ext_prob, bass_prob)` of shape `(T, C)` for v4 frame-level models."""
         inp = wav_float32[np.newaxis, :]
         outputs = self.session.run(None, {self.input_name: inp})
         r_logits, q_logits, e_logits = outputs[0], outputs[1], outputs[2]
@@ -475,11 +654,46 @@ def _rms_gate(crop: np.ndarray, threshold_db: float) -> bool:
 
 
 def _normalize(wav: np.ndarray) -> np.ndarray:
+    """Soft-clamped normalization (`-55 dBFS` floor) preventing quiet room hiss from exploding."""
     wav = wav.astype(np.float32) / 32768.0
-    std = wav.std()
-    if std > 1e-6:
-        wav = (wav - wav.mean()) / std
-    return wav
+    denom = max(float(wav.std()), NORM_STD_FLOOR)
+    return ((wav - float(wav.mean())) / denom).astype(np.float32)
+
+
+def _compute_song_frame_rms_db(audio_int16: np.ndarray, n_frames: int) -> np.ndarray:
+    """Compute pre-normalization dBFS per MERT frame `(n_frames,)` across the full song."""
+    if n_frames <= 0:
+        return np.empty(0, dtype=np.float32)
+    needed = n_frames * MERT_HOP_SAMPLES
+    wav = audio_int16[:needed].astype(np.float32) / 32768.0
+    if len(wav) < needed:
+        wav = np.pad(wav, (0, needed - len(wav)))
+    frames = wav.reshape(n_frames, MERT_HOP_SAMPLES)
+    rms = np.sqrt(np.mean(frames * frames, axis=1) + 1e-12)
+    rms_s = np.convolve(np.pad(rms, (1, 1), mode="edge"), np.array([0.25, 0.5, 0.25], dtype=np.float32), mode="valid")
+    return 20.0 * np.log10(np.maximum(rms_s, 1e-6))
+
+
+def _compute_decay_lock_scale(rms_db_crf: np.ndarray) -> np.ndarray:
+    """Compute Onset-Decay Lock multiplier (`>= 1.0`) per CRF step to freeze decaying chord tails."""
+    n = len(rms_db_crf)
+    if n <= 2:
+        return np.ones(n, dtype=np.float32)
+    scale = np.ones(n, dtype=np.float32)
+    peak_db = float(rms_db_crf[0])
+    for t in range(1, n):
+        cur = float(rms_db_crf[t])
+        diff = cur - float(rms_db_crf[t - 1])
+        if diff > 1.8:
+            # New chord attack / note strike -> reset peak, unlock transitions
+            peak_db = cur
+            scale[t] = 1.0
+        else:
+            peak_db = max(peak_db, cur)
+            drop_db = peak_db - cur
+            if diff <= 0.3 and drop_db >= 6.0:
+                scale[t] = min(3.0, 1.0 + (drop_db - 6.0) / 8.0)
+    return scale
 
 
 def _decode_raw_waveform(data: bytes, filename: str = "") -> tuple[np.ndarray, int]:
@@ -506,9 +720,26 @@ def load_audio_bytes(
     filename: str = "",
     separate: bool = False,
     separator: HarmonicSeparator | None = None,
+    demucs_mode: str = DEMUCS_MODE_DEFAULT,
 ) -> np.ndarray:
-    if separate and separator is not None:
+    """Decode audio to `target_sr` mono `int16`, with automatic solo-instrument Demucs bypass in `'auto'` mode."""
+    mode = (demucs_mode or "auto").lower()
+    if separate and mode != "off" and separator is not None:
         wav_stereo, sr_orig = _decode_raw_waveform(data, filename=filename)
+        if mode == "auto" and detect_solo_clean_audio(wav_stereo, sr_orig):
+            log.info("Auto-detected clean solo instrument (no drums/vocals) — bypassing Demucs")
+            mono = wav_stereo.mean(axis=0).astype(np.float32)
+            if sr_orig != target_sr:
+                if _TORCHAUDIO_AVAILABLE:
+                    import torch
+                    mono = torchaudio.functional.resample(
+                        torch.from_numpy(mono).unsqueeze(0), sr_orig, target_sr
+                    ).squeeze(0).numpy()
+                else:
+                    import librosa
+                    mono = librosa.resample(mono, orig_sr=sr_orig, target_sr=target_sr)
+            return (np.clip(mono, -1.0, 1.0) * 32767.0).astype(np.int16)
+
         return separator.separate_waveform(wav_stereo, sr=sr_orig, target_sr=target_sr)
 
     import importlib
@@ -685,7 +916,7 @@ def decode_musical_sequence(
     bass_switch_penalty: float = BASS_SWITCH_PENALTY,
     ext_switch_penalty: float = EXT_SWITCH_PENALTY,
 ) -> np.ndarray:
-    """Decode continuous `(T, C)` probabilities into musically stable `(T, 5)` chord trajectories."""
+    """Decode continuous `(T, C)` probabilities into musically stable `(T, 5)` chord trajectories (v4)."""
     n = len(root_prob)
     if n == 0:
         return np.zeros((0, 5), dtype=np.float32)
@@ -838,13 +1069,268 @@ def decode_musical_sequence(
     return np.column_stack([root_ids, qual_ids, ext_ids, bass_ids, avg_confs])
 
 
+def _infer_v5_full_song(
+    predictor: ONNXPredictor,
+    audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    crop_s: int = CROP_S,
+    step_s: float = STEP_S,
+    rms_threshold_db: float = RMS_THRESHOLD_DB,
+    confidence_threshold: float = CONFIDENCE_THRESHOLD,
+    min_duration_ms: float = MIN_DURATION_MS,
+) -> list[dict[str, Any]]:
+    """Run 2-Stage Model v5 Inference:
+    1. Overlap-add 5s chunks in 256d embedding space (`v5_encoder.onnx`)
+    2. Run Full-Song Bi-Conformer + LocalKey + Root-Conditioned Joint Head (`v5_decoder.onnx`)
+    3. Decode 145-state Skeleton CRF with Silence Gate & Onset-Decay Locking
+    4. Resolve Jazz Tensions (`add9, 9, #11, 13, alt`) via `sustain_env` (`>= 500ms` duration gating)
+    """
+    chunk_s = int(predictor.v5_meta.get("chunk_s", crop_s))
+    chunk_samples = chunk_s * sample_rate
+    step_samples = max(MERT_HOP_SAMPLES, int(round(step_s * sample_rate / MERT_HOP_SAMPLES)) * MERT_HOP_SAMPLES)
+    audio_len = len(audio)
+    duration_ms = round(audio_len / float(sample_rate) * 1000.0, 1)
+
+    t_chunk = mert_output_length(chunk_samples)
+    total_frames = max(1, mert_output_length(max(audio_len, chunk_samples)))
+    if audio_len < chunk_samples:
+        total_frames = max(1, int(np.ceil(audio_len / float(MERT_HOP_SAMPLES))))
+
+    windows: list[tuple[int, np.ndarray]] = []
+    if audio_len < chunk_samples:
+        pad = np.zeros(chunk_samples, dtype=np.int16)
+        pad[:audio_len] = audio
+        windows.append((0, pad))
+    else:
+        pos = 0
+        while pos + chunk_samples <= audio_len:
+            windows.append((pos, audio[pos: pos + chunk_samples]))
+            pos += step_samples
+        if pos < audio_len:
+            last = audio_len - chunk_samples
+            if last != pos - step_samples:
+                windows.append((last, audio[last: last + chunk_samples]))
+
+    acc_emb = np.zeros((total_frames, predictor.context_dim), dtype=np.float32)
+    acc_w = np.zeros(total_frames, dtype=np.float32)
+
+    for pos, crop in windows:
+        wav = _normalize(crop)
+        emb = predictor.encode_chunk_v5(wav)  # (T_chunk, 256)
+        n_f = len(emb)
+        tw = _triangle_weights(n_f)
+        start_f = int(round(pos / float(MERT_HOP_SAMPLES)))
+        end_f = min(total_frames, start_f + n_f)
+        span = end_f - start_f
+        if span <= 0:
+            continue
+        acc_emb[start_f:end_f] += emb[:span] * tw[:span, None]
+        acc_w[start_f:end_f] += tw[:span]
+
+    song_emb = acc_emb / np.maximum(acc_w[:, None], 1e-6)
+    frame_rms_db = _compute_song_frame_rms_db(audio, total_frames)
+
+    dec = predictor.decode_song_v5(song_emb, frame_rms_db)
+    crf_em = dec["crf_emissions"].copy()              # (T_crf, 145)
+    crf_trans = dec["crf_transitions"]                # (145, 145)
+    crf_start = dec["crf_start"]                      # (145,)
+    crf_end = dec["crf_end"]                          # (145,)
+    type_logits = dec["type_logits_by_root"]          # (T, 12, 41)
+    bass_logits = dec["bass_logits"]                  # (T, 13)
+    key_logits = dec["key_logits"]                    # (T, 24)
+    sustain_env = dec["sustain_env"]                  # (T, 12)
+
+    stride = predictor.crf_stride
+    n_crf = len(crf_em)
+    rms_crf = np.array(
+        [
+            float(frame_rms_db[i * stride: min(total_frames, (i + 1) * stride)].mean())
+            for i in range(n_crf)
+        ],
+        dtype=np.float32,
+    )
+    active_rms = frame_rms_db[frame_rms_db > -55.0]
+    p95_db = float(np.percentile(active_rms, 95)) if len(active_rms) > 8 else float(frame_rms_db.max())
+    dynamic_sil_floor = max(float(rms_threshold_db), p95_db - 36.0)
+
+    # Strong prior toward state 0 (`N`) on genuinely silent frames (e.g. -68.6 dBFS intro)
+    quiet_steps = rms_crf < dynamic_sil_floor
+    crf_em[quiet_steps, 0] += 6.0
+
+    decay_scale = _compute_decay_lock_scale(rms_crf)
+    crf_path_ds = viterbi_crf_numpy(
+        crf_em,
+        crf_trans,
+        start_transitions=crf_start,
+        end_transitions=crf_end,
+        decay_lock_scale=decay_scale,
+    )
+    crf_path = np.repeat(crf_path_ds, stride)[:total_frames]
+    if len(crf_path) < total_frames:
+        crf_path = np.pad(crf_path, (0, total_frames - len(crf_path)), mode="edge")
+
+    # Enforce hard silence gate on ultra-quiet frames (< rms_threshold_db)
+    crf_path[frame_rms_db < float(rms_threshold_db)] = 0
+
+    frame_ms = MERT_HOP_SAMPLES / float(sample_rate) * 1000.0
+    min_tension_frames = max(1, int(round(MIN_EXT_DURATION_MS / max(frame_ms, 1.0))))
+    hop_scale = 13.333 / max(frame_ms, 1.0)
+
+    # Softmax probabilities for confidence & sub-skeleton tension/bass decoding
+    crf_frame_prob = _softmax(
+        np.repeat(crf_em, stride, axis=0)[:total_frames], axis=-1
+    )
+    bass_prob_all = _softmax(bass_logits, axis=-1)
+    key_prob_all = _softmax(key_logits, axis=-1)
+    has_tension_type = TYPE_TENSION_REL_MASK.sum(axis=-1) > 0.5  # (41,)
+
+    root_ids = np.full(total_frames, -1, dtype=np.int64)
+    qual_ids = np.full(total_frames, -1, dtype=np.int64)
+    ext_ids = np.full(total_frames, -1, dtype=np.int64)
+    bass_ids = np.full(total_frames, 12, dtype=np.int64)
+    confs = np.zeros(total_frames, dtype=np.float32)
+    prefer_flats_frame = np.zeros(total_frames, dtype=bool)
+
+    span_s = 0
+    while span_s < total_frames:
+        st_cur = int(crf_path[span_s])
+        span_e = span_s + 1
+        while span_e < total_frames and crf_path[span_e] == st_cur:
+            span_e += 1
+
+        if st_cur <= 0:
+            span_s = span_e
+            continue
+
+        r_cur = (st_cur - 1) // N_SKELETONS
+        sk_cur = (st_cur - 1) % N_SKELETONS
+        seg_len = span_e - span_s
+
+        # Local key spelling for this harmonic span
+        mean_k = key_prob_all[span_s:span_e].mean(axis=0)
+        best_key_id = int(mean_k.argmax())
+        prefer_flats_frame[span_s:span_e] = best_key_id in FLAT_KEY_IDS
+
+        # Slash bass decoding inside locked `(Root, Skeleton)` span
+        bp_seg = bass_prob_all[span_s:span_e].copy()
+        bp_seg[:, 12] += bp_seg[:, r_cur]
+        bp_seg[:, r_cur] = 0.0
+        bp_sum = bp_seg.sum(axis=-1, keepdims=True)
+        bp_seg = np.where(bp_sum > 0, bp_seg / np.maximum(bp_sum, 1e-12), bp_seg)
+        log_bp = np.log(np.clip(bp_seg, 1e-7, 1.0))
+        log_bp[bp_seg[:, :12].max(axis=-1) < SLASH_BASS_THRESHOLD, 12] += 0.75
+        b_path = _viterbi_sticky_1d(log_bp, BASS_SWITCH_PENALTY * hop_scale)
+        bass_ids[span_s:span_e] = b_path
+
+        # Within-Skeleton Jazz Tension & Sustained Color Resolution (`F` + sustained `G` -> `Fadd9`)
+        allowed = SKEL_TYPE_MASK[sk_cur]  # (41,) bool
+        allowed_idx = np.nonzero(allowed)[0]
+        if len(allowed_idx) == 1:
+            chosen_types = np.full(seg_len, int(allowed_idx[0]), dtype=np.int64)
+            type_confs = np.ones(seg_len, dtype=np.float32)
+        else:
+            t_log = type_logits[span_s:span_e, r_cur, :].copy()  # (L, 41)
+            rel_s = sustain_env[span_s:span_e][:, REL_PITCH_INDEX[r_cur]]  # (L, 12)
+            tens_s = (rel_s @ TYPE_TENSION_REL_MASK.T) / np.maximum(TYPE_TENSION_REL_MASK.sum(axis=-1), 1.0)
+            # Suppress transient melody notes (<500ms) from falsely activating tension types
+            weak_t = (tens_s < 0.16) & has_tension_type[None, :]
+            t_log = np.where(weak_t, t_log - 0.60, t_log)
+            t_log[:, ~allowed] = -1e9
+            t_prob = _softmax(t_log, axis=-1)
+
+            if seg_len < 2 * min_tension_frames:
+                mean_tp = t_prob.mean(axis=0)
+                best_t = int(mean_tp.argmax())
+                # Gate ultra-rare alterations if weak
+                q_cand, e_cand = TYPE_TO_QE[best_t]
+                if int(e_cand) in ULTRA_RARE_EXT_IDS and float(mean_tp[best_t]) < RARE_EXT_THRESHOLD:
+                    best_t = int(SKEL_BASE_TYPE[sk_cur])
+                chosen_types = np.full(seg_len, best_t, dtype=np.int64)
+            else:
+                log_sub = np.log(np.clip(t_prob[:, allowed_idx], 1e-7, 1.0))
+                sub_path = _viterbi_sticky_1d(log_sub, EXT_SWITCH_PENALTY * 0.75 * hop_scale)
+                chosen_types = allowed_idx[sub_path]
+                # Absorb tension runs shorter than `min_tension_frames` (~500ms) into base/neighbor type
+                changed = True
+                while changed:
+                    changed = False
+                    runs: list[list[int]] = []
+                    p = 0
+                    while p < seg_len:
+                        qe_i = p + 1
+                        while qe_i < seg_len and chosen_types[qe_i] == chosen_types[p]:
+                            qe_i += 1
+                        runs.append([p, qe_i, int(chosen_types[p])])
+                        p = qe_i
+                    if len(runs) <= 1:
+                        break
+                    sh_i = min(range(len(runs)), key=lambda idx_r: runs[idx_r][1] - runs[idx_r][0])
+                    rs, re, _ = runs[sh_i]
+                    if (re - rs) < min_tension_frames:
+                        if sh_i == 0:
+                            rep_t = runs[1][2]
+                        elif sh_i == len(runs) - 1:
+                            rep_t = runs[-2][2]
+                        else:
+                            l_len = runs[sh_i - 1][1] - runs[sh_i - 1][0]
+                            r_len = runs[sh_i + 1][1] - runs[sh_i + 1][0]
+                            rep_t = runs[sh_i - 1][2] if l_len >= r_len else runs[sh_i + 1][2]
+                        chosen_types[rs:re] = rep_t
+                        changed = True
+
+            type_confs = t_prob[np.arange(seg_len), chosen_types]
+
+        skel_confs = crf_frame_prob[span_s:span_e, st_cur]
+        root_ids[span_s:span_e] = r_cur
+        qual_ids[span_s:span_e] = TYPE_TO_QE[chosen_types, 0]
+        ext_ids[span_s:span_e] = TYPE_TO_QE[chosen_types, 1]
+        confs[span_s:span_e] = np.clip(0.75 * skel_confs + 0.25 * type_confs, 0.0, 1.0)
+        span_s = span_e
+
+    frame_results: list[dict[str, Any]] = []
+    for g in range(total_frames):
+        r_g = int(root_ids[g])
+        silent = r_g < 0 or r_g >= 12
+        if silent:
+            r_c, q_c, e_c, b_c, c_val = -1, -1, -1, 12, 0.0
+        else:
+            r_c, q_c, e_c, b_c = canonicalize_chord_tuple(
+                r_g, int(qual_ids[g]), int(ext_ids[g]), int(bass_ids[g])
+            )
+            c_val = float(confs[g])
+            if c_val < confidence_threshold:
+                r_c, q_c, e_c, b_c = -1, -1, -1, 12
+                silent = True
+
+        s_ms = round(g * frame_ms, 1)
+        e_ms = duration_ms if g == total_frames - 1 else round((g + 1) * frame_ms, 1)
+        use_flats = bool(prefer_flats_frame[g]) if AUTO_KEY_SPELLING else False
+        frame_results.append({
+            "start_ms": s_ms,
+            "end_ms": e_ms,
+            "root_id": r_c,
+            "quality_id": q_c,
+            "ext_id": e_c,
+            "bass_id": b_c,
+            "chord": chord_name(r_c, q_c, e_c, b_c, prefer_flats=use_flats),
+            "confidence": round(c_val, 4),
+            "silent": silent,
+        })
+
+    merged = _prune_short_segments(frame_results, min_duration_ms=min_duration_ms)
+    if merged:
+        merged[0]["start_ms"] = 0.0
+        merged[-1]["end_ms"] = duration_ms
+    return merged
+
+
 def detect_prefer_flats(segments: list[dict[str, Any]]) -> bool:
     """Estimate song key via Krumhansl-Kessler profiles to choose flat (`Bb`) vs sharp (`A#`) spelling."""
     pc_hist = np.zeros(12, dtype=np.float64)
     for seg in segments:
         r = int(seg.get("root_id", -1))
         q = int(seg.get("quality_id", -1))
-        if r < 0 or seg.get("silent", False):
+        if r < 0 or r >= 12 or seg.get("silent", False):
             continue
         dur = max(0.0, float(seg["end_ms"]) - float(seg["start_ms"]))
         w = dur * max(float(seg.get("confidence", 0.5)), 0.1)
@@ -905,7 +1391,6 @@ def _prune_short_segments(
             i
             for i, seg in enumerate(cur)
             if (float(seg["end_ms"]) - float(seg["start_ms"])) < min_duration_ms
-            and not (seg.get("silent", False) and (float(seg["end_ms"]) - float(seg["start_ms"])) >= min_duration_ms)
         ]
         if not candidates:
             break
@@ -918,15 +1403,15 @@ def _prune_short_segments(
 
         target: dict[str, Any] | None = None
         if left is not None and right is not None:
-            left_active = not left.get("silent", False) and left["root_id"] >= 0
-            right_active = not right.get("silent", False) and right["root_id"] >= 0
+            left_active = not left.get("silent", False) and 0 <= left["root_id"] < 12
+            right_active = not right.get("silent", False) and 0 <= right["root_id"] < 12
             if left_active and not right_active:
                 target = left
             elif right_active and not left_active:
                 target = right
             else:
-                same_l = seg["root_id"] >= 0 and left["root_id"] == seg["root_id"]
-                same_r = seg["root_id"] >= 0 and right["root_id"] == seg["root_id"]
+                same_l = 0 <= seg["root_id"] < 12 and left["root_id"] == seg["root_id"]
+                same_r = 0 <= seg["root_id"] < 12 and right["root_id"] == seg["root_id"]
                 if same_l and not same_r:
                     target = left
                 elif same_r and not same_l:
@@ -969,6 +1454,18 @@ def _infer_frame_level(
     confidence_threshold: float = CONFIDENCE_THRESHOLD,
     min_duration_ms: float = MIN_DURATION_MS,
 ) -> list[dict[str, Any]]:
+    if getattr(predictor, "is_v5", False) is True:
+        return _infer_v5_full_song(
+            predictor,
+            audio,
+            sample_rate=sample_rate,
+            crop_s=crop_s,
+            step_s=step_s,
+            rms_threshold_db=rms_threshold_db,
+            confidence_threshold=confidence_threshold,
+            min_duration_ms=min_duration_ms,
+        )
+
     crop_samples = crop_s * sample_rate
     step_samples = max(MERT_HOP_SAMPLES, int(round(step_s * sample_rate / MERT_HOP_SAMPLES)) * MERT_HOP_SAMPLES)
     audio_len = len(audio)
@@ -1021,7 +1518,9 @@ def _infer_frame_level(
             acc_b[start_f:end_f] += bp[:span] * w_col
             acc_w[start_f:end_f] += tw[:span]
 
-        active_mask = acc_w > 0
+        # Frame-level silence gate so quiet intros inside loud 5s windows are silenced cleanly
+        frame_rms_db = _compute_song_frame_rms_db(audio, total_frames)
+        active_mask = (acc_w > 0) & (frame_rms_db >= rms_threshold_db)
         frame_ms = MERT_HOP_SAMPLES / float(sample_rate) * 1000.0
         onset_weights = _compute_onset_weights(audio, total_frames)
 
@@ -1157,6 +1656,16 @@ def _infer_frame_level(
     return merged
 
 
+def _filter_no_chord_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Omit silent / `N` segments from user-facing output while keeping exact start/end timestamps of real chords."""
+    return [
+        s for s in segments
+        if not s.get("silent", False)
+        and 0 <= int(s.get("root_id", -1)) < 12
+        and s.get("chord", "N") != "N"
+    ]
+
+
 def infer_audio(
     predictor: ONNXPredictor,
     audio: np.ndarray,
@@ -1166,9 +1675,10 @@ def infer_audio(
     rms_threshold_db: float = RMS_THRESHOLD_DB,
     confidence_threshold: float = CONFIDENCE_THRESHOLD,
     min_duration_ms: float = MIN_DURATION_MS,
+    include_silence: bool = False,
 ) -> list[dict[str, Any]]:
     if getattr(predictor, "is_frame_level", False):
-        return _infer_frame_level(
+        segments = _infer_frame_level(
             predictor,
             audio,
             sample_rate=sample_rate,
@@ -1178,6 +1688,7 @@ def infer_audio(
             confidence_threshold=confidence_threshold,
             min_duration_ms=min_duration_ms,
         )
+        return segments if include_silence else _filter_no_chord_segments(segments)
 
     crop_samples = crop_s * sample_rate
     step_samples = int(step_s * sample_rate)
@@ -1211,7 +1722,8 @@ def infer_audio(
             root_id, qual_id, ext_id, bass_id = -1, -1, -1, 12
         raw_preds.append({"pos": pos, "root_id": root_id, "quality_id": qual_id, "ext_id": ext_id, "bass_id": bass_id, "conf": conf, "silent": False})
 
-    return _vote_and_merge(raw_preds, audio_len, sample_rate, step_samples, crop_samples)
+    segments = _vote_and_merge(raw_preds, audio_len, sample_rate, step_samples, crop_samples)
+    return segments if include_silence else _filter_no_chord_segments(segments)
 
 
 def _vote_and_merge(
@@ -1359,15 +1871,16 @@ def create_app() -> "FastAPI":
     if not _FASTAPI_AVAILABLE:
         raise RuntimeError("fastapi not installed: pip install fastapi uvicorn")
 
-    app = FastAPI(title="ChordSense Pro — Chord Recognition API", version="1.1.0")
+    app = FastAPI(title="ChordSense Pro — Chord Recognition API", version="1.2.0")
 
     @app.get("/health")
     def health():
         return {
             "status": "ok",
             "model": MODEL_PATH,
+            "arch_version": 5 if (_predictor is not None and _predictor.is_v5) else 4,
             "demucs_model": DEMUCS_MODEL,
-            "demucs_default": USE_DEMUCS_DEFAULT,
+            "demucs_mode": DEMUCS_MODE_DEFAULT,
         }
 
     @app.post("/predict")
@@ -1377,6 +1890,8 @@ def create_app() -> "FastAPI":
         rms_threshold_db: float = Query(default=RMS_THRESHOLD_DB),
         confidence_threshold: float = Query(default=CONFIDENCE_THRESHOLD, ge=0.0, le=1.0),
         separate: bool = Query(default=USE_DEMUCS_DEFAULT, description="Strip vocals & drums via htdemucs_ft"),
+        demucs_mode: str = Query(default=DEMUCS_MODE_DEFAULT, description="'auto' (bypass solo piano/guitar) | 'always' | 'off'"),
+        include_silence: bool = Query(default=False, description="Include N (silent) segments in output"),
     ):
         if not (file.filename or "").lower().endswith((".wav", ".mp3", ".flac", ".ogg", ".m4a")):
             raise HTTPException(status_code=400, detail="Unsupported file format")
@@ -1384,9 +1899,14 @@ def create_app() -> "FastAPI":
         data = await file.read()
         t_start = time.perf_counter()
         try:
-            sep = get_separator() if separate else None
+            sep = get_separator() if (separate and demucs_mode.lower() != "off") else None
             audio = load_audio_bytes(
-                data, SAMPLE_RATE, file.filename or "", separate=separate, separator=sep
+                data,
+                SAMPLE_RATE,
+                file.filename or "",
+                separate=separate,
+                separator=sep,
+                demucs_mode=demucs_mode,
             )
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"Audio decode/separation failed: {exc}")
@@ -1399,13 +1919,14 @@ def create_app() -> "FastAPI":
             step_s=step_s,
             rms_threshold_db=rms_threshold_db,
             confidence_threshold=confidence_threshold,
+            include_silence=include_silence,
         )
         elapsed_ms = round((time.perf_counter() - t_start) * 1000, 1)
 
         return JSONResponse({
             "duration_ms": round(len(audio) / SAMPLE_RATE * 1000, 1),
-            "separated": separate,
-            "demucs_model": DEMUCS_MODEL if separate else None,
+            "separated": separate and demucs_mode.lower() != "off",
+            "demucs_mode": demucs_mode,
             "segments": len(segments),
             "elapsed_ms": elapsed_ms,
             "chords": segments,
@@ -1415,6 +1936,7 @@ def create_app() -> "FastAPI":
     async def predict_npy(
         file: UploadFile = File(...),
         step_s: float = Query(default=STEP_S, ge=0.1, le=5.0),
+        include_silence: bool = Query(default=False),
     ):
         data = await file.read()
         try:
@@ -1423,7 +1945,7 @@ def create_app() -> "FastAPI":
             raise HTTPException(status_code=422, detail=f"NPY decode failed: {exc}")
 
         predictor = get_predictor()
-        segments = infer_audio(predictor, audio, sample_rate=SAMPLE_RATE, step_s=step_s)
+        segments = infer_audio(predictor, audio, sample_rate=SAMPLE_RATE, step_s=step_s, include_silence=include_silence)
         return JSONResponse({"segments": len(segments), "chords": segments})
 
     return app

@@ -11,8 +11,20 @@ import torch.nn.functional as F
 from torch.amp import autocast
 
 from src.config import Config, load_config
+from src.evaluate import decode_v5_batch
 from src.model import MERT_HOP_SAMPLES, build_model, mert_output_length
-from src.serve import _smooth_jitter, _triangle_weights, chord_name, weighted_chord_conf
+from src.serve import (
+    _compute_song_frame_rms_db,
+    _filter_no_chord_segments,
+    _normalize,
+    _prune_short_segments,
+    _smooth_jitter,
+    _triangle_weights,
+    apply_key_spelling,
+    canonicalize_chord_tuple,
+    chord_name,
+    weighted_chord_conf,
+)
 from src.train import load_checkpoint
 
 log = logging.getLogger(__name__)
@@ -60,7 +72,7 @@ def sliding_window(
     return windows
 
 
-def rms_gate(crop: np.ndarray, threshold_db: float = -40.0) -> bool:
+def rms_gate(crop: np.ndarray, threshold_db: float = -45.0) -> bool:
     rms = np.sqrt(np.mean(crop.astype(np.float32) ** 2) + 1e-10)
     rms_db = 20 * np.log10(rms / 32768.0 + 1e-10)
     return rms_db >= threshold_db
@@ -73,14 +85,100 @@ def infer_song(
     cfg: Config,
     device: torch.device,
     step_s: float = 2.5,
-    rms_threshold_db: float = -40.0,
+    rms_threshold_db: float = -45.0,
     confidence_threshold: float = 0.30,
     combo_mask: torch.Tensor | None = None,
+    include_silence: bool = False,
 ) -> list[dict]:
     sr = cfg.sample_rate
-    crop_samples = cfg.crop_samples
     use_amp = device.type == "cuda"
+    is_v5 = getattr(cfg.model, "arch_version", 4) >= 5
 
+    if is_v5:
+        chunk_samples = cfg.chunk_samples
+        step_samples = max(MERT_HOP_SAMPLES, int(round(step_s * sr / MERT_HOP_SAMPLES)) * MERT_HOP_SAMPLES)
+        windows = sliding_window(audio, sr, chunk_samples, step_samples)
+        audio_len = len(audio)
+        duration_ms = round(audio_len / sr * 1000.0, 1)
+        total_frames = max(1, mert_output_length(max(audio_len, chunk_samples)))
+        if audio_len < chunk_samples:
+            total_frames = max(1, int(np.ceil(audio_len / MERT_HOP_SAMPLES)))
+
+        acc_emb = np.zeros((total_frames, cfg.model.context_dim), dtype=np.float32)
+        acc_w = np.zeros(total_frames, dtype=np.float32)
+
+        for pos, crop in windows:
+            wav = _normalize(crop)
+            wav_t = torch.from_numpy(wav).unsqueeze(0).to(device)
+            with autocast("cuda", enabled=use_amp):
+                emb = model.encode_chunks(wav_t)[0].float().cpu().numpy()
+            n_f = len(emb)
+            tw = _triangle_weights(n_f)
+            start_f = int(round(pos / float(MERT_HOP_SAMPLES)))
+            end_f = min(total_frames, start_f + n_f)
+            span = end_f - start_f
+            if span <= 0:
+                continue
+            acc_emb[start_f:end_f] += emb[:span] * tw[:span, None]
+            acc_w[start_f:end_f] += tw[:span]
+
+        song_emb = torch.from_numpy(acc_emb / np.maximum(acc_w[:, None], 1e-6)).unsqueeze(0).to(device)
+        frame_rms_np = _compute_song_frame_rms_db(audio, total_frames)
+        frame_rms_t = torch.from_numpy(frame_rms_np).unsqueeze(0).to(device)
+
+        with autocast("cuda", enabled=use_amp):
+            outs = model.decode_context(song_emb, frame_rms_db=frame_rms_t)
+
+        decoded = decode_v5_batch(outs, model.crf, crf_stride=cfg.model.crf_stride)
+        rp = decoded["root"][0].cpu().numpy()
+        qp = decoded["quality"][0].cpu().numpy()
+        ep = decoded["ext"][0].cpu().numpy()
+        bp = decoded["bass"][0].cpu().numpy()
+
+        frame_ms = MERT_HOP_SAMPLES / float(sr) * 1000.0
+        frames = []
+        for g in range(total_frames):
+            silent = bool(rp[g] >= 12 or rp[g] < 0 or frame_rms_np[g] < rms_threshold_db)
+            if silent:
+                r_id, q_id, e_id, b_id, conf = -1, -1, -1, 12, 0.0
+            else:
+                r_id, q_id, e_id, b_id = canonicalize_chord_tuple(
+                    int(rp[g]), int(qp[g]), int(ep[g]), int(bp[g])
+                )
+                conf = 0.85
+            s_ms = round(g * frame_ms, 1)
+            e_ms = duration_ms if g == total_frames - 1 else round((g + 1) * frame_ms, 1)
+            frames.append({
+                "start_ms": s_ms,
+                "end_ms": e_ms,
+                "root_id": r_id,
+                "quality_id": q_id,
+                "ext_id": e_id,
+                "bass_id": b_id,
+                "chord": chord_name(r_id, q_id, e_id, b_id),
+                "confidence": conf,
+                "silent": silent,
+            })
+
+        merged = apply_key_spelling(_prune_short_segments(frames, min_duration_ms=300.0))
+        if not include_silence:
+            merged = _filter_no_chord_segments(merged)
+        return [
+            {
+                "start_ms": m["start_ms"],
+                "end_ms": m["end_ms"],
+                "root": m["root_id"],
+                "quality": m["quality_id"],
+                "ext": m["ext_id"],
+                "bass": m["bass_id"],
+                "chord": m["chord"],
+                "confidence": m["confidence"],
+                "is_silence": m["silent"],
+            }
+            for m in merged
+        ]
+
+    crop_samples = cfg.crop_samples
     if cfg.model.frame_level:
         step_samples = max(MERT_HOP_SAMPLES, int(round(step_s * sr / MERT_HOP_SAMPLES)) * MERT_HOP_SAMPLES)
         windows = sliding_window(audio, sr, crop_samples, step_samples)
@@ -99,10 +197,7 @@ def infer_song(
         for pos, crop in windows:
             if not rms_gate(crop, rms_threshold_db):
                 continue
-            wav = crop.astype(np.float32) / 32768.0
-            std = wav.std()
-            if std > 1e-6:
-                wav = (wav - wav.mean()) / std
+            wav = _normalize(crop)
             wav_t = torch.from_numpy(wav).unsqueeze(0).to(device)
             with autocast("cuda", enabled=use_amp):
                 r, q, e, b = model(wav_t)
@@ -153,7 +248,7 @@ def infer_song(
                 conf = float(weighted_chord_conf(float(rp_g[r_id]), float(qp_g[q_id]), e_conf))
                 if conf < confidence_threshold:
                     r_id, q_id, e_id, b_id = -1, -1, -1, 12
-                silent = False
+                silent = r_id < 0
 
             s_ms = round(g * frame_ms, 1)
             e_ms = duration_ms if g == total_frames - 1 else round((g + 1) * frame_ms, 1)
@@ -171,7 +266,8 @@ def infer_song(
 
         min_frames = max(1, int(round(160.0 / frame_ms)))
         smoothed = _smooth_jitter(frames, max_jitter_frames=min_frames)
-        # Convert keys to legacy infer_song format + chord name
+        if not include_silence:
+            smoothed = _filter_no_chord_segments(smoothed)
         compact = [
             {
                 "start_ms": f["start_ms"],
@@ -207,11 +303,7 @@ def infer_song(
             })
             continue
 
-        wav = crop.astype(np.float32) / 32768.0
-        std = wav.std()
-        if std > 1e-6:
-            wav = (wav - wav.mean()) / std
-
+        wav = _normalize(crop)
         wav_t = torch.from_numpy(wav).unsqueeze(0).to(device)
 
         with autocast("cuda", enabled=use_amp):
@@ -259,10 +351,13 @@ def infer_song(
             "bass": bass_id,
             "chord": chord_name(root_id, qual_id, ext_id, bass_id),
             "confidence": round(avg_conf, 4),
-            "is_silence": False,
+            "is_silence": root_id < 0,
         })
 
-    return merge_consecutive(results)
+    merged = merge_consecutive(results)
+    if not include_silence:
+        merged = [m for m in merged if not m.get("is_silence", False) and m.get("chord", "N") != "N"]
+    return merged
 
 
 def merge_consecutive(results: list[dict]) -> list[dict]:
@@ -287,18 +382,19 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/v4_5s_p2.yaml")
+    parser.add_argument("--config", default="configs/v5_fullsong_p3.yaml")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--audio", required=True, help="path to .npy int16 mono audio")
     parser.add_argument("--step_s", type=float, default=2.5)
     parser.add_argument("--classes_json", default=None)
     parser.add_argument("--output", default=None)
+    parser.add_argument("--show-silence", action="store_true", help="Include N (silent) segments in output")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    model = build_model(cfg.model)
+    model = build_model(cfg.model, sample_rate=cfg.sample_rate)
     ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     state = ckpt.get("model_state_dict", ckpt)
     if any("lora_A" in k for k in state.keys()):
@@ -313,7 +409,15 @@ def main():
     audio = np.load(args.audio)
     log.info(f"Audio length: {len(audio)/cfg.sample_rate:.1f}s")
 
-    results = infer_song(model, audio, cfg, device, step_s=args.step_s, combo_mask=combo_mask)
+    results = infer_song(
+        model,
+        audio,
+        cfg,
+        device,
+        step_s=args.step_s,
+        combo_mask=combo_mask,
+        include_silence=args.show_silence,
+    )
 
     if args.output:
         out_path = Path(args.output)
