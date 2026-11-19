@@ -83,11 +83,16 @@ class RoPEMultiHeadAttention(nn.Module):
         q = _apply_rope(q, cos, sin)
         k = _apply_rope(k, cos, sin)
 
-        scores = torch.matmul(q.float(), k.float().transpose(-2, -1)) * self.scale
-        attn = F.softmax(scores, dim=-1).to(v.dtype)
-        attn = self.attn_drop(attn)
+        if not torch.onnx.is_in_onnx_export():
+            drop_p = self.attn_drop.p if self.training else 0.0
+            out = F.scaled_dot_product_attention(q, k, v, dropout_p=drop_p)
+        else:
+            scores = torch.matmul(q.float(), k.float().transpose(-2, -1)) * self.scale
+            attn = F.softmax(scores, dim=-1).to(v.dtype)
+            attn = self.attn_drop(attn)
+            out = torch.matmul(attn, v)
 
-        out = torch.matmul(attn, v).transpose(1, 2).reshape(bsz, seq_len, self.dim)
+        out = out.transpose(1, 2).reshape(bsz, seq_len, self.dim)
         return self.out_proj(out)
 
 

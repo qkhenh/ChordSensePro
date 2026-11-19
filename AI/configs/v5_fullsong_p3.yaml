@@ -30,8 +30,8 @@ model:
 train:
   phase: 3
   epochs: 15
-  batch_size: 16
-  grad_accum_steps: 1
+  batch_size: 4
+  grad_accum_steps: 4
   lr_head: 5.0e-5
   lr_lora: 1.0e-5
   weight_decay: 0.01
