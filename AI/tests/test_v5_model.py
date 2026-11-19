@@ -20,7 +20,7 @@ from src.dataset import CachedSequenceDataset, ChordDataset, normalize_chunks_cl
 from src.evaluate import compute_metrics, decode_v5_batch
 from src.export_onnx import companion_decoder_path, companion_meta_path, export_onnx
 from src.losses import ChordLossV5
-from src.model import ChordModelV5, mert_output_length
+from src.model import BassPedalHoldLayer, ChordModelV5, HarmonicCQTFilterbank, mert_output_length
 from src.music_theory import (
     N_CRF_STATES,
     N_SKELETONS,
@@ -345,15 +345,27 @@ def test_v5_onnx_export_and_serve_hides_no_chord_output(tmp_path):
 
                 @torch.no_grad()
                 def encode_chunk_v5(self, wav_f32: np.ndarray) -> np.ndarray:
-                    return enc_w(torch.from_numpy(wav_f32).unsqueeze(0))[0].numpy()
+                    res = enc_w(torch.from_numpy(wav_f32).unsqueeze(0))
+                    return (res[0] if isinstance(res, tuple) else res)[0].numpy()
 
                 @torch.no_grad()
-                def decode_song_v5(self, song_emb: np.ndarray, frame_rms_db: np.ndarray) -> dict:
+                def encode_chunk_v5_full(self, wav_f32: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
+                    res = enc_w(torch.from_numpy(wav_f32).unsqueeze(0))
+                    if isinstance(res, tuple):
+                        return res[0][0].numpy(), res[1][0].numpy()
+                    return res[0].numpy(), None
+
+                @torch.no_grad()
+                def decode_song_v5(
+                    self, song_emb: np.ndarray, frame_rms_db: np.ndarray, song_cqt: np.ndarray | None = None
+                ) -> dict:
+                    cqt_t = torch.from_numpy(song_cqt).unsqueeze(0) if song_cqt is not None else None
                     outs = dec_w(
                         torch.from_numpy(song_emb).unsqueeze(0),
                         torch.from_numpy(frame_rms_db).unsqueeze(0),
+                        cqt_t,
                     )
-                    return {
+                    out_d = {
                         "crf_emissions": outs[0][0].numpy(),
                         "crf_transitions": outs[1].numpy(),
                         "crf_start": outs[2].numpy(),
@@ -363,6 +375,9 @@ def test_v5_onnx_export_and_serve_hides_no_chord_output(tmp_path):
                         "key_logits": outs[6][0].numpy(),
                         "sustain_env": outs[7][0].numpy(),
                     }
+                    if len(outs) >= 9:
+                        out_d["true_bass_logits"] = outs[8][0].numpy()
+                    return out_d
 
             pred = _LocalV5PredictorStub()
 
@@ -517,4 +532,72 @@ def test_v5_full_train_p1_p3_and_evaluate_split_smoke(tmp_path):
         metrics = evaluate_split(str(eval_yaml), str(p3_best), split="test")
         assert "root_acc" in metrics
         assert "skeleton_acc" in metrics
+        assert "true_bass_acc" in metrics
         assert metrics["n_songs"] == 2
+
+
+def test_v5_1_bass_first_cqt_pedal_hold_dropout_and_warm_start(tmp_path):
+    """Verify v5.1 root-cause Bass-First components:
+    1. 5-Octave `HarmonicCQTFilterbank` separates Octave-3 `E3` bass from Octave-4/5 `C4/C5` melody
+    2. `BassPedalHoldLayer` sustains Beat-1 left-hand bass attacks across decaying bars
+    3. `BassRegisterDropout` attenuates `<100Hz` sub-bass (`>20 dB`) while preserving `E3 (165Hz)`
+    4. `load_warm_compatible_weights` merges prior v5.0 LoRA checkpoints cleanly into v5.1
+    """
+    from src.augment import _highpass_subbass_dropout
+    from src.train import load_warm_compatible_weights
+
+    sr = 24000
+    t = np.arange(sr * 5, dtype=np.float32) / sr
+    # Synthesize E3 (164.81 Hz) in bass + C4 (261.63 Hz) & C5 (523.25 Hz) in upper register
+    sig = 0.45 * np.sin(2 * np.pi * 164.81 * t) + 0.50 * np.sin(2 * np.pi * 261.63 * t) + 0.45 * np.sin(2 * np.pi * 523.25 * t)
+    cqt_bank = HarmonicCQTFilterbank(sample_rate=sr)
+    cqt = cqt_bank(torch.from_numpy(sig).unsqueeze(0))
+    assert cqt.shape == (1, 374, 60)
+    cqt_oct = cqt[0].mean(dim=0).reshape(5, 12)  # Octaves 1..5 x 12 pitch classes
+    # Octave 3 (index 2): E (4) is strong, C (0) is near zero!
+    assert float(cqt_oct[2, 4]) > 0.50
+    assert float(cqt_oct[2, 0]) < 0.08
+    # Octave 4 & 5 (indices 3, 4): C (0) is strong!
+    assert float(cqt_oct[3, 0]) > 0.50
+    assert float(cqt_oct[4, 0]) > 0.50
+
+    # BassPedalHoldLayer sustains a Beat-1 E bass strike (frames 10..35) well into frames 60..90
+    hold_layer = BassPedalHoldLayer()
+    logits = torch.full((1, 150, 12), -6.0)
+    logits[0, 10:35, 4] = 5.0  # Beat-1 E strike
+    held = hold_layer(logits)
+    assert float(held[0, 12, 4]) > 0.40   # Immediate onset response (0ms lag)
+    assert float(held[0, 75, 4]) > 0.22   # Held across Beat 2-3 after strike ended
+    assert float(held[0, 75, 0]) < 0.02   # Non-struck notes stay near zero
+
+    # BassRegisterDropout attenuates C2 (65.4 Hz) > 20 dB while preserving E3 (164.8 Hz)
+    c2_wave = np.sin(2 * np.pi * 65.41 * t).astype(np.float32)
+    e3_wave = np.sin(2 * np.pi * 164.81 * t).astype(np.float32)
+    c2_hp = _highpass_subbass_dropout(c2_wave, sr, cutoff_hz=155.0)
+    e3_hp = _highpass_subbass_dropout(e3_wave, sr, cutoff_hz=155.0)
+    assert float(np.sqrt(np.mean(c2_hp ** 2))) < 0.10 * float(np.sqrt(np.mean(c2_wave ** 2)))
+    assert float(np.sqrt(np.mean(e3_hp ** 2))) > 0.65 * float(np.sqrt(np.mean(e3_wave ** 2)))
+
+    # Warm-start from a legacy v5.0 checkpoint (`bass_first=False`) into v5.1 (`bass_first=True`)
+    cfg_old = ModelCfg(
+        name="fake", arch_version=5, bass_first=False, n_layers=25, hidden_dim=64, context_dim=64,
+        conformer_layers=1, conformer_heads=4, conformer_conv_kernel=5,
+        head_hidden=64, type_head_hidden=64, bass_head_hidden=64, chunk_s=5, frame_level=True,
+    )
+    cfg_new = ModelCfg(
+        name="fake", arch_version=5, bass_first=True, n_layers=25, hidden_dim=64, context_dim=64,
+        conformer_layers=1, conformer_heads=4, conformer_conv_kernel=5,
+        head_hidden=64, type_head_hidden=64, bass_head_hidden=64, chunk_s=5, frame_level=True,
+    )
+    with patch("src.model.AutoModel") as mock_auto:
+        mock_auto.from_pretrained.side_effect = lambda *a, **kw: _FakeMERT(25, 64)
+        m_old = ChordModelV5(cfg_old, sample_rate=sr)
+        with torch.no_grad():
+            m_old.layer_weights.fill_(1.25)
+        old_ckpt = tmp_path / "old_v5.pt"
+        torch.save({"model_state_dict": m_old.state_dict()}, old_ckpt)
+
+        m_new = ChordModelV5(cfg_new, sample_rate=sr)
+        n_loaded = load_warm_compatible_weights(old_ckpt, m_new)
+        assert n_loaded > 5
+        assert torch.allclose(m_new.layer_weights, torch.full_like(m_new.layer_weights, 1.25))

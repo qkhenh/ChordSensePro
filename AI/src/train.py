@@ -54,9 +54,23 @@ def ensure_phase3_embedding_cache(
     device: torch.device,
     use_amp: bool,
 ) -> None:
-    """Extract and cache `(T_song, 256)` float16 MERT+LoRA embeddings + `frame_rms_db` per song."""
+    """Extract and cache `(T_song, 256)` float16 MERT+LoRA embeddings (+ `(T_song, 60)` CQT) + `frame_rms_db` per song."""
     cache_split_dir.mkdir(parents=True, exist_ok=True)
-    missing = [sid for sid in ds._valid_songs if not (cache_split_dir / f"{sid}.npz").exists()]
+    need_cqt = bool(getattr(model, "bass_first", False))
+
+    def _cache_valid(sid_chk: str) -> bool:
+        p = cache_split_dir / f"{sid_chk}.npz"
+        if not p.exists():
+            return False
+        if not need_cqt:
+            return True
+        try:
+            with np.load(p) as zf:
+                return "cqt" in zf
+        except Exception:
+            return False
+
+    missing = [sid for sid in ds._valid_songs if not _cache_valid(sid)]
     if not missing:
         log.info(f"[Phase 3 Cache] '{ds.split}' already cached ({len(ds._valid_songs)} songs) at {cache_split_dir}")
         return
@@ -81,18 +95,24 @@ def ensure_phase3_embedding_cache(
         chunks_2d = norm_wav.reshape(n_chunks, chunk_samples)
 
         emb_parts: list[np.ndarray] = []
+        cqt_parts: list[np.ndarray] = []
         for c0 in range(0, n_chunks, batch_chunks):
             c_slice = torch.from_numpy(chunks_2d[c0: c0 + batch_chunks]).to(device)
             with autocast("cuda", enabled=use_amp):
                 emb_b = model.encode_chunks(c_slice)  # (B_c, 374, 256)
+                cqt_b = model.encode_cqt(c_slice) if need_cqt else None
             emb_parts.append(emb_b.reshape(-1, emb_b.shape[-1]).half().cpu().numpy())
+            if cqt_b is not None:
+                cqt_parts.append(cqt_b.reshape(-1, cqt_b.shape[-1]).half().cpu().numpy())
 
         full_emb = np.concatenate(emb_parts, axis=0)
-        np.savez(
-            cache_split_dir / f"{sid}.npz",
-            emb=full_emb,
-            rms_db=rms_db[:len(full_emb)].astype(np.float16),
-        )
+        save_kw: dict[str, np.ndarray] = {
+            "emb": full_emb,
+            "rms_db": rms_db[:len(full_emb)].astype(np.float16),
+        }
+        if cqt_parts:
+            save_kw["cqt"] = np.concatenate(cqt_parts, axis=0)[:len(full_emb)]
+        np.savez(cache_split_dir / f"{sid}.npz", **save_kw)
         if idx_s % 250 == 0 or idx_s == len(missing):
             log.info(f"  [{ds.split}] cached {idx_s}/{len(missing)} songs")
 
@@ -135,7 +155,11 @@ def train_one_epoch(
             }
             with autocast("cuda", enabled=use_amp):
                 if "emb" in gpu_batch:
-                    outputs = model.decode_context(gpu_batch["emb"], frame_rms_db=gpu_batch["frame_rms_db"])
+                    outputs = model.decode_context(
+                        gpu_batch["emb"],
+                        frame_rms_db=gpu_batch["frame_rms_db"],
+                        cqt=gpu_batch.get("cqt"),
+                    )
                 else:
                     outputs = model(gpu_batch["wav"], frame_rms_db=gpu_batch["frame_rms_db"])
                 loss, details = criterion(outputs, gpu_batch, model.crf)
@@ -197,6 +221,7 @@ def validate(
         all_bp, all_bt = [], []
         all_sp, all_st = [], []
         all_kp, all_kt = [], []
+        all_tbp, all_tbt = [], []
         total_loss = 0.0
         n_batches = 0
 
@@ -207,7 +232,11 @@ def validate(
             }
             with autocast("cuda", enabled=use_amp):
                 if "emb" in gpu_batch:
-                    outputs = model.decode_context(gpu_batch["emb"], frame_rms_db=gpu_batch["frame_rms_db"])
+                    outputs = model.decode_context(
+                        gpu_batch["emb"],
+                        frame_rms_db=gpu_batch["frame_rms_db"],
+                        cqt=gpu_batch.get("cqt"),
+                    )
                 else:
                     outputs = model(gpu_batch["wav"], frame_rms_db=gpu_batch["frame_rms_db"])
                 loss, _ = criterion(outputs, gpu_batch, model.crf)
@@ -229,6 +258,9 @@ def validate(
             all_st.append(gpu_batch["skel_id"][:, :T].cpu())
             all_kp.append(preds["key"][:, :T].cpu())
             all_kt.append(gpu_batch["local_key"][:, :T].cpu())
+            if "true_bass" in gpu_batch:
+                all_tbp.append(preds["true_bass"][:, :T].cpu())
+                all_tbt.append(gpu_batch["true_bass"][:, :T].cpu())
 
         metrics = compute_metrics(
             torch.cat(all_rp).reshape(-1).numpy(),
@@ -243,6 +275,8 @@ def validate(
             skel_true=torch.cat(all_st).reshape(-1).numpy(),
             key_pred=torch.cat(all_kp).reshape(-1).numpy(),
             key_true=torch.cat(all_kt).reshape(-1).numpy(),
+            true_bass_pred=torch.cat(all_tbp).reshape(-1).numpy() if all_tbp else None,
+            true_bass_true=torch.cat(all_tbt).reshape(-1).numpy() if all_tbt else None,
         )
         metrics["val_loss"] = total_loss / max(n_batches, 1)
         return metrics
@@ -339,11 +373,50 @@ def append_results(csv_path: str, row: dict) -> None:
         writer.writerow(row)
 
 
+def load_warm_compatible_weights(path: Path, model: torch.nn.Module, lora_cfg=None) -> int:
+    """Warm-start matching layers (including merging prior LoRA MERT weights if present) across architecture upgrades."""
+    ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    src_state = ckpt.get("model_state_dict", ckpt)
+    has_src_lora = any("lora_A" in k for k in src_state.keys())
+    if has_src_lora and hasattr(model, "apply_lora") and hasattr(model, "merge_lora") and lora_cfg is not None:
+        from src.config import LoRACfg
+        # Infer r from checkpoint lora_A shape so any prior LoRA checkpoint merges cleanly
+        sample_a = next(v for k, v in src_state.items() if "lora_A" in k)
+        r_src = int(sample_a.shape[0])
+        tmp_lora = LoRACfg(
+            enabled=True,
+            r=r_src,
+            alpha=r_src * 2,
+            dropout=0.0,
+            target_modules=list(lora_cfg.target_modules) if lora_cfg.target_modules else ["q_proj", "v_proj", "k_proj", "out_proj"],
+        )
+        model.apply_lora(tmp_lora)
+        cur_sd = model.state_dict()
+        mert_match = {k: v for k, v in src_state.items() if k.startswith("mert.") and k in cur_sd and cur_sd[k].shape == v.shape}
+        model.load_state_dict(mert_match, strict=False)
+        model.merge_lora()
+
+    cur_sd = model.state_dict()
+    compatible = {
+        k: v for k, v in src_state.items()
+        if not k.startswith("mert.") and k in cur_sd and cur_sd[k].shape == v.shape
+    }
+    if not has_src_lora:
+        mert_plain = {
+            k: v for k, v in src_state.items()
+            if k.startswith("mert.") and k in cur_sd and cur_sd[k].shape == v.shape
+        }
+        compatible.update(mert_plain)
+    model.load_state_dict(compatible, strict=False)
+    return len(compatible)
+
+
 def run(
     cfg: Config,
     resume_path: str | None = None,
     phase1_ckpt: str | None = None,
     phase2_ckpt: str | None = None,
+    warm_ckpt: str | None = None,
 ) -> None:
     set_seed(cfg.train.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -356,6 +429,10 @@ def run(
     base_val_ds = ChordDataset(cfg, split="val")
 
     model = build_model(cfg.model, sample_rate=cfg.sample_rate)
+
+    if warm_ckpt and Path(warm_ckpt).exists():
+        n_warm = load_warm_compatible_weights(Path(warm_ckpt), model, lora_cfg=cfg.lora)
+        log.info(f"Warm-started {n_warm} compatible tensors (+ merged MERT acoustic weights) from {warm_ckpt}")
 
     if phase1_ckpt:
         load_checkpoint(Path(phase1_ckpt), model, strict=False)
@@ -477,12 +554,13 @@ def run(
         cur_lr = optimizer.param_groups[0]["lr"]
 
         skel_str = f" | skel={val_metrics['skeleton_acc']:.3f}" if "skeleton_acc" in val_metrics else ""
+        tbass_str = f" | tbass={val_metrics['true_bass_acc']:.3f}" if "true_bass_acc" in val_metrics else ""
         key_str = f" | key={val_metrics['key_rel_acc']:.3f}" if "key_rel_acc" in val_metrics else ""
         log.info(
             f"Epoch {epoch+1}/{cfg.train.epochs} ({elapsed:.0f}s, lr={cur_lr:.2e}) | "
             f"train_loss={train_metrics['train_loss']:.4f} | "
             f"val_loss={val_loss:.4f} | "
-            f"root={val_metrics.get('root_acc', 0):.3f}{skel_str}{key_str} | "
+            f"root={val_metrics.get('root_acc', 0):.3f}{tbass_str}{skel_str}{key_str} | "
             f"qual={val_metrics.get('quality_acc', 0):.3f} | "
             f"ext={val_metrics.get('ext_acc', 0):.3f} | "
             f"slash_f1={val_metrics.get('bass_slash_f1', 0):.3f} | "
@@ -516,7 +594,8 @@ if __name__ == "__main__":
     parser.add_argument("--resume", default=None, help="Resume checkpoint")
     parser.add_argument("--phase1_ckpt", default=None, help="Phase 1 best.pt to init Phase 2")
     parser.add_argument("--phase2_ckpt", default=None, help="Phase 2 best.pt to init Phase 3 full-song polish")
+    parser.add_argument("--warm_ckpt", default=None, help="Optional prior checkpoint to warm-start MERT & matching layers")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
-    run(cfg, resume_path=args.resume, phase1_ckpt=args.phase1_ckpt, phase2_ckpt=args.phase2_ckpt)
+    run(cfg, resume_path=args.resume, phase1_ckpt=args.phase1_ckpt, phase2_ckpt=args.phase2_ckpt, warm_ckpt=args.warm_ckpt)

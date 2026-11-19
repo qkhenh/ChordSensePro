@@ -34,6 +34,21 @@ def _synth_piano_like_note(freq_hz: float, n_samples: int, sr: int) -> np.ndarra
     return (wave * env).astype(np.float32)
 
 
+def _highpass_subbass_dropout(audio: np.ndarray, sr: int, cutoff_hz: float) -> np.ndarray:
+    """Zero-phase 3rd-order Butterworth high-pass attenuation removing electric sub-bass (`<140Hz`)
+    while preserving Octave-3 (`130-250Hz`) piano/guitar left-hand fundamentals and all harmonics.
+    """
+    n = len(audio)
+    if n < 64:
+        return audio
+    freqs = np.fft.rfftfreq(n, d=1.0 / float(sr))
+    safe_f = np.maximum(freqs, 1.0)
+    h_mag = (1.0 / np.sqrt(1.0 + (float(cutoff_hz) / safe_f) ** 6)).astype(np.float32)
+    h_mag[0] = 0.0
+    spec = np.fft.rfft(audio)
+    return np.fft.irfft(spec * h_mag, n=n).astype(np.float32)
+
+
 class Augmenter:
 
     def __init__(self, cfg: AugmentCfg):
@@ -74,11 +89,14 @@ class Augmenter:
         key_arr: np.ndarray,
         shell_chroma: np.ndarray,
         full_chroma: np.ndarray,
+        true_bass_arr: np.ndarray | None = None,
     ) -> np.ndarray:
         """Apply v5 musical augmentations in-place on label arrays and return modified `audio` (`float32`).
 
-        1. `silence_intro_prob`: Inject realistic silent intro/outro (`-65..-52 dBFS`) labelled `root = 12 (N)`.
-        2. `melody_overlay_prob`:
+        1. `bass_dropout_prob`: Attenuate Octave 1-2 electric sub-bass (`<135-195Hz`, full-crop or intro-half)
+           with unchanged chord/bass labels so the model masters bassless piano/guitar intros.
+        2. `silence_intro_prob`: Inject realistic silent intro/outro (`-65..-52 dBFS`) labelled `root = 12 (N)`.
+        3. `melody_overlay_prob`:
            - Fast Passing Melody (`80%`): `130-280ms` upper-register melodic notes over unchanged chord labels.
            - Sustained Tension (`20%`): `>=850ms` sustained 9th over bare `maj`/`min` triad -> upgrades label to `add9`/`madd9`.
         """
@@ -88,7 +106,27 @@ class Augmenter:
         out = audio.copy()
         total_samples = len(out)
 
-        # 1. Synthetic silent intro or outro to sharpen `N` (no-sound) onset/offset detection
+        # 1. Sub-Bass Register Dropout (simulates Solo Piano/Guitar or Bassless Intro -> Full-Band transition)
+        bass_drop_prob = float(getattr(self.cfg, "bass_dropout_prob", 0.0))
+        if bass_drop_prob > 0.0 and total_samples >= sr * 2 and np.random.random() < bass_drop_prob:
+            cutoff_hz = float(np.random.uniform(135.0, 195.0))
+            if np.random.random() < 0.5 or total_samples < sr * 8:
+                out = _highpass_subbass_dropout(out, sr, cutoff_hz)
+            else:
+                split_samp = int(total_samples * np.random.uniform(0.30, 0.60))
+                xfade = min(int(0.08 * sr), split_samp // 4, (total_samples - split_samp) // 4)
+                hp_seg = _highpass_subbass_dropout(out[: split_samp + xfade], sr, cutoff_hz)
+                if xfade > 1:
+                    w = 0.5 - 0.5 * np.cos(np.pi * np.linspace(0.0, 1.0, xfade, dtype=np.float32))
+                    out[:split_samp] = hp_seg[:split_samp]
+                    out[split_samp: split_samp + xfade] = (
+                        hp_seg[split_samp: split_samp + xfade] * (1.0 - w)
+                        + out[split_samp: split_samp + xfade] * w
+                    )
+                else:
+                    out[:split_samp] = hp_seg[:split_samp]
+
+        # 2. Synthetic silent intro or outro to sharpen `N` (no-sound) onset/offset detection
         sil_prob = float(getattr(self.cfg, "silence_intro_prob", 0.0))
         if sil_prob > 0.0 and total_samples >= sr * 4 and np.random.random() < sil_prob:
             sil_sec = float(np.random.uniform(0.6, min(2.2, total_samples / sr * 0.25)))
@@ -119,6 +157,8 @@ class Augmenter:
                 type_arr[f_mask] = -100
                 crf_arr[f_mask] = 0
                 bass_arr[f_mask] = -100
+                if true_bass_arr is not None:
+                    true_bass_arr[f_mask] = ROOT_SILENCE_ID
                 shell_chroma[f_mask] = 0.0
                 full_chroma[f_mask] = 0.0
 

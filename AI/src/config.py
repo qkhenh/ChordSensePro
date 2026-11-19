@@ -31,6 +31,8 @@ class ModelCfg:
     crf_stride: int = 4
     chunk_s: int = 5
     silence_db_threshold: float = -45.0
+    bass_first: bool = True
+    cqt_bins: int = 60
     dropout: float = 0.3
     detach_logits: bool = True
     pooling: str = "mean"
@@ -80,6 +82,7 @@ class AugmentCfg:
     melody_overlay_prob: float = 0.0
     sustained_tension_prob: float = 0.2
     silence_intro_prob: float = 0.0
+    bass_dropout_prob: float = 0.0
 
 
 @dataclass

@@ -225,6 +225,7 @@ class ChordLossV5(nn.Module):
         self.crf_stride = max(1, int(crf_stride))
 
         self.ce_root = nn.CrossEntropyLoss(ignore_index=-100)
+        self.ce_true_bass = nn.CrossEntropyLoss(ignore_index=-100)
         eff_bass_w = bass_class_weight if bass_class_weight is not None else default_bass_class_weight()
         self.focal_bass = FocalLoss(gamma=focal_gamma, weight=eff_bass_w, ignore_index=-100)
         self.bce_chroma = nn.BCEWithLogitsLoss(reduction="none")
@@ -280,6 +281,10 @@ class ChordLossV5(nn.Module):
         type_t = batch["type_id"][:, :T]
         crf_state_t = batch["crf_state"][:, :T]
         bass_t = batch["bass"][:, :T]
+        if "true_bass" in batch:
+            true_bass_t = batch["true_bass"][:, :T]
+        else:
+            true_bass_t = torch.where((bass_t >= 0) & (bass_t < 12), bass_t, root_t)
         key_t = batch["local_key"][:, :T]
         shell_c_t = batch["shell_chroma"][:, :T]
         full_c_t = batch["full_chroma"][:, :T]
@@ -311,17 +316,41 @@ class ChordLossV5(nn.Module):
         else:
             l_type = type_logits_by_root.sum() * 0.0
 
-        # 4. Slash Bass Focal Loss (only on active chord frames where bass != -100)
-        l_bass = self.focal_bass(bass_logits[:, :T].reshape(B * T, -1), bass_t.reshape(B * T))
-        if torch.isnan(l_bass):
-            l_bass = bass_logits.sum() * 0.0
+        # 4. Physical TrueBass CE (100% of chords + N) + Slash Bass Focal Loss
+        l_slash_bass = self.focal_bass(bass_logits[:, :T].reshape(B * T, -1), bass_t.reshape(B * T))
+        if torch.isnan(l_slash_bass):
+            l_slash_bass = bass_logits.sum() * 0.0
 
-        # 5. Dual-Register Chroma BCE Loss (active chord frames + explicit zero target on silence `root==12`)
+        if "true_bass_logits" in outputs:
+            tb_logits = outputs["true_bass_logits"][:, :T]
+            l_true_bass = self.ce_true_bass(tb_logits.float().reshape(B * T, -1), true_bass_t.reshape(B * T))
+            if torch.isnan(l_true_bass):
+                l_true_bass = tb_logits.sum() * 0.0
+            l_bass = 0.65 * l_true_bass + 0.35 * l_slash_bass
+        else:
+            l_true_bass = l_slash_bass
+            l_bass = l_slash_bass
+
+        # 5. Dual-Register Chroma + CQT Physical Bass BCE Loss (active chord frames + explicit zero target on `N`)
         valid_chroma = root_t >= 0  # includes both chords (0..11) and silence (12 -> all zeros)
         if valid_chroma.any():
             bce_low = self.bce_chroma(low_chroma_logits[:, :T].float()[valid_chroma], shell_c_t.float()[valid_chroma]).mean()
             bce_full = self.bce_chroma(full_chroma_logits[:, :T].float()[valid_chroma], full_c_t.float()[valid_chroma]).mean()
-            l_chroma = 0.5 * bce_low + 0.5 * bce_full
+            if "phys_bass_logits" in outputs:
+                pb_logits = outputs["phys_bass_logits"][:, :T].float()
+                pb_tgt = torch.zeros_like(pb_logits)
+                active_tb = (true_bass_t >= 0) & (true_bass_t < 12)
+                if active_tb.any():
+                    pb_tgt[active_tb] = F.one_hot(true_bass_t[active_tb], num_classes=12).float()
+                valid_tb = true_bass_t >= 0
+                if valid_tb.any():
+                    pos_w = torch.tensor(5.0, device=pb_logits.device, dtype=pb_logits.dtype)
+                    bce_pb = F.binary_cross_entropy_with_logits(pb_logits[valid_tb], pb_tgt[valid_tb], pos_weight=pos_w)
+                    l_chroma = 0.40 * bce_pb + 0.30 * bce_low + 0.30 * bce_full
+                else:
+                    l_chroma = 0.5 * bce_low + 0.5 * bce_full
+            else:
+                l_chroma = 0.5 * bce_low + 0.5 * bce_full
         else:
             l_chroma = low_chroma_logits.sum() * 0.0
 

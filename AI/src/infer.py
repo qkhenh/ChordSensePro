@@ -105,6 +105,7 @@ def infer_song(
             total_frames = max(1, int(np.ceil(audio_len / MERT_HOP_SAMPLES)))
 
         acc_emb = np.zeros((total_frames, cfg.model.context_dim), dtype=np.float32)
+        acc_cqt: np.ndarray | None = None
         acc_w = np.zeros(total_frames, dtype=np.float32)
 
         for pos, crop in windows:
@@ -112,6 +113,8 @@ def infer_song(
             wav_t = torch.from_numpy(wav).unsqueeze(0).to(device)
             with autocast("cuda", enabled=use_amp):
                 emb = model.encode_chunks(wav_t)[0].float().cpu().numpy()
+                cqt_t = model.encode_cqt(wav_t) if hasattr(model, "encode_cqt") else None
+                cqt_np = cqt_t[0].float().cpu().numpy() if cqt_t is not None else None
             n_f = len(emb)
             tw = _triangle_weights(n_f)
             start_f = int(round(pos / float(MERT_HOP_SAMPLES)))
@@ -120,14 +123,23 @@ def infer_song(
             if span <= 0:
                 continue
             acc_emb[start_f:end_f] += emb[:span] * tw[:span, None]
+            if cqt_np is not None:
+                if acc_cqt is None:
+                    acc_cqt = np.zeros((total_frames, cqt_np.shape[-1]), dtype=np.float32)
+                acc_cqt[start_f:end_f] += cqt_np[:span] * tw[:span, None]
             acc_w[start_f:end_f] += tw[:span]
 
-        song_emb = torch.from_numpy(acc_emb / np.maximum(acc_w[:, None], 1e-6)).unsqueeze(0).to(device)
-        frame_rms_np = _compute_song_frame_rms_db(audio, total_frames)
+        inv_w = 1.0 / np.maximum(acc_w[:, None], 1e-6)
+        song_emb = torch.from_numpy(acc_emb * inv_w).unsqueeze(0).to(device)
+        song_cqt = torch.from_numpy(acc_cqt * inv_w).unsqueeze(0).to(device) if acc_cqt is not None else None
+        raw_rms_np = _compute_song_frame_rms_db(audio, total_frames)
+        peak_lin = float(np.max(np.abs(audio.astype(np.float32))) / 32768.0) if len(audio) else 0.0
+        gain_offset_db = float(np.clip(-1.0 - 20.0 * np.log10(max(peak_lin, 1e-4)), 0.0, 15.0))
+        frame_rms_np = raw_rms_np + gain_offset_db
         frame_rms_t = torch.from_numpy(frame_rms_np).unsqueeze(0).to(device)
 
         with autocast("cuda", enabled=use_amp):
-            outs = model.decode_context(song_emb, frame_rms_db=frame_rms_t)
+            outs = model.decode_context(song_emb, frame_rms_db=frame_rms_t, cqt=song_cqt)
 
         decoded = decode_v5_batch(outs, model.crf, crf_stride=cfg.model.crf_stride)
         rp = decoded["root"][0].cpu().numpy()

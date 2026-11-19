@@ -277,13 +277,146 @@ class ChordModel(nn.Module):
         return groups
 
 
+class HarmonicCQTFilterbank(nn.Module):
+    """Exact 5-Octave Constant-Q Wavelet Filterbank (`C1=32.7Hz .. B5=987.8Hz`, 60 semitones)
+    sample-center-aligned with MERT's `400`-sample receptive field and `320`-sample hop (`75 Hz`).
+    Uses only native PyTorch/ONNX ops (`F.pad`, `F.conv1d`, `amax`, `log1p`).
+    """
+
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        hop_length: int = MERT_HOP_SAMPLES,
+        receptive_samples: int = MERT_RECEPTIVE_SAMPLES,
+        kernel_size: int = 6144,
+        n_bins: int = 60,
+        q_factor: float = 24.0,
+    ):
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.hop_length = hop_length
+        self.kernel_size = kernel_size
+        self.n_bins = n_bins
+        # Exact symmetric pad so `(N + 2*pad - kernel_size) // 320 + 1 == (N - 400) // 320 + 1`
+        self.pad_left = (kernel_size - receptive_samples) // 2
+        self.pad_right = kernel_size - receptive_samples - self.pad_left
+
+        midi = np.arange(24, 24 + n_bins, dtype=np.float64)
+        freqs = 440.0 * (2.0 ** ((midi - 69.0) / 12.0))
+        kernels_cos = np.zeros((n_bins, 1, kernel_size), dtype=np.float32)
+        kernels_sin = np.zeros((n_bins, 1, kernel_size), dtype=np.float32)
+        center = (kernel_size - 1) / 2.0
+        t_idx = np.arange(kernel_size, dtype=np.float64) - center
+
+        for i, f_hz in enumerate(freqs):
+            win_len = int(min(kernel_size, max(256, round(q_factor * sample_rate / f_hz))))
+            half = win_len / 2.0
+            mask = np.abs(t_idx) <= half
+            local_n = (t_idx[mask] + half) / max(win_len, 1)
+            win = 0.5 - 0.5 * np.cos(2.0 * np.pi * local_n)
+            win = win / (np.sum(win) + 1e-8) * 2.0
+            phase = 2.0 * np.pi * f_hz * t_idx[mask] / sample_rate
+            kernels_cos[i, 0, mask] = (win * np.cos(phase)).astype(np.float32)
+            kernels_sin[i, 0, mask] = (win * np.sin(phase)).astype(np.float32)
+
+        weight = np.concatenate([kernels_cos, kernels_sin], axis=0)  # (120, 1, K)
+        self.register_buffer("weight", torch.from_numpy(weight), persistent=False)
+        self._log_norm = float(np.log1p(15.0))
+
+    def forward(self, wav_chunk: torch.Tensor) -> torch.Tensor:
+        """Transform `(B_chunks, chunk_samples)` -> `(B_chunks, T_chunk, 60)` in `[0, 1]`."""
+        x = F.pad(wav_chunk.float().unsqueeze(1), (self.pad_left, self.pad_right))
+        spec = F.conv1d(x, self.weight, stride=self.hop_length)  # (B, 120, T_chunk)
+        real = spec[:, : self.n_bins, :]
+        imag = spec[:, self.n_bins :, :]
+        mag = torch.sqrt(real * real + imag * imag + 1e-12).transpose(1, 2)  # (B, T_chunk, 60)
+        ref = mag.amax(dim=-1, keepdim=True).clamp(min=2e-3)
+        cqt_log = torch.log1p((mag / ref) * 15.0) / self._log_norm
+        return cqt_log.clamp(0.0, 1.0)
+
+
+class BassPedalHoldLayer(nn.Module):
+    """Causal leaky peak-hold envelope (`tau = 1.15s` over `1.60s` horizon) preserving Beat-1
+    piano/guitar left-hand bass attacks across Beats 2-4 while reacting with `0ms` lag to new bass notes.
+    Uses pure dynamic-time-safe ops (`F.pad`, `F.max_pool1d`, constant negative slices, `amax`).
+    """
+
+    def __init__(self, block_frames: int = 8, n_taps: int = 16, tau_frames: float = 86.0):
+        super().__init__()
+        self.block_frames = block_frames
+        self.n_taps = n_taps
+        decays = [float(np.exp(-(block_frames * i) / float(tau_frames))) for i in range(n_taps)]
+        self.decays = tuple(decays)
+
+    def forward(self, phys_bass_logits: torch.Tensor) -> torch.Tensor:
+        prob = torch.sigmoid(phys_bass_logits.float())          # (B, T, 12)
+        x = prob.transpose(1, 2)                                # (B, 12, T)
+        p_blk = F.max_pool1d(F.pad(x, (self.block_frames - 1, 0)), kernel_size=self.block_frames, stride=1)
+        taps = [x]
+        for i in range(1, self.n_taps):
+            shift = self.block_frames * i
+            shifted = F.pad(p_blk, (shift, 0))[:, :, :-shift] * self.decays[i]
+            taps.append(shifted)
+        hold = torch.stack(taps, dim=0).amax(dim=0).transpose(1, 2)
+        return hold.clamp(0.0, 1.0).to(phys_bass_logits.dtype)
+
+
+class OctavePitchBassModule(nn.Module):
+    """Pitch-equivariant 5-Octave (`C1..B5`) physical bass detector & harmonic register encoder.
+    Inspects all 5 octaves relative to each candidate pitch class `p in 0..11` so it sees whether `p`
+    has a true low fundamental (`E2` or `E3`), harmonic overtone support (`+12`, `+19`), or another
+    note sounding strictly below it (`E3` below `C4`).
+    """
+
+    def __init__(self, n_octaves: int = 5, cqt_ctx_dim: int = 64, dropout: float = 0.1):
+        super().__init__()
+        self.n_octaves = n_octaves
+        in_per_pc = n_octaves * 12 + n_octaves  # 60 relative octave-semitones + 5 f0 onset-flux bins = 65
+        self.phys_mlp = nn.Sequential(
+            nn.Linear(in_per_pc, 64),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Linear(64, 1),
+        )
+        self.cqt_proj = nn.Sequential(
+            nn.Linear(n_octaves * 12 + 12 + 12, cqt_ctx_dim),
+            nn.GELU(),
+            nn.LayerNorm(cqt_ctx_dim),
+        )
+        self.register_buffer("rel_idx", torch.tensor(REL_PITCH_INDEX, dtype=torch.long), persistent=False)
+
+    def forward(
+        self, cqt: torch.Tensor, hold_layer: BassPedalHoldLayer
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        bsz, seq_len, _ = cqt.shape
+        cqt_f = cqt.float()
+        flux = F.pad(F.relu(cqt_f[:, 1:, :] - cqt_f[:, :-1, :]), (0, 0, 1, 0))  # (B, T, 60)
+
+        cqt_5x12 = cqt_f.reshape(bsz, seq_len, self.n_octaves, 12)
+        flux_5x12 = flux.reshape(bsz, seq_len, self.n_octaves, 12)
+
+        # Gather relative 5x12 harmonic spectrum for each candidate pitch class p in 0..11:
+        # cqt_5x12[:, :, :, rel_idx] -> (B, T, 5_oct, 12_cand_pc, 12_rel_int) -> (B, T, 12_cand_pc, 60)
+        rel_cqt = cqt_5x12[:, :, :, self.rel_idx].permute(0, 1, 3, 2, 4).reshape(bsz, seq_len, 12, self.n_octaves * 12)
+        flux_f0 = flux_5x12.permute(0, 1, 3, 2)  # (B, T, 12_cand_pc, 5_oct)
+
+        phys_in = torch.cat([rel_cqt, flux_f0], dim=-1).to(cqt.dtype)
+        phys_bass_logits = self.phys_mlp(phys_in).squeeze(-1)  # (B, T, 12)
+        phys_bass_prob = torch.sigmoid(phys_bass_logits.float()).to(cqt.dtype)
+        bass_hold = hold_layer(phys_bass_logits)               # (B, T, 12)
+
+        cqt_ctx = self.cqt_proj(torch.cat([cqt, phys_bass_prob, bass_hold], dim=-1))
+        return phys_bass_logits, phys_bass_prob, bass_hold, cqt_ctx
+
+
 class ChordModelV5(nn.Module):
-    """Jazz-Ready Model v5:
-    - Chunked 5s MERT Acoustic Front-End -> 256d frame sequence
+    """Jazz-Ready Model v5 / v5.1 (Bass-First Joint Context Architecture):
+    - Chunked 5s MERT Acoustic Front-End -> 256d frame sequence + Exact 5-Octave `HarmonicCQTFilterbank` (`C1..B5`)
+    - Pitch-Equivariant `OctavePitchBassModule` + Causal `BassPedalHoldLayer` (`0.45s` + `1.50s`)
     - Dual-Register Pitch Chroma (`c_low`, `c_full`) + Multi-Scale Sustain Filter (`80ms` vs `520ms`)
     - 4-Layer RoPE Bi-Conformer (`20s` train / Full-Song serve) + Time-Varying `LocalKeyHead` (24 keys)
-    - Pitch-Equivariant Root-Conditioned Joint Head (`1 + 12 * 41 = 493` valid states)
-    - 145-state Guide-Tone Skeleton Marginal Linear-Chain CRF (`crf_stride=4`, ~53.3ms)
+    - Bottom-Up `TrueBassHead (0..11 + N)` -> Bass-Conditioned `RootHead` -> `ChordTypeHead` (`493` states)
+    - 145-state Guide-Tone Skeleton Marginal Linear-Chain CRF + Slash-Inversion `BassHead`
     """
 
     def __init__(self, cfg: ModelCfg, sample_rate: int = 24000):
@@ -291,6 +424,8 @@ class ChordModelV5(nn.Module):
         self.cfg = cfg
         self.sample_rate = sample_rate
         self.chunk_samples = cfg.chunk_s * sample_rate
+        self.bass_first = bool(getattr(cfg, "bass_first", True))
+        self.cqt_bins = int(getattr(cfg, "cqt_bins", 60))
 
         self.mert = AutoModel.from_pretrained(cfg.name, trust_remote_code=True)
         for p in self.mert.parameters():
@@ -323,9 +458,26 @@ class ChordModelV5(nn.Module):
         )
         self.sustain_layer = MultiScaleSustainLayer(short_frames=7, sustain_frames=39)
 
+        cqt_ctx_dim = 64
+        if self.bass_first:
+            self.cqt_bank = HarmonicCQTFilterbank(
+                sample_rate=sample_rate,
+                hop_length=MERT_HOP_SAMPLES,
+                n_bins=self.cqt_bins,
+            )
+            self.bass_hold_layer = BassPedalHoldLayer()
+            self.oct_bass = OctavePitchBassModule(
+                n_octaves=self.cqt_bins // 12,
+                cqt_ctx_dim=cqt_ctx_dim,
+                dropout=min(cfg.dropout, 0.15),
+            )
+            conf_in_dim = c_dim + cqt_ctx_dim + 36
+        else:
+            conf_in_dim = c_dim + 36
+
         # Long-range musical context encoder
         self.conf_fusion = nn.Sequential(
-            nn.Linear(c_dim + 36, c_dim),
+            nn.Linear(conf_in_dim, c_dim),
             nn.LayerNorm(c_dim),
         )
         self.conformer = BiConformerEncoder(
@@ -344,37 +496,82 @@ class ChordModelV5(nn.Module):
             nn.Linear(128, N_KEYS),
         )
 
-        # Root + Silence (`N` = 12) Head: receives z + c_low + c_full + sustain + key_prob + norm_rms
-        root_in_dim = c_dim + 12 + 12 + 12 + N_KEYS + 1
-        self.head_root = nn.Sequential(
-            nn.Linear(root_in_dim, cfg.head_hidden),
-            nn.SiLU(),
-            nn.Dropout(cfg.dropout),
-            nn.Linear(cfg.head_hidden, N_ROOT_CLASSES_V5),
-        )
-
-        # Pitch-Equivariant Root-Conditioned Type Head (41 valid chord types)
         root_ctx_dim = 128
         self.root_ctx_proj = nn.Linear(c_dim, root_ctx_dim)
         self.root_emb = nn.Embedding(N_ROOTS, root_ctx_dim)
-        type_in_dim = root_ctx_dim + 12 + 12 + 12 + 12 + 12  # z_r + rel(c_low, c_full, sustain, k_maj, k_min) = 188
-        self.head_type = nn.Sequential(
-            nn.Linear(type_in_dim, cfg.type_head_hidden),
-            nn.SiLU(),
-            nn.Dropout(cfg.dropout),
-            nn.Linear(cfg.type_head_hidden, 96),
-            nn.SiLU(),
-            nn.Linear(96, N_TYPES),
-        )
 
-        # Conditional Bass Head (0..11 + 12=none)
-        bass_in_dim = c_dim + 12 + N_ROOT_CLASSES_V5 + N_SKELETONS
-        self.head_bass = nn.Sequential(
-            nn.Linear(bass_in_dim, cfg.bass_head_hidden),
-            nn.SiLU(),
-            nn.Dropout(cfg.dropout),
-            nn.Linear(cfg.bass_head_hidden, N_BASS_CLASSES),
-        )
+        if self.bass_first:
+            # Stage 1 (Bottom-Up): Physical TrueBassHead (0..11 actual sounding bass on 100% of chords, 12 = N)
+            tb_in_dim = c_dim + 12 + 12 + 12 + 1  # z + phys_bass_prob + bass_hold + c_low + norm_rms
+            self.head_true_bass = nn.Sequential(
+                nn.Linear(tb_in_dim, cfg.bass_head_hidden),
+                nn.SiLU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(cfg.bass_head_hidden, N_ROOT_CLASSES_V5),
+            )
+            self.phys_bass_res_scale = nn.Parameter(torch.tensor(0.5))
+
+            # Stage 2: Bass-Conditioned Root + Silence (`N`=12) Head
+            root_in_dim = c_dim + N_ROOT_CLASSES_V5 + 12 + 12 + 12 + 12 + N_KEYS + 1
+            self.head_root = nn.Sequential(
+                nn.Linear(root_in_dim, cfg.head_hidden),
+                nn.SiLU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(cfg.head_hidden, N_ROOT_CLASSES_V5),
+            )
+
+            # Shared Pitch-Equivariant Relative Tensor `u`:
+            # z_r(128) + rel(true_bass_12, bass_hold, c_low, c_full, sustain, k_maj, k_min) = 212
+            type_in_dim = root_ctx_dim + 7 * 12
+            self.head_root_rel = nn.Sequential(
+                nn.Linear(type_in_dim, 64),
+                nn.SiLU(),
+                nn.Linear(64, 1),
+            )
+            nn.init.normal_(self.head_root_rel[-1].weight, mean=0.0, std=0.02)
+            nn.init.zeros_(self.head_root_rel[-1].bias)
+
+            self.head_type = nn.Sequential(
+                nn.Linear(type_in_dim, cfg.type_head_hidden),
+                nn.SiLU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(cfg.type_head_hidden, 96),
+                nn.SiLU(),
+                nn.Linear(96, N_TYPES),
+            )
+
+            # Stage 3: Slash-Inversion Head (0..11 when bass != root, 12 = root-position / rootless jazz voicing)
+            bass_in_dim = c_dim + N_ROOT_CLASSES_V5 + 12 + 12 + N_ROOT_CLASSES_V5 + N_SKELETONS
+            self.head_bass = nn.Sequential(
+                nn.Linear(bass_in_dim, cfg.bass_head_hidden),
+                nn.SiLU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(cfg.bass_head_hidden, N_BASS_CLASSES),
+            )
+        else:
+            root_in_dim = c_dim + 12 + 12 + 12 + N_KEYS + 1
+            self.head_root = nn.Sequential(
+                nn.Linear(root_in_dim, cfg.head_hidden),
+                nn.SiLU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(cfg.head_hidden, N_ROOT_CLASSES_V5),
+            )
+            type_in_dim = root_ctx_dim + 5 * 12
+            self.head_type = nn.Sequential(
+                nn.Linear(type_in_dim, cfg.type_head_hidden),
+                nn.SiLU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(cfg.type_head_hidden, 96),
+                nn.SiLU(),
+                nn.Linear(96, N_TYPES),
+            )
+            bass_in_dim = c_dim + 12 + N_ROOT_CLASSES_V5 + N_SKELETONS
+            self.head_bass = nn.Sequential(
+                nn.Linear(bass_in_dim, cfg.bass_head_hidden),
+                nn.SiLU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(cfg.bass_head_hidden, N_BASS_CLASSES),
+            )
 
         # 145-state Guide-Tone Skeleton Linear-Chain CRF
         self.crf = MarginalLinearChainCRF(num_tags=N_CRF_STATES, stay_bonus=2.4)
@@ -438,12 +635,25 @@ class ChordModelV5(nn.Module):
             return emb_flat.reshape(bsz, n_chunks * emb_flat.shape[1], emb_flat.shape[2])
         return self._encode_single_chunk_batch(wav)
 
+    def encode_cqt(self, wav: torch.Tensor) -> torch.Tensor | None:
+        """Compute frame-aligned 5-octave Constant-Q spectrum `(B, K * T_chunk, 60)` from `wav`."""
+        if not self.bass_first:
+            return None
+        bsz, total_samples = wav.shape
+        if total_samples > self.chunk_samples and total_samples % self.chunk_samples == 0:
+            n_chunks = total_samples // self.chunk_samples
+            flat = wav.reshape(bsz * n_chunks, self.chunk_samples)
+            cqt_flat = self.cqt_bank(flat)
+            return cqt_flat.reshape(bsz, n_chunks * cqt_flat.shape[1], cqt_flat.shape[2])
+        return self.cqt_bank(wav)
+
     def decode_context(
         self,
         emb: torch.Tensor,
         frame_rms_db: torch.Tensor | None = None,
+        cqt: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        """Run full musical context & root-conditioned joint heads on `emb` of shape `(B, T, context_dim)`."""
+        """Run full musical context & bass-first root-conditioned joint heads on `emb` of shape `(B, T, context_dim)`."""
         bsz, seq_len, _ = emb.shape
         if frame_rms_db is None:
             frame_rms_db = torch.full((bsz, seq_len), -20.0, device=emb.device, dtype=torch.float32)
@@ -454,7 +664,20 @@ class ChordModelV5(nn.Module):
         c_full = torch.sigmoid(full_chroma_logits.float()).to(emb.dtype)
         sustain_env = self.sustain_layer(full_chroma_logits)
 
-        conf_in = self.conf_fusion(torch.cat([emb, c_low, c_full, sustain_env], dim=-1))
+        phys_bass_logits: torch.Tensor | None = None
+        phys_bass_prob: torch.Tensor | None = None
+        bass_hold: torch.Tensor | None = None
+
+        if self.bass_first:
+            if cqt is None:
+                cqt_in = torch.zeros((bsz, seq_len, self.cqt_bins), device=emb.device, dtype=emb.dtype)
+            else:
+                cqt_in = cqt.to(device=emb.device, dtype=emb.dtype)
+            phys_bass_logits, phys_bass_prob, bass_hold, cqt_ctx = self.oct_bass(cqt_in, self.bass_hold_layer)
+            conf_in = self.conf_fusion(torch.cat([emb, cqt_ctx, c_low, c_full, sustain_env], dim=-1))
+        else:
+            conf_in = self.conf_fusion(torch.cat([emb, c_low, c_full, sustain_env], dim=-1))
+
         z = self.conformer(conf_in)
 
         # ~4.0s local pooling (301 frames @ 75 Hz) for smooth time-varying Local Key estimation
@@ -467,20 +690,38 @@ class ChordModelV5(nn.Module):
         key_prob = F.softmax(key_logits.float(), dim=-1).to(z.dtype)
 
         norm_rms = ((frame_rms_db.float().clamp(-80.0, 0.0) + 40.0) / 20.0).unsqueeze(-1).to(z.dtype)
-        root_in = torch.cat([z, c_low, c_full, sustain_env, key_prob, norm_rms], dim=-1)
-        root_logits = self.head_root(root_in)  # (B, T, 13)
-
-        # Pitch-Equivariant Rotation across all 12 candidate roots: (B, T, 12_root, 12_rel_interval)
         idx = self.rel_idx  # (12, 12)
         rel_c_low = c_low[:, :, idx]
         rel_c_full = c_full[:, :, idx]
         rel_sustain = sustain_env[:, :, idx]
         rel_k_maj = key_prob[:, :, :12][:, :, idx]
         rel_k_min = key_prob[:, :, 12:][:, :, idx]
-
         z_r = self.root_ctx_proj(z).unsqueeze(2) + self.root_emb.weight[None, None, :, :]
-        u = torch.cat([z_r, rel_c_low, rel_c_full, rel_sustain, rel_k_maj, rel_k_min], dim=-1)  # (B, T, 12, 188)
-        type_logits_by_root = self.head_type(u)  # (B, T, 12, 41)
+
+        true_bass_logits: torch.Tensor | None = None
+        if self.bass_first and phys_bass_logits is not None and phys_bass_prob is not None and bass_hold is not None:
+            # 1. Bottom-Up TrueBassHead: predicts actual physical sounding bass (0..11, 12 = N) FIRST
+            tb_in = torch.cat([z, phys_bass_prob, bass_hold, c_low, norm_rms], dim=-1)
+            tb_raw = self.head_true_bass(tb_in)
+            tb_res = F.pad((self.phys_bass_res_scale.float() * phys_bass_logits.float()).to(tb_raw.dtype), (0, 1))
+            true_bass_logits = tb_raw + tb_res
+            true_bass_prob = F.softmax(true_bass_logits.float(), dim=-1).to(z.dtype)
+
+            # 2. Pitch-Equivariant Rotation including TrueBass & BassPedalHold relative to candidate root `r`
+            rel_tb = true_bass_prob[:, :, :12][:, :, idx]
+            rel_bh = bass_hold[:, :, idx]
+            u = torch.cat([z_r, rel_tb, rel_bh, rel_c_low, rel_c_full, rel_sustain, rel_k_maj, rel_k_min], dim=-1)
+
+            # 3. Bass-Conditioned RootHead + Pitch-Equivariant Candidate-Root Score
+            root_in = torch.cat([z, true_bass_prob, bass_hold, c_low, c_full, sustain_env, key_prob, norm_rms], dim=-1)
+            r_rel = F.pad(self.head_root_rel(u).squeeze(-1), (0, 1))
+            root_logits = self.head_root(root_in) + r_rel
+            type_logits_by_root = self.head_type(u)
+        else:
+            root_in = torch.cat([z, c_low, c_full, sustain_env, key_prob, norm_rms], dim=-1)
+            root_logits = self.head_root(root_in)
+            u = torch.cat([z_r, rel_c_low, rel_c_full, rel_sustain, rel_k_maj, rel_k_min], dim=-1)
+            type_logits_by_root = self.head_type(u)
 
         # Exact float32 joint log-probabilities & Skeleton marginalization
         root_logp = F.log_softmax(root_logits.float(), dim=-1)             # (B, T, 13)
@@ -509,13 +750,17 @@ class ChordModelV5(nn.Module):
         else:
             crf_emissions = frame_skel_emissions
 
-        # Marginal skeleton distribution over 12 families (summed across roots) for BassHead conditioning
+        # Marginal skeleton distribution over 12 families (summed across roots) for Slash BassHead conditioning
         root_prob_13 = root_logp.exp().to(z.dtype)
         skel_prob_12 = torch.logsumexp(skel_logp_by_root, dim=2).exp().to(z.dtype)
-        bass_in = torch.cat([z, c_low, root_prob_13, skel_prob_12], dim=-1)
+        if self.bass_first and true_bass_logits is not None and bass_hold is not None:
+            tb_prob_13 = F.softmax(true_bass_logits.float(), dim=-1).to(z.dtype)
+            bass_in = torch.cat([z, tb_prob_13, bass_hold, c_low, root_prob_13, skel_prob_12], dim=-1)
+        else:
+            bass_in = torch.cat([z, c_low, root_prob_13, skel_prob_12], dim=-1)
         bass_logits = self.head_bass(bass_in)
 
-        return {
+        out_dict: dict[str, torch.Tensor] = {
             "root_logits": root_logits,
             "type_logits_by_root": type_logits_by_root,
             "joint_chord_logp": joint_chord_logp,
@@ -527,6 +772,11 @@ class ChordModelV5(nn.Module):
             "full_chroma_logits": full_chroma_logits,
             "sustain_env": sustain_env,
         }
+        if true_bass_logits is not None:
+            out_dict["true_bass_logits"] = true_bass_logits
+        if phys_bass_logits is not None:
+            out_dict["phys_bass_logits"] = phys_bass_logits
+        return out_dict
 
     def forward(
         self,
@@ -534,13 +784,14 @@ class ChordModelV5(nn.Module):
         frame_rms_db: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         emb = self.encode_chunks(wav)
+        cqt = self.encode_cqt(wav)
         if frame_rms_db is not None and frame_rms_db.shape[1] != emb.shape[1]:
             T = emb.shape[1]
             if frame_rms_db.shape[1] > T:
                 frame_rms_db = frame_rms_db[:, :T]
             else:
                 frame_rms_db = F.pad(frame_rms_db, (0, T - frame_rms_db.shape[1]), value=-80.0)
-        return self.decode_context(emb, frame_rms_db=frame_rms_db)
+        return self.decode_context(emb, frame_rms_db=frame_rms_db, cqt=cqt)
 
     def apply_lora(self, lora_cfg) -> None:
         from peft import LoraConfig, get_peft_model

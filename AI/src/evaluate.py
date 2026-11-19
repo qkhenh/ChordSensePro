@@ -104,10 +104,27 @@ def decode_v5_batch(
     qual_pred = torch.where(is_silence, torch.full_like(best_type, -1), type_to_qe_t[best_type, 0])
     ext_pred = torch.where(is_silence, torch.full_like(best_type, -1), type_to_qe_t[best_type, 1])
 
-    # Slash bass decoding folding `bass == root` into `12` (`none`)
+    # Slash bass decoding folding `bass == root` into `12` (`none`), reinforced by physical `true_bass_logits`
     bass_prob = F.softmax(bass_logits.float(), dim=-1)
-    root_bass_p = bass_prob.gather(-1, safe_r.unsqueeze(-1)).squeeze(-1)
-    bass_prob_adj = bass_prob.clone()
+    if "true_bass_logits" in outputs:
+        tb_prob = F.softmax(outputs["true_bass_logits"].float(), dim=-1)
+        true_bass_pred = torch.where(
+            is_silence,
+            torch.full_like(root_pred, ROOT_SILENCE_ID),
+            tb_prob[:, :, :12].argmax(dim=-1),
+        )
+        tb_13 = F.pad(tb_prob[:, :, :12], (0, 1))
+        bass_prob_mix = 0.65 * bass_prob + 0.35 * tb_13
+    else:
+        true_bass_pred = torch.where(
+            is_silence,
+            torch.full_like(root_pred, ROOT_SILENCE_ID),
+            safe_r,
+        )
+        bass_prob_mix = bass_prob
+
+    root_bass_p = bass_prob_mix.gather(-1, safe_r.unsqueeze(-1)).squeeze(-1)
+    bass_prob_adj = bass_prob_mix.clone()
     bass_prob_adj.scatter_(-1, safe_r.unsqueeze(-1), 0.0)
     bass_prob_adj[:, :, 12] = bass_prob_adj[:, :, 12] + root_bass_p
 
@@ -121,6 +138,7 @@ def decode_v5_batch(
         "quality": qual_pred,
         "ext": ext_pred,
         "bass": bass_pred,
+        "true_bass": true_bass_pred,
         "skel": skel_pred,
         "key": key_pred,
     }
@@ -139,6 +157,8 @@ def compute_metrics(
     skel_true: np.ndarray | None = None,
     key_pred: np.ndarray | None = None,
     key_true: np.ndarray | None = None,
+    true_bass_pred: np.ndarray | None = None,
+    true_bass_true: np.ndarray | None = None,
 ) -> dict[str, float]:
     results: dict[str, float] = {}
 
@@ -204,6 +224,11 @@ def compute_metrics(
         if sk_mask.sum() > 0:
             skel_ok = (root_pred[sk_mask] == root_true[sk_mask]) & (skel_pred[sk_mask] == skel_true[sk_mask])
             results["skeleton_acc"] = float(skel_ok.mean())
+
+    if true_bass_pred is not None and true_bass_true is not None:
+        tb_mask = (true_bass_true >= 0) & (true_bass_true < 12)
+        if tb_mask.sum() > 0:
+            results["true_bass_acc"] = float(accuracy_score(true_bass_true[tb_mask], true_bass_pred[tb_mask]))
 
     if key_pred is not None and key_true is not None:
         kp, kt = _masked(key_pred, key_true)
@@ -351,6 +376,7 @@ def evaluate_split(
         all_bp, all_bt = [], []
         all_sp, all_st = [], []
         all_kp, all_kt = [], []
+        all_tbp, all_tbt = [], []
         total_loss = 0.0
         n_batches = 0
 
@@ -381,6 +407,9 @@ def evaluate_split(
                 all_st.append(gpu_batch["skel_id"][:, :T].cpu())
                 all_kp.append(preds["key"][:, :T].cpu())
                 all_kt.append(gpu_batch["local_key"][:, :T].cpu())
+                if "true_bass" in gpu_batch:
+                    all_tbp.append(preds["true_bass"][:, :T].cpu())
+                    all_tbt.append(gpu_batch["true_bass"][:, :T].cpu())
 
         metrics = compute_metrics(
             torch.cat(all_rp).reshape(-1).numpy(),
@@ -395,6 +424,8 @@ def evaluate_split(
             skel_true=torch.cat(all_st).reshape(-1).numpy(),
             key_pred=torch.cat(all_kp).reshape(-1).numpy(),
             key_true=torch.cat(all_kt).reshape(-1).numpy(),
+            true_bass_pred=torch.cat(all_tbp).reshape(-1).numpy() if all_tbp else None,
+            true_bass_true=torch.cat(all_tbt).reshape(-1).numpy() if all_tbt else None,
         )
     else:
         combo_mask = None

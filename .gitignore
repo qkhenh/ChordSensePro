@@ -25,6 +25,7 @@ outputs/
 
 # AI results (models too large for git — use Google Drive / DVC)
 AI/results/
+AI/songs/
 
 # LaTeX
 *.aux

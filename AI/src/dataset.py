@@ -99,6 +99,11 @@ class ChordDataset(Dataset):
                     full_c[k] = fu_m
 
                 local_keys = estimate_local_keys(starts, ends, roots, quals, exts)
+                true_basses = np.where(
+                    (basses >= 0) & (basses < 12),
+                    basses,
+                    np.where((roots >= 0) & (roots < 12), roots, -100),
+                ).astype(np.int64)
                 self._v5_chords[sid] = {
                     "starts": starts,
                     "ends": ends,
@@ -106,6 +111,7 @@ class ChordDataset(Dataset):
                     "quals": quals,
                     "exts": exts,
                     "basses": basses,
+                    "true_basses": true_basses,
                     "types": types,
                     "skels": skels,
                     "crfs": crfs,
@@ -315,7 +321,25 @@ class ChordDataset(Dataset):
         )
 
         if self.augment_fn is not None:
-            raw_crop, _ = self.augment_fn(raw_crop, self.sr)
+            raw_crop, pitch_shift_n = self.augment_fn(raw_crop, self.sr)
+            if pitch_shift_n != 0:
+                vr = (labels["root"] >= 0) & (labels["root"] < 12)
+                labels["root"][vr] = (labels["root"][vr] + pitch_shift_n) % 12
+                vb = (labels["bass"] >= 0) & (labels["bass"] < 12)
+                labels["bass"][vb] = (labels["bass"][vb] + pitch_shift_n) % 12
+                vtb = (labels["true_bass"] >= 0) & (labels["true_bass"] < 12)
+                labels["true_bass"][vtb] = (labels["true_bass"][vtb] + pitch_shift_n) % 12
+                vc_mask = vr & (labels["skel_id"] >= 0)
+                labels["crf_state"][vc_mask] = 1 + labels["root"][vc_mask] * 12 + labels["skel_id"][vc_mask]
+                vk = (labels["local_key"] >= 0) & (labels["local_key"] < 24)
+                is_min_k = labels["local_key"][vk] >= 12
+                labels["local_key"][vk] = np.where(
+                    is_min_k,
+                    12 + ((labels["local_key"][vk] - 12 + pitch_shift_n) % 12),
+                    (labels["local_key"][vk] + pitch_shift_n) % 12,
+                )
+                labels["shell_chroma"] = np.roll(labels["shell_chroma"], pitch_shift_n, axis=-1)
+                labels["full_chroma"] = np.roll(labels["full_chroma"], pitch_shift_n, axis=-1)
             if hasattr(self.augment_fn, "apply_v5_musical_augment"):
                 raw_crop = self.augment_fn.apply_v5_musical_augment(
                     raw_crop,
@@ -331,6 +355,7 @@ class ChordDataset(Dataset):
                     labels["local_key"],
                     labels["shell_chroma"],
                     labels["full_chroma"],
+                    true_bass_arr=labels["true_bass"],
                 )
 
         # Compute pre-normalization dBFS per frame & assign `N` (`root = 12`) to true silent frames
@@ -351,6 +376,7 @@ class ChordDataset(Dataset):
             labels["type_id"][silent_frames] = -100
             labels["crf_state"][silent_frames] = 0
             labels["bass"][silent_frames] = -100
+            labels["true_bass"][silent_frames] = ROOT_SILENCE_ID
             labels["shell_chroma"][silent_frames] = 0.0
             labels["full_chroma"][silent_frames] = 0.0
 
@@ -366,6 +392,7 @@ class ChordDataset(Dataset):
             "skel_id": torch.from_numpy(labels["skel_id"]),
             "crf_state": torch.from_numpy(labels["crf_state"]),
             "bass": torch.from_numpy(labels["bass"]),
+            "true_bass": torch.from_numpy(labels["true_bass"]),
             "local_key": torch.from_numpy(labels["local_key"]),
             "shell_chroma": torch.from_numpy(labels["shell_chroma"]),
             "full_chroma": torch.from_numpy(labels["full_chroma"]),
@@ -388,6 +415,7 @@ class ChordDataset(Dataset):
             "skel_id": np.full(n_frames, -100, dtype=np.int64),
             "crf_state": np.full(n_frames, -100, dtype=np.int64),
             "bass": np.full(n_frames, -100, dtype=np.int64),
+            "true_bass": np.full(n_frames, -100, dtype=np.int64),
             "local_key": np.full(n_frames, -100, dtype=np.int64),
             "shell_chroma": np.zeros((n_frames, 12), dtype=np.float32),
             "full_chroma": np.zeros((n_frames, 12), dtype=np.float32),
@@ -415,6 +443,7 @@ class ChordDataset(Dataset):
             out["skel_id"][valid] = vc["skels"][hit]
             out["crf_state"][valid] = vc["crfs"][hit]
             out["bass"][valid] = vc["basses"][hit]
+            out["true_bass"][valid] = vc["true_basses"][hit]
             out["local_key"][valid] = vc["keys"][hit]
             out["shell_chroma"][valid] = vc["shell_c"][hit]
             out["full_chroma"][valid] = vc["full_c"][hit]
@@ -489,6 +518,11 @@ class CachedSequenceDataset(Dataset):
         data = np.load(self.cache_dir / f"{sid}.npz")
         emb = data["emb"].astype(np.float32)          # (T_song, 256)
         rms_db = data["rms_db"].astype(np.float32)    # (T_song,)
+        cqt_bins = int(getattr(self.base.cfg.model, "cqt_bins", 60))
+        if "cqt" in data:
+            cqt = data["cqt"].astype(np.float32)      # (T_song, 60)
+        else:
+            cqt = np.zeros((len(emb), cqt_bins), dtype=np.float32)
         t_song, c_dim = emb.shape
         n_song_chunks = max(1, t_song // self.chunk_frames)
         frame_times = mert_chunked_frame_times_ms(0.0, n_song_chunks, self.base.chunk_samples, self.base.sr)[:t_song]
@@ -501,17 +535,29 @@ class CachedSequenceDataset(Dataset):
             else:
                 f0 = 0
             emb_win = emb[f0: f0 + self.max_frames]
+            cqt_win = cqt[f0: f0 + self.max_frames].copy()
             rms_win = rms_db[f0: f0 + self.max_frames]
             ft_win = frame_times[f0: f0 + self.max_frames]
             valid_len = self.max_frames
         else:
             emb_win = np.zeros((self.max_frames, c_dim), dtype=np.float32)
+            cqt_win = np.zeros((self.max_frames, cqt_bins), dtype=np.float32)
             rms_win = np.full(self.max_frames, -75.0, dtype=np.float32)
             emb_win[:t_song] = emb
+            cqt_win[: min(t_song, len(cqt))] = cqt[:t_song]
             rms_win[:t_song] = rms_db
             ft_win = np.full(self.max_frames, -1.0, dtype=np.float64)
             ft_win[:t_song] = frame_times
             valid_len = t_song
+
+        # Phase 3 Sub-Bass Register Dropout on CQT Octaves 1-2 (simulates bassless intro -> band in 60s context)
+        if self.base.split == "train" and getattr(self.base.cfg.model, "bass_first", True) and cqt_bins >= 36:
+            if np.random.random() < 0.25 and valid_len > 150:
+                oct1_scale = float(np.random.uniform(0.02, 0.12))
+                oct2_scale = float(np.random.uniform(0.08, 0.28))
+                drop_end = valid_len if np.random.random() < 0.5 else int(valid_len * np.random.uniform(0.25, 0.55))
+                cqt_win[:drop_end, :12] *= oct1_scale
+                cqt_win[:drop_end, 12:24] *= oct2_scale
 
         audio_end_ms = self.base._audio_lengths[sid] / float(self.base.sr) * 1000.0
         labels = self.base._lookup_v5_frames(
@@ -528,10 +574,12 @@ class CachedSequenceDataset(Dataset):
 
         if silent.any():
             labels["root"][silent] = ROOT_SILENCE_ID
+            labels["true_bass"][silent] = ROOT_SILENCE_ID
             labels["crf_state"][silent] = 0
 
         return {
             "emb": torch.from_numpy(emb_win),
+            "cqt": torch.from_numpy(cqt_win),
             "frame_rms_db": torch.from_numpy(rms_win),
             "root": torch.from_numpy(labels["root"]),
             "quality": torch.from_numpy(labels["quality"]),
@@ -540,6 +588,7 @@ class CachedSequenceDataset(Dataset):
             "skel_id": torch.from_numpy(labels["skel_id"]),
             "crf_state": torch.from_numpy(labels["crf_state"]),
             "bass": torch.from_numpy(labels["bass"]),
+            "true_bass": torch.from_numpy(labels["true_bass"]),
             "local_key": torch.from_numpy(labels["local_key"]),
             "shell_chroma": torch.from_numpy(labels["shell_chroma"]),
             "full_chroma": torch.from_numpy(labels["full_chroma"]),

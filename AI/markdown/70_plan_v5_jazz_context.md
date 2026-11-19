@@ -238,3 +238,21 @@ Trong `AI/src/dataset.py` (tách helper gọn vào `AI/src/music_theory.py`), ng
 - [x] **Bước 2 — Data Pipeline `20s` trên `export/v3` & `MelodyOverlayAugmenter` (`config.py`, `augment.py`, `dataset.py`, `train.py`):** Hoàn thiện nạp dữ liệu trực tiếp từ `v3`, gán `N` cho vùng không âm thanh, thêm `grad_accum_steps` và Phase 3 cache.
 - [x] **Bước 3 — Export ONNX 2-Stage, Evaluation & Serving Lọc Bỏ `N` (`export_onnx.py`, `evaluate.py`, `serve.py`, `test_v3.py`):** Hỗ trợ xuất/chạy ONNX v5, Auto-Bypass Demucs cho Solo Instrument, ẩn hoàn toàn `N` khỏi kết quả hiển thị.
 - [x] **Bước 4 — Configs & Colab Notebook (`v5_20s_p1.yaml`, `v5_20s_p2.yaml`, `v5_fullsong_p3.yaml`, `colab_train.ipynb`):** Sẵn sàng pull code trên Colab L4 chạy thẳng trên `/content/data_v3` đã có sẵn để lấy bảng số liệu thực tế so với `v4`.
+
+---
+
+## 7. Nâng Cấp Tận Gốc `v5.1` — Kiến Trúc `Bass-First` (Giải Quyết Mù Quãng Tám Trầm Khi Không Có Guitar Bass Điện)
+
+Khi kiểm thử thực tế trên bài `25yrs.wav`: ở đoạn Full Band (`51.68s`, có Electric Bass đánh `E2 = 82 Hz` và vocal bị Demucs lọc bỏ), `v5.0` nhận đúng **`Em7`**. Nhưng ở đoạn Intro (`7.36s`, chỉ có Piano đánh `E3 = 165 Hz` ở tay trái và giai điệu `C4/C5` sáng ở tay phải), `v5.0` bị đánh lừa thành **`C`**. Bốn cải tiến kiến trúc tận gốc đã được triển khai trong `v5.1` (`bass_first: true`):
+
+1. **Nhánh Phổ Tần Số Trầm Tường Minh 5 Quãng Tám (`HarmonicCQTFilterbank`: `C1=32.7Hz .. B5=987.8Hz`, `60` semitones):**
+   - Tích hợp bằng phép tích chập phức `Conv1d(kernel=6144, stride=320)` căn chỉnh chính xác từng mili-giây với tâm cửa sổ `400` mẫu của MERT (`75 Hz`), xuất trực tiếp từ `encoder.onnx` (`emb` + `cqt`) mà không phụ thuộc `librosa` lúc serve.
+   - Kết hợp `OctavePitchBassModule` (bất biến dịch giọng trên vòng 12 nốt nhưng giữ nguyên tọa độ 5 quãng tám) + `BassPedalHoldLayer` (bộ nhớ nhân quả hai hằng số thời gian `0.45s` & `1.50s` giữ nốt trầm tay trái đánh ở phách 1 xuyên suốt ô nhịp).
+2. **Định Nghĩa Nhãn Vật Lý `true_bass (0..11, 12=N)` Trên 100% Hợp Âm:**
+   - Thay vì bỏ phí `86.31%` hợp âm nguyên vị vào nhãn `12 = none`, mọi hợp âm đều dạy `TrueBassHead` bắt đúng cao độ nốt trầm thực tế đang vang lên (`Em7 → E`, `C → C`, `C/E → E`).
+3. **Đảo Ngược Chiều Suy Luận Thành `TrueBassHead → RootHead → ChordTypeHead → SlashBassHead`:**
+   - `TrueBassHead` dự đoán nốt trầm vật lý trước tiên, xoay tương đối `rel_true_bass` & `rel_bass_hold` đưa thẳng vào cả `RootHead` (bổ sung nhánh `head_root_rel` bất biến dịch giọng) lẫn `ChordTypeHead`. Nhờ đó `RootHead` biết ngay nốt gốc ứng viên có thực sự nằm dưới đáy hay không trước khi đưa vào `145-state Skeleton CRF`.
+   - `SlashBassHead` nhận đồng thời `true_bass_prob` và `root_prob`, giữ trọn khả năng phân biệt hợp âm đảo thật (`C/E`) với thế bấm *Rootless Jazz Voicing* (`Cmaj9` không đánh nốt gốc).
+4. **Augmentation `BassRegisterDropout` (`High-Pass 135–195 Hz` toàn đoạn hoặc nửa đầu giả lập Intro → Band) + Warm-Start MERT:**
+   - Lúc train (`Phase 1, 2, 3`), ngẫu nhiên suy giảm dải sub-bass `Octave 1–2` trên `25%–30%` mẫu (cả chế độ cả đoạn lẫn nửa đầu đoạn nhạc chuyển vào full-band) để ép cả MERT+LoRA lẫn `OctavePitchBassModule` bắt nhạy nốt trầm tay trái Piano/Guitar ở `Octave 3 (130–250 Hz)`.
+   - Hỗ trợ `--warm_ckpt` tự động gộp trọng số MERT+LoRA của `v5.0` trên Google Drive làm điểm xuất phát ấm cho `v5.1` (`v5_1_20s_p1 → v5_1_20s_p2 → v5_1_fullsong_p3`).

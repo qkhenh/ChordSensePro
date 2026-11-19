@@ -29,25 +29,41 @@ class ExportWrapper(torch.nn.Module):
 
 
 class V5EncoderExportWrapper(torch.nn.Module):
-    """Exports MERT (with merged LoRA) + 25-layer weighted sum + 256d projection on 5s chunks."""
+    """Exports MERT (with merged LoRA) + 25-layer weighted sum + 256d projection (+ 5-Octave CQT if `bass_first`)."""
 
     def __init__(self, model):
         super().__init__()
         self.model = model
 
-    def forward(self, wav: torch.Tensor) -> torch.Tensor:
-        return self.model._encode_single_chunk_batch(wav)
+    def forward(self, wav: torch.Tensor):
+        emb = self.model._encode_single_chunk_batch(wav)
+        if getattr(self.model, "bass_first", False):
+            cqt = self.model.cqt_bank(wav)
+            return emb, cqt
+        return emb
 
 
 class V5DecoderExportWrapper(torch.nn.Module):
-    """Exports Full-Song Bi-Conformer + DualChroma + Sustain + LocalKey + Root-Conditioned Joint Head + CRF params."""
+    """Exports Full-Song Bi-Conformer + OctavePitchBass + DualChroma + Sustain + LocalKey + Joint Head + CRF params."""
 
     def __init__(self, model):
         super().__init__()
         self.model = model
 
-    def forward(self, emb: torch.Tensor, frame_rms_db: torch.Tensor):
-        out = self.model.decode_context(emb, frame_rms_db=frame_rms_db)
+    def forward(self, emb: torch.Tensor, frame_rms_db: torch.Tensor, cqt: torch.Tensor | None = None):
+        out = self.model.decode_context(emb, frame_rms_db=frame_rms_db, cqt=cqt)
+        if "true_bass_logits" in out:
+            return (
+                out["crf_emissions"],
+                self.model.crf.transitions,
+                self.model.crf.start_transitions,
+                self.model.crf.end_transitions,
+                out["type_logits_by_root"],
+                out["bass_logits"],
+                out["key_logits"],
+                out["sustain_env"],
+                out["true_bass_logits"],
+            )
         return (
             out["crf_emissions"],
             self.model.crf.transitions,
@@ -109,54 +125,82 @@ def export_onnx(
     if is_v5:
         chunk_samples = cfg.chunk_samples
         t_chunk = mert_output_length(chunk_samples)
+        bass_first = bool(getattr(model, "bass_first", False))
+        cqt_bins = int(getattr(model, "cqt_bins", 60))
 
         enc_wrapper = V5EncoderExportWrapper(model).eval()
         dummy_wav = torch.randn(1, chunk_samples, device=device)
+        if bass_first:
+            enc_out_names = ["emb", "cqt"]
+            enc_dyn_axes = {
+                "wav": {0: "batch"},
+                "emb": {0: "batch", 1: "time"},
+                "cqt": {0: "batch", 1: "time"},
+            }
+        else:
+            enc_out_names = ["emb"]
+            enc_dyn_axes = {"wav": {0: "batch"}, "emb": {0: "batch", 1: "time"}}
+
         torch.onnx.export(
             enc_wrapper,
             (dummy_wav,),
             str(out_p),
             input_names=["wav"],
-            output_names=["emb"],
-            dynamic_axes={"wav": {0: "batch"}, "emb": {0: "batch", 1: "time"}},
+            output_names=enc_out_names,
+            dynamic_axes=enc_dyn_axes,
             **common_kw,
         )
-        log.info(f"Exported v5 Acoustic Encoder ONNX -> {out_p}")
+        log.info(f"Exported v5 Acoustic Encoder ONNX (bass_first={bass_first}) -> {out_p}")
 
         dec_path = companion_decoder_path(out_p)
         dec_wrapper = V5DecoderExportWrapper(model).eval()
         dummy_emb = torch.randn(1, t_chunk * 4, cfg.model.context_dim, device=device)
         dummy_rms = torch.full((1, t_chunk * 4), -22.0, device=device)
+        dec_out_names = [
+            "crf_emissions",
+            "crf_transitions",
+            "crf_start",
+            "crf_end",
+            "type_logits_by_root",
+            "bass_logits",
+            "key_logits",
+            "sustain_env",
+        ]
+        dec_dyn_axes = {
+            "emb": {0: "batch", 1: "time"},
+            "frame_rms_db": {0: "batch", 1: "time"},
+            "crf_emissions": {0: "batch", 1: "crf_time"},
+            "type_logits_by_root": {0: "batch", 1: "time"},
+            "bass_logits": {0: "batch", 1: "time"},
+            "key_logits": {0: "batch", 1: "time"},
+            "sustain_env": {0: "batch", 1: "time"},
+        }
+        if bass_first:
+            dummy_cqt = torch.rand(1, t_chunk * 4, cqt_bins, device=device)
+            dec_inputs = (dummy_emb, dummy_rms, dummy_cqt)
+            dec_in_names = ["emb", "frame_rms_db", "cqt"]
+            dec_out_names.append("true_bass_logits")
+            dec_dyn_axes["cqt"] = {0: "batch", 1: "time"}
+            dec_dyn_axes["true_bass_logits"] = {0: "batch", 1: "time"}
+        else:
+            dec_inputs = (dummy_emb, dummy_rms)
+            dec_in_names = ["emb", "frame_rms_db"]
+
         torch.onnx.export(
             dec_wrapper,
-            (dummy_emb, dummy_rms),
+            dec_inputs,
             str(dec_path),
-            input_names=["emb", "frame_rms_db"],
-            output_names=[
-                "crf_emissions",
-                "crf_transitions",
-                "crf_start",
-                "crf_end",
-                "type_logits_by_root",
-                "bass_logits",
-                "key_logits",
-                "sustain_env",
-            ],
-            dynamic_axes={
-                "emb": {0: "batch", 1: "time"},
-                "frame_rms_db": {0: "batch", 1: "time"},
-                "crf_emissions": {0: "batch", 1: "crf_time"},
-                "type_logits_by_root": {0: "batch", 1: "time"},
-                "bass_logits": {0: "batch", 1: "time"},
-                "key_logits": {0: "batch", 1: "time"},
-                "sustain_env": {0: "batch", 1: "time"},
-            },
+            input_names=dec_in_names,
+            output_names=dec_out_names,
+            dynamic_axes=dec_dyn_axes,
             **common_kw,
         )
         log.info(f"Exported v5 Full-Song Context Decoder ONNX -> {dec_path}")
 
         meta = {
             "arch_version": 5,
+            "bass_first": bass_first,
+            "cqt_bins": cqt_bins,
             "decoder_onnx": dec_path.name,
             "sample_rate": cfg.sample_rate,
             "chunk_s": cfg.model.chunk_s,
@@ -263,16 +307,22 @@ def benchmark_onnx(onnx_path: str, chunk_samples: int, n_runs: int = 50) -> None
     dec_p = companion_decoder_path(onnx_path)
     if dec_p.exists():
         dec_sess = ort.InferenceSession(str(dec_p), providers=providers)
-        # Benchmark full 60s song (4,488 frames @ 75Hz)
         t_60s = 4488
-        d_emb = np.random.randn(1, t_60s, 256).astype(np.float32)
-        d_rms = np.full((1, t_60s), -20.0, dtype=np.float32)
+        in_meta = {m.name: m.shape for m in dec_sess.get_inputs()}
+        c_dim = int(in_meta["emb"][2]) if isinstance(in_meta["emb"][2], int) else 256
+        feed: dict[str, np.ndarray] = {
+            "emb": np.random.randn(1, t_60s, c_dim).astype(np.float32),
+            "frame_rms_db": np.full((1, t_60s), -20.0, dtype=np.float32),
+        }
+        if "cqt" in in_meta:
+            cqt_bins = int(in_meta["cqt"][2]) if isinstance(in_meta["cqt"][2], int) else 60
+            feed["cqt"] = np.random.rand(1, t_60s, cqt_bins).astype(np.float32)
         for _ in range(5):
-            dec_sess.run(None, {"emb": d_emb, "frame_rms_db": d_rms})
+            dec_sess.run(None, feed)
         d_times = []
         for _ in range(n_runs):
             t0 = time.perf_counter()
-            dec_sess.run(None, {"emb": d_emb, "frame_rms_db": d_rms})
+            dec_sess.run(None, feed)
             d_times.append(time.perf_counter() - t0)
         d_ms = np.array(d_times) * 1000
         log.info(

@@ -24,6 +24,8 @@ model:
   crf_stride: 4
   chunk_s: 5
   silence_db_threshold: -45.0
+  bass_first: true
+  cqt_bins: 60
   dropout: 0.15
   frame_level: true
 
@@ -38,12 +40,12 @@ train:
   warmup_ratio: 0.08
   grad_clip: 1.0
   early_stop_patience: 5
-  loss_weights: [0.38, 0.10, 0.25, 0.12, 0.07, 0.08]
+  loss_weights: [0.36, 0.10, 0.23, 0.16, 0.08, 0.07]
   focal_gamma: 2.0
   fp16: true
   seed: 42
   num_workers: 2
-  cache_dir: "results/v5_emb_cache"
+  cache_dir: "results/v5_1_emb_cache"
 
 lora:
   enabled: true
@@ -62,5 +64,5 @@ augment:
 eval:
   bootstrap_n: 1000
 
-checkpoint_dir: "results/v5_fullsong_p3"
-results_csv: "results/v5_fullsong_p3/results.csv"
+checkpoint_dir: "results/v5_1_fullsong_p3"
+results_csv: "results/v5_1_fullsong_p3/results.csv"

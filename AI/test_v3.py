@@ -21,6 +21,7 @@ from src.serve import (
 )
 
 DEFAULT_MODELS = [
+    str(AI_DIR / "results" / "model_v5_1_fullsong_p3.onnx"),
     str(AI_DIR / "results" / "model_v5_fullsong_p3.onnx"),
     str(AI_DIR / "results" / "model_v5_p3.onnx"),
     str(AI_DIR / "results" / "model_v5_20s_p2.onnx"),

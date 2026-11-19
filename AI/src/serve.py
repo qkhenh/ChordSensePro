@@ -412,13 +412,21 @@ class ONNXPredictor:
             self.is_frame_level = True
             self.crf_stride = int(self.v5_meta.get("crf_stride", 4))
             self.context_dim = int(self.v5_meta.get("context_dim", 256))
-            log.info(f"ONNX v5 Full-Song Context Decoder loaded: {dec_path}")
+            self.cqt_bins = int(self.v5_meta.get("cqt_bins", 60))
+            self.has_v5_cqt = bool(outputs_meta and len(outputs_meta) >= 2)
+            self.dec_has_cqt = any(m.name == "cqt" for m in self.decoder_session.get_inputs())
+            log.info(
+                f"ONNX v5 Full-Song Context Decoder loaded: {dec_path} (bass_first_cqt={self.dec_has_cqt})"
+            )
         else:
             self.is_frame_level = bool(
                 outputs_meta and outputs_meta[0].shape and len(outputs_meta[0].shape) == 3
             )
             self.crf_stride = 4
             self.context_dim = 256
+            self.cqt_bins = 60
+            self.has_v5_cqt = False
+            self.dec_has_cqt = False
 
         self.combo_mask: np.ndarray | None = None
         candidates = [classes_json] if classes_json else []
@@ -442,25 +450,40 @@ class ONNXPredictor:
         emb = self.session.run(None, {self.input_name: inp})[0]
         return emb[0]
 
-    def decode_song_v5(self, song_emb: np.ndarray, frame_rms_db: np.ndarray) -> dict[str, np.ndarray]:
-        """Run v5 context decoder on `(T_song, 256)` (chunking smoothly if song > 75s)."""
+    def encode_chunk_v5_full(self, wav_float32: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
+        """Run v5 acoustic encoder returning `(emb, cqt)` (`cqt` is `(T_chunk, 60)` if `bass_first` else `None`)."""
+        inp = wav_float32[np.newaxis, :].astype(np.float32)
+        outs = self.session.run(None, {self.input_name: inp})
+        cqt = outs[1][0] if len(outs) >= 2 else None
+        return outs[0][0], cqt
+
+    def decode_song_v5(
+        self,
+        song_emb: np.ndarray,
+        frame_rms_db: np.ndarray,
+        song_cqt: np.ndarray | None = None,
+    ) -> dict[str, np.ndarray]:
+        """Run v5 context decoder on `(T_song, 256)` (+ `(T_song, 60)` CQT), chunking smoothly if song > 75s."""
         if self.decoder_session is None:
             raise RuntimeError("v5 decoder_session is not initialized")
 
-        total_frames, c_dim = song_emb.shape
+        total_frames, _ = song_emb.shape
         max_win_frames = 4500   # ~60s @ 75 Hz
         step_frames = 2252      # ~30s step (divisible by crf_stride=4)
         stride = self.crf_stride
+        use_cqt = bool(getattr(self, "dec_has_cqt", False))
+        if use_cqt and song_cqt is None:
+            song_cqt = np.zeros((total_frames, getattr(self, "cqt_bins", 60)), dtype=np.float32)
 
         if total_frames <= int(max_win_frames * 1.25):
-            outs = self.decoder_session.run(
-                None,
-                {
-                    "emb": song_emb[np.newaxis, :, :].astype(np.float32),
-                    "frame_rms_db": frame_rms_db[np.newaxis, :].astype(np.float32),
-                },
-            )
-            return {
+            feed: dict[str, np.ndarray] = {
+                "emb": song_emb[np.newaxis, :, :].astype(np.float32),
+                "frame_rms_db": frame_rms_db[np.newaxis, :].astype(np.float32),
+            }
+            if use_cqt and song_cqt is not None:
+                feed["cqt"] = song_cqt[np.newaxis, :, :].astype(np.float32)
+            outs = self.decoder_session.run(None, feed)
+            res = {
                 "crf_emissions": outs[0][0],
                 "crf_transitions": outs[1],
                 "crf_start": outs[2],
@@ -470,6 +493,9 @@ class ONNXPredictor:
                 "key_logits": outs[6][0],
                 "sustain_env": outs[7][0],
             }
+            if len(outs) >= 9:
+                res["true_bass_logits"] = outs[8][0]
+            return res
 
         # Overlap-add for very long tracks (>75s, e.g. 5-min Jazz recordings)
         total_crf = int(np.ceil(total_frames / float(stride)))
@@ -477,6 +503,8 @@ class ONNXPredictor:
         acc_w_crf = np.zeros(total_crf, dtype=np.float32)
         acc_type = np.zeros((total_frames, 12, N_TYPES), dtype=np.float32)
         acc_bass = np.zeros((total_frames, 13), dtype=np.float32)
+        acc_tbass = np.zeros((total_frames, 13), dtype=np.float32)
+        has_tbass = False
         acc_key = np.zeros((total_frames, 24), dtype=np.float32)
         acc_sust = np.zeros((total_frames, 12), dtype=np.float32)
         acc_w = np.zeros(total_frames, dtype=np.float32)
@@ -494,19 +522,22 @@ class ONNXPredictor:
 
         for s in starts:
             e = min(total_frames, s + max_win_frames)
-            outs = self.decoder_session.run(
-                None,
-                {
-                    "emb": song_emb[np.newaxis, s:e, :].astype(np.float32),
-                    "frame_rms_db": frame_rms_db[np.newaxis, s:e].astype(np.float32),
-                },
-            )
+            feed_w: dict[str, np.ndarray] = {
+                "emb": song_emb[np.newaxis, s:e, :].astype(np.float32),
+                "frame_rms_db": frame_rms_db[np.newaxis, s:e].astype(np.float32),
+            }
+            if use_cqt and song_cqt is not None:
+                feed_w["cqt"] = song_cqt[np.newaxis, s:e, :].astype(np.float32)
+            outs = self.decoder_session.run(None, feed_w)
             crf_em, crf_trans, crf_start, crf_end = outs[0][0], outs[1], outs[2], outs[3]
             tw = _triangle_weights(e - s)
             acc_type[s:e] += outs[4][0] * tw[:, None, None]
             acc_bass[s:e] += outs[5][0] * tw[:, None]
             acc_key[s:e] += outs[6][0] * tw[:, None]
             acc_sust[s:e] += outs[7][0] * tw[:, None]
+            if len(outs) >= 9:
+                acc_tbass[s:e] += outs[8][0] * tw[:, None]
+                has_tbass = True
             acc_w[s:e] += tw
 
             cs = s // stride
@@ -517,7 +548,7 @@ class ONNXPredictor:
 
         inv_w = 1.0 / np.maximum(acc_w, 1e-6)
         inv_wc = 1.0 / np.maximum(acc_w_crf, 1e-6)
-        return {
+        res_ola = {
             "crf_emissions": acc_crf * inv_wc[:, None],
             "crf_transitions": crf_trans,
             "crf_start": crf_start,
@@ -527,6 +558,9 @@ class ONNXPredictor:
             "key_logits": acc_key * inv_w[:, None],
             "sustain_env": acc_sust * inv_w[:, None],
         }
+        if has_tbass:
+            res_ola["true_bass_logits"] = acc_tbass * inv_w[:, None]
+        return res_ola
 
     def predict_frame_probs(
         self, wav_float32: np.ndarray
@@ -1112,11 +1146,18 @@ def _infer_v5_full_song(
                 windows.append((last, audio[last: last + chunk_samples]))
 
     acc_emb = np.zeros((total_frames, predictor.context_dim), dtype=np.float32)
+    cqt_bins = int(getattr(predictor, "cqt_bins", 60))
+    acc_cqt: np.ndarray | None = None
     acc_w = np.zeros(total_frames, dtype=np.float32)
+    has_full_enc = hasattr(predictor, "encode_chunk_v5_full")
 
     for pos, crop in windows:
         wav = _normalize(crop)
-        emb = predictor.encode_chunk_v5(wav)  # (T_chunk, 256)
+        if has_full_enc:
+            emb, cqt_c = predictor.encode_chunk_v5_full(wav)
+        else:
+            emb = predictor.encode_chunk_v5(wav)
+            cqt_c = None
         n_f = len(emb)
         tw = _triangle_weights(n_f)
         start_f = int(round(pos / float(MERT_HOP_SAMPLES)))
@@ -1125,9 +1166,15 @@ def _infer_v5_full_song(
         if span <= 0:
             continue
         acc_emb[start_f:end_f] += emb[:span] * tw[:span, None]
+        if cqt_c is not None:
+            if acc_cqt is None:
+                acc_cqt = np.zeros((total_frames, cqt_c.shape[-1]), dtype=np.float32)
+            acc_cqt[start_f:end_f] += cqt_c[:span] * tw[:span, None]
         acc_w[start_f:end_f] += tw[:span]
 
-    song_emb = acc_emb / np.maximum(acc_w[:, None], 1e-6)
+    inv_acc_w = 1.0 / np.maximum(acc_w[:, None], 1e-6)
+    song_emb = acc_emb * inv_acc_w
+    song_cqt = (acc_cqt * inv_acc_w) if acc_cqt is not None else None
     raw_frame_rms_db = _compute_song_frame_rms_db(audio, total_frames)
     # Normalize `frame_rms_db` to a consistent `-1 dBFS` song peak reference (matching DE peak-normalized audio)
     # while capping max gain boost at +15 dB so pure silence files stay silent.
@@ -1135,7 +1182,10 @@ def _infer_v5_full_song(
     gain_offset_db = float(np.clip(-1.0 - 20.0 * np.log10(max(peak_lin, 1e-4)), 0.0, 15.0))
     frame_rms_db = raw_frame_rms_db + gain_offset_db
 
-    dec = predictor.decode_song_v5(song_emb, frame_rms_db)
+    try:
+        dec = predictor.decode_song_v5(song_emb, frame_rms_db, song_cqt=song_cqt)
+    except TypeError:
+        dec = predictor.decode_song_v5(song_emb, frame_rms_db)
     crf_em = dec["crf_emissions"].copy()              # (T_crf, 145)
     crf_trans = dec["crf_transitions"]                # (145, 145)
     crf_start = dec["crf_start"]                      # (145,)
@@ -1187,6 +1237,10 @@ def _infer_v5_full_song(
         np.repeat(crf_em, stride, axis=0)[:total_frames], axis=-1
     )
     bass_prob_all = _softmax(bass_logits, axis=-1)
+    if "true_bass_logits" in dec:
+        tb_prob_all = _softmax(dec["true_bass_logits"], axis=-1)
+        tb_pad = np.pad(tb_prob_all[:, :12], ((0, 0), (0, 1)))
+        bass_prob_all = 0.65 * bass_prob_all + 0.35 * tb_pad
     key_prob_all = _softmax(key_logits, axis=-1)
     has_tension_type = TYPE_TENSION_REL_MASK.sum(axis=-1) > 0.5  # (41,)
 
