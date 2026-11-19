@@ -1128,7 +1128,12 @@ def _infer_v5_full_song(
         acc_w[start_f:end_f] += tw[:span]
 
     song_emb = acc_emb / np.maximum(acc_w[:, None], 1e-6)
-    frame_rms_db = _compute_song_frame_rms_db(audio, total_frames)
+    raw_frame_rms_db = _compute_song_frame_rms_db(audio, total_frames)
+    # Normalize `frame_rms_db` to a consistent `-1 dBFS` song peak reference (matching DE peak-normalized audio)
+    # while capping max gain boost at +15 dB so pure silence files stay silent.
+    peak_lin = float(np.max(np.abs(audio.astype(np.float32))) / 32768.0) if len(audio) else 0.0
+    gain_offset_db = float(np.clip(-1.0 - 20.0 * np.log10(max(peak_lin, 1e-4)), 0.0, 15.0))
+    frame_rms_db = raw_frame_rms_db + gain_offset_db
 
     dec = predictor.decode_song_v5(song_emb, frame_rms_db)
     crf_em = dec["crf_emissions"].copy()              # (T_crf, 145)
@@ -1149,13 +1154,14 @@ def _infer_v5_full_song(
         ],
         dtype=np.float32,
     )
-    active_rms = frame_rms_db[frame_rms_db > -55.0]
+    active_rms = frame_rms_db[frame_rms_db > -58.0]
     p95_db = float(np.percentile(active_rms, 95)) if len(active_rms) > 8 else float(frame_rms_db.max())
-    dynamic_sil_floor = max(float(rms_threshold_db), p95_db - 36.0)
+    # True no-sound floor (-50 dBFS or 40 dB below peak): catches -68 dB intro hiss without chopping -46 dB piano sustain tails
+    true_silence_db = min(float(rms_threshold_db), -50.0)
+    dynamic_sil_floor = max(true_silence_db, p95_db - 40.0)
 
-    # Strong prior toward state 0 (`N`) on genuinely silent frames (e.g. -68.6 dBFS intro)
     quiet_steps = rms_crf < dynamic_sil_floor
-    crf_em[quiet_steps, 0] += 6.0
+    crf_em[quiet_steps, 0] += 5.0
 
     decay_scale = _compute_decay_lock_scale(rms_crf)
     crf_path_ds = viterbi_crf_numpy(
@@ -1169,14 +1175,14 @@ def _infer_v5_full_song(
     if len(crf_path) < total_frames:
         crf_path = np.pad(crf_path, (0, total_frames - len(crf_path)), mode="edge")
 
-    # Enforce hard silence gate on ultra-quiet frames (< rms_threshold_db)
-    crf_path[frame_rms_db < float(rms_threshold_db)] = 0
+    # Enforce hard silence gate only on true no-sound frames (< true_silence_db, e.g. -50 dBFS)
+    crf_path[frame_rms_db < true_silence_db] = 0
 
     frame_ms = MERT_HOP_SAMPLES / float(sample_rate) * 1000.0
     min_tension_frames = max(1, int(round(MIN_EXT_DURATION_MS / max(frame_ms, 1.0))))
     hop_scale = 13.333 / max(frame_ms, 1.0)
 
-    # Softmax probabilities for confidence & sub-skeleton tension/bass decoding
+    # Softmax probabilities over 145 CRF states -> factorized Root, Conditional Skeleton & Conditional Type confidences
     crf_frame_prob = _softmax(
         np.repeat(crf_em, stride, axis=0)[:total_frames], axis=-1
     )
@@ -1280,11 +1286,16 @@ def _infer_v5_full_song(
 
             type_confs = t_prob[np.arange(seg_len), chosen_types]
 
-        skel_confs = crf_frame_prob[span_s:span_e, st_cur]
+        r_lo = 1 + r_cur * N_SKELETONS
+        r_hi = r_lo + N_SKELETONS
+        root_confs = crf_frame_prob[span_s:span_e, r_lo:r_hi].sum(axis=-1)
+        cond_skel_confs = crf_frame_prob[span_s:span_e, st_cur] / np.maximum(root_confs, 1e-6)
         root_ids[span_s:span_e] = r_cur
         qual_ids[span_s:span_e] = TYPE_TO_QE[chosen_types, 0]
         ext_ids[span_s:span_e] = TYPE_TO_QE[chosen_types, 1]
-        confs[span_s:span_e] = np.clip(0.75 * skel_confs + 0.25 * type_confs, 0.0, 1.0)
+        confs[span_s:span_e] = np.clip(
+            weighted_chord_conf(root_confs, cond_skel_confs, type_confs), 0.0, 1.0
+        )
         span_s = span_e
 
     frame_results: list[dict[str, Any]] = []
@@ -1318,6 +1329,8 @@ def _infer_v5_full_song(
         })
 
     merged = _prune_short_segments(frame_results, min_duration_ms=min_duration_ms)
+    if AUTO_KEY_SPELLING:
+        merged = apply_key_spelling(merged)
     if merged:
         merged[0]["start_ms"] = 0.0
         merged[-1]["end_ms"] = duration_ms
