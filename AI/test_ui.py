@@ -25,6 +25,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 AI_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(AI_DIR))
@@ -87,16 +88,26 @@ def list_songs() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 predictor: ONNXPredictor | None = None
-_separator_ref: list = [None]      # mutable container for Demucs singleton
-_separator_lock = threading.Lock() # serialize Demucs (not thread-safe)
+_predictor_ref: list = [None]       # mutable container so worker can temporarily free VRAM on <=6GB GPUs
+_separator_dict: dict[str, Any] = {}  # cached CPU-parked Demucs models by name
+_gpu_lock = threading.Lock()        # serialize GPU usage (Demucs + ONNX)
 _model_path: str = ""
+_classes_json_path: str = CLASSES_JSON
+
+
+def load_predictor_instance() -> ONNXPredictor:
+    global predictor
+    if not _model_path:
+        raise RuntimeError("Model path not configured")
+    predictor = ONNXPredictor(_model_path, _classes_json_path)
+    _predictor_ref[0] = predictor
+    return predictor
 
 
 def get_predictor() -> ONNXPredictor:
-    global predictor
-    if predictor is None:
-        raise RuntimeError("Model not loaded")
-    return predictor
+    if _predictor_ref[0] is None:
+        return load_predictor_instance()
+    return _predictor_ref[0]
 
 
 # ---------------------------------------------------------------------------
@@ -557,9 +568,14 @@ HTML_TEMPLATE = r"""
     </select>
     <button class="primary" id="analyzeBtn" disabled>🔍 Phân tích</button>
     <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;color:var(--text-dim)"
-           title="Tách vocal/drums bằng Demucs trước khi nhận diện. Lần đầu tải ~315MB từ HuggingFace — nên tắt để test nhanh.">
-      <input type="checkbox" id="demucsToggle"> Demucs (tách nhạc cụ — chậm, cần HF download lần đầu)
+           title="Tách vocal/drums bằng Demucs trên GPU và tự động lưu cache ổ cứng (lần 2 chỉ mất 0.05s).">
+      <input type="checkbox" id="demucsToggle" checked> Demucs (GPU + Cache)
     </label>
+    <select id="demucsModelSelect" style="min-width:170px;padding:8px 10px;font-size:0.82rem"
+            title="htdemucs_ft: chuẩn như lúc train (4-model ensemble) | htdemucs: nhanh gấp 4 lần (~20s)">
+      <option value="htdemucs_ft" selected>htdemucs_ft (Chuẩn)</option>
+      <option value="htdemucs">htdemucs (Nhanh 4×)</option>
+    </select>
   </div>
 
   <!-- Waveform -->
@@ -803,6 +819,7 @@ HTML_TEMPLATE = r"""
     if (!filename) return;
 
     const useDemucs = document.getElementById('demucsToggle').checked;
+    const demucsModel = document.getElementById('demucsModelSelect').value || 'htdemucs_ft';
     const overlay = document.getElementById('loadingOverlay');
     const loadingText = document.getElementById('loadingText');
     const progressFill = document.getElementById('progressBarFill');
@@ -820,7 +837,8 @@ HTML_TEMPLATE = r"""
     // 1. POST to start background job → get job_id immediately
     let jobId;
     try {
-      const r = await fetch(`/analyze/${filename}?demucs=${useDemucs}`);
+      const url = `/analyze/${encodeURIComponent(filename)}?demucs=${useDemucs}&demucs_model=${encodeURIComponent(demucsModel)}`;
+      const r = await fetch(url);
       if (!r.ok) throw new Error(await r.text());
       const j = await r.json();
       jobId = j.job_id;
@@ -1253,11 +1271,23 @@ def analyze_start(filename: str):
         return jsonify({"error": "File not found"}), 404
 
     use_demucs = request.args.get("demucs", "true").lower() in ("true", "1", "yes")
+    demucs_model = request.args.get("demucs_model", "htdemucs_ft").strip() or "htdemucs_ft"
+    if demucs_model not in ("htdemucs_ft", "htdemucs"):
+        demucs_model = "htdemucs_ft"
 
     job = worker.create_job(filename)
     t = threading.Thread(
         target=worker.run_inference_job,
-        args=(job, filepath, use_demucs, get_predictor(), _separator_ref, _separator_lock),
+        args=(
+            job,
+            filepath,
+            use_demucs,
+            _predictor_ref,
+            load_predictor_instance,
+            _separator_dict,
+            _gpu_lock,
+            demucs_model,
+        ),
         daemon=True,
     )
     t.start()
@@ -1307,7 +1337,7 @@ def analyze_stream(job_id: str):
 # ---------------------------------------------------------------------------
 
 def main():
-    global predictor, _model_path
+    global predictor, _model_path, _classes_json_path
 
     parser = argparse.ArgumentParser(description="ChordSensePro — Interactive Test UI")
     parser.add_argument("--model", default=None, help="Path to .onnx model (default: latest in results/)")
@@ -1318,6 +1348,7 @@ def main():
     args = parser.parse_args()
 
     _model_path = args.model or resolve_latest_model()
+    _classes_json_path = args.classes_json
     print(f"🎵 ChordSensePro Test UI")
     print(f"   Model : {_model_path}")
     print(f"   Songs : {SONGS_DIR}")
@@ -1326,7 +1357,7 @@ def main():
     print()
 
     print("Loading ONNX model...")
-    predictor = ONNXPredictor(_model_path, args.classes_json)
+    predictor = load_predictor_instance()
     if predictor.is_v5:
         print("   ✓ Model v5 (2-stage Full-Song Context)")
     elif predictor.is_frame_level:

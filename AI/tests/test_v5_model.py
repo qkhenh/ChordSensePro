@@ -601,3 +601,112 @@ def test_v5_1_bass_first_cqt_pedal_hold_dropout_and_warm_start(tmp_path):
         n_loaded = load_warm_compatible_weights(old_ckpt, m_new)
         assert n_loaded > 5
         assert torch.allclose(m_new.layer_weights, torch.full_like(m_new.layer_weights, 1.25))
+
+
+def test_jazz_chord_theory_equivalences_and_hallucination_pruner():
+    """Verify Step-A & Step-B zero-retrain Jazz theory rules (`m6`, `9sus4`, `Abdim7`, `9(13)`, `7(#5b9)` & pruning)."""
+    from src.music_theory import resolve_jazz_chord_theory
+    from src.serve import apply_key_spelling, _prune_short_segments
+
+    rel_s = np.zeros(12, dtype=np.float32)
+    # 1. Cm7b5/Eb (root=0, qual=3, ext=4, bass=3) -> Ebm6 (root=3, sfx="m6")
+    r, q, e, b, sfx = resolve_jazz_chord_theory(0, 3, 4, 3, rel_s)
+    assert (r, b, sfx) == (3, 12, "m6")
+    spelled = apply_key_spelling([
+        {"start_ms": 0.0, "end_ms": 1500.0, "root_id": r, "quality_id": q, "ext_id": e, "bass_id": b, "chord": "", "confidence": 0.7, "silent": False, "_suffix_override": sfx}
+    ], prefer_flats=True)
+    assert spelled[0]["chord"] == "Ebm6"
+    assert "_suffix_override" not in spelled[0]
+
+    # 2. C11 (root=0, qual=2, ext=10) with sustained 9th & 4th and absent 3rd -> C9sus4 (qual=5, ext=8)
+    rel_sus = np.zeros(12, dtype=np.float32)
+    rel_sus[2] = 0.80  # 9th
+    rel_sus[5] = 0.85  # 4th
+    rel_sus[10] = 0.70  # b7
+    assert resolve_jazz_chord_theory(0, 2, 10, 12, rel_sus)[:4] == (0, 5, 8, 12)
+
+    # 3. Rootless E7b9 over Ab bass (root=4, qual=2, ext=7, bass=8) -> Abdim7 (root=8, qual=3, ext=5)
+    assert resolve_jazz_chord_theory(4, 2, 7, 8, rel_s)[:4] == (8, 3, 5, 12)
+
+    # 4. Ab7 + sustained 9th & 13th -> Ab9(13)
+    rel_dom = np.zeros(12, dtype=np.float32)
+    rel_dom[4] = 0.70  # 3rd
+    rel_dom[2] = 0.65  # 9th
+    rel_dom[9] = 0.75  # 13th
+    assert resolve_jazz_chord_theory(8, 2, 5, 12, rel_dom) == (8, 2, 12, 12, "9(13)")
+
+    # 5. Low-confidence <820ms transition hallucination is absorbed into strong neighbors
+    segs = [
+        {"start_ms": 0.0, "end_ms": 2000.0, "root_id": 5, "quality_id": 1, "ext_id": 4, "bass_id": 12, "chord": "Fm7", "confidence": 0.72, "silent": False},
+        {"start_ms": 2000.0, "end_ms": 2550.0, "root_id": 9, "quality_id": 0, "ext_id": 2, "bass_id": 12, "chord": "Aaug", "confidence": 0.38, "silent": False},
+        {"start_ms": 2550.0, "end_ms": 4500.0, "root_id": 10, "quality_id": 1, "ext_id": 4, "bass_id": 12, "chord": "Bbm7", "confidence": 0.70, "silent": False},
+    ]
+    cleaned = _prune_short_segments(segs, min_duration_ms=300.0, prune_low_conf=True)
+    assert len(cleaned) == 2
+    assert [c["chord"] for c in cleaned] == ["Fm7", "Bbm7"]
+
+
+def test_v5_1_2_pa1_taxonomy_and_diatonic_key_fallback():
+    """Verify PA1 removed combos, new data-backed colors (`add4, madd4, maj9#11, 6, m6, 9#11, 13#11, 13b9`)
+    and Diatonic Key Fallback on `1 + 5` missing-3rd chords.
+    """
+    from src.music_theory import BANNED_COMBO_TUPLES, resolve_jazz_chord_theory
+    from src.serve import canonicalize_chord_tuple, chord_name
+
+    # 1. None of the 7 banned combos can ever survive `resolve_jazz_chord_theory` or `canonicalize_chord_tuple`
+    banned_names = {"Cmaj11", "C11", "Cm7b9", "Cm7#11", "Cm7b13", "Cb5", "C7sus2"}
+    empty_s = np.zeros(12, dtype=np.float32)
+    for q_b, e_b in BANNED_COMBO_TUPLES:
+        nr, nq, ne, nb, sfx = resolve_jazz_chord_theory(0, q_b, e_b, 12, empty_s)
+        rc, qc, ec, bc = canonicalize_chord_tuple(nr, nq, ne, nb)
+        assert chord_name(rc, qc, ec, bc, suffix_override=sfx) not in banned_names
+        rc2, qc2, ec2, bc2 = canonicalize_chord_tuple(0, q_b, e_b, 12)
+        assert chord_name(rc2, qc2, ec2, bc2) not in banned_names
+
+    # 2. Diatonic Key Fallback for `1 + 5` missing-3rd power chords (`C + G`, absent `3` & `b3`)
+    s_power = np.zeros(12, dtype=np.float32)
+    s_power[0] = 0.85  # root
+    s_power[7] = 0.80  # 5th
+    s_power[3] = 0.05  # b3 absent
+    s_power[4] = 0.06  # 3 absent
+    # In Key of C Major (`key_id=0`): even if raw quality was `Cm (1)`, `C5` resolves to `C` (`qual=0`)!
+    assert resolve_jazz_chord_theory(0, 1, 0, 12, s_power, key_id=0)[:4] == (0, 0, 0, 12)
+    # In Key of C Minor (`key_id=12`): `C5` resolves to `Cm` (`qual=1`)!
+    assert resolve_jazz_chord_theory(0, 0, 0, 12, s_power, key_id=12)[:4] == (0, 1, 0, 12)
+    # In Key of C Major (`key_id=0`): `A5` (`root=9`) resolves to `Am` (`qual=1`)!
+    assert resolve_jazz_chord_theory(9, 0, 0, 12, s_power, key_id=0)[:4] == (9, 1, 0, 12)
+    # In Key of A Minor (`key_id=21`): `C5` (`root=0`, bIII) resolves to `C` (`qual=0`)!
+    assert resolve_jazz_chord_theory(0, 1, 0, 12, s_power, key_id=21)[:4] == (0, 0, 0, 12)
+
+    # 3. New PA1 colors: `add4`, `madd4`, `maj9#11`, `6`, `m6`, `9#11`, `13#11`, `13b9`
+    s_add4 = np.zeros(12, dtype=np.float32)
+    s_add4[[0, 4, 5, 7]] = [0.8, 0.65, 0.72, 0.7]
+    assert resolve_jazz_chord_theory(0, 0, 0, 12, s_add4)[4] == "add4"
+
+    s_madd4 = np.zeros(12, dtype=np.float32)
+    s_madd4[[0, 3, 5, 7]] = [0.8, 0.65, 0.72, 0.7]
+    assert resolve_jazz_chord_theory(0, 1, 0, 12, s_madd4)[4] == "madd4"
+
+    s_maj9s11 = np.zeros(12, dtype=np.float32)
+    s_maj9s11[[0, 2, 4, 6, 11]] = [0.8, 0.6, 0.6, 0.62, 0.55]
+    assert resolve_jazz_chord_theory(0, 0, 8, 12, s_maj9s11)[4] == "maj9#11"
+
+    s_maj6 = np.zeros(12, dtype=np.float32)
+    s_maj6[[0, 4, 7, 9]] = [0.8, 0.65, 0.6, 0.75]
+    assert resolve_jazz_chord_theory(0, 0, 0, 12, s_maj6)[4] == "6"
+
+    s_min6 = np.zeros(12, dtype=np.float32)
+    s_min6[[0, 3, 7, 9]] = [0.8, 0.65, 0.6, 0.72]
+    assert resolve_jazz_chord_theory(0, 1, 0, 12, s_min6)[4] == "m6"
+
+    s_dom_9s11 = np.zeros(12, dtype=np.float32)
+    s_dom_9s11[[0, 2, 4, 6, 10]] = [0.8, 0.62, 0.65, 0.60, 0.65]
+    assert resolve_jazz_chord_theory(7, 2, 5, 12, s_dom_9s11)[4] == "9#11"
+
+    s_dom_13s11 = np.zeros(12, dtype=np.float32)
+    s_dom_13s11[[0, 4, 6, 9, 10]] = [0.8, 0.65, 0.60, 0.62, 0.65]
+    assert resolve_jazz_chord_theory(7, 2, 5, 12, s_dom_13s11)[4] == "13#11"
+
+    s_dom_13b9 = np.zeros(12, dtype=np.float32)
+    s_dom_13b9[[0, 1, 4, 9, 10]] = [0.8, 0.55, 0.65, 0.62, 0.65]
+    assert resolve_jazz_chord_theory(7, 2, 7, 12, s_dom_13b9)[4] == "13b9"

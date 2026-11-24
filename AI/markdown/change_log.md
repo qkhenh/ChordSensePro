@@ -1,8 +1,99 @@
 # AI — Change Log
 
 ---
+## 2026-11-24 — 
+# ChordSensePro — Change Log & Kế Hoạch Chuẩn Hóa Nhạc Lý (Jazz / Pop)
 
-## 2026-11-18 — Xây dựng Toàn Bộ Kiến Trúc & Pipeline Model v5 (Jazz-Ready: Joint Conditional Heads, 20s–60s Bi-Conformer, LocalKey, Sustain Tension & 145-State Skeleton CRF)
+Tài liệu này lưu vết toàn bộ thay đổi về kiến trúc giải mã hợp âm, luật nhạc lý bậc mở rộng (`6 / 7 / 9 / 11 / 13 / alt`), xử lý thế đảo, luật Tone bài hát và lộ trình mở rộng dữ liệu cho các phiên bản tiếp theo.
+
+---
+
+## Phần 1. Change Log
+
+### `[v5.1.2]` — 2026-11-24: Chuẩn hóa Taxonomy Jazz/Pop (Phương án 1 — Zero-Retrain)
+Cập nhật trực tiếp trên tầng giải mã Guide-Tone + `sustain_env` + `key_logits` của `model_v5_1_fullsong_p3.onnx` (**không cần train lại**):
+
+- **Loại bỏ 7 hợp âm không tồn tại / sai chuẩn trong nhạc lý thực hành:**
+  - `DOM7_NAT`: bỏ **`dom11`** (`11`) — vì bậc `3` trưởng đụng quãng `b9` với bậc `11` tự nhiên; tự động quy đổi về `9sus4` / `7sus4` (khi khuyết bậc 3) hoặc `9` / `7` (khi có bậc 3).
+  - `MAJ7_SHELL`: bỏ **`maj11`** — tự động quy đổi về `add4` (khi không có `maj7`), `maj9#11` (khi có `#11`), hoặc `maj9` / `maj7`.
+  - `MIN7_SHELL`: khóa xác suất (`DEPRECATED_TYPE_MASK`) đối với **`m7b9`**, **`m7#11`**, **`m7b13`** $\to$ đưa về `m7` / `m6` / `madd4`.
+  - `AUG_SHELL`: khóa xác suất **`b5`** (`maj b5`) $\to$ đưa về `aug` hoặc `maj`.
+  - `SUS2_SHELL`: khóa xác suất **`7sus2`** $\to$ đưa về `sus2` hoặc `9sus4`.
+- **Bổ sung các màu hợp âm mới đã có nền dữ liệu trong `DE/data/export/v3`:**
+  - `MAJ_SHELL`: bổ sung **`add4`** (`majadd4`, ví dụ `Cadd4`: `{1, 3, 4, 5}`, vắng `7`).
+  - `MIN_SHELL`: bổ sung **`madd4`** (`minor add 4`, ví dụ `Cmadd4`: `{1, b3, 4, 5}`, vắng `b7`).
+  - `MAJ7_SHELL`: bổ sung **`maj9#11`** (`{1, 3, 7, 9, #11}`).
+  - **Gia đình hợp âm 6**: bổ sung **`6`** (`Cmaj6` / `C6`), **`m6`** (`Cm6` trực tiếp khi có `1 + b3 + 6` vắng `b7`, bên cạnh quy đổi `Xm7b5/b3 → Ym6`), và **`6/9`** (`{1, 3, 5, 6, 9}`). *(Riêng `Cm6/9` mới có 3 mẫu trong dataset nên đưa vào Backlog chờ bổ sung data).*
+  - `DOM7_ALT`: bổ sung 3 màu đã có mẫu nền trong `v3` là **`9#11`**, **`13#11`**, **`13b9`**. *(Các màu đa biến âm hiếm `< 10` mẫu được ghi vào Backlog bên dưới).*
+- **Bổ sung Luật Tone bài hát (`Diatonic Key Fallback`) cho hợp âm khuyết bậc 3 (`1 + 5` Power Chord):**
+  - Kết hợp xác suất giọng toàn bài (`global_song_key`) và cục bộ (`local_key`) từ `key_logits` (24 tone Trưởng/Thứ).
+  - Khi một hợp âm chỉ vang bậc `1` và `5` (cả bậc `3` trưởng lẫn `b3` thứ đều vắng `< 0.18`): tra bậc âm giai của tone hiện hành để tự chốt Trưởng/Thứ (ví dụ bài tone **C Major** đánh `C + G` khuyết bậc 3 $\to$ bắt buộc ra **`C`**, không nhảy sang `Cm`; đánh `A + E` $\to$ ra **`Am`**).
+
+---
+
+### `[v5.1.1]` — 2026-11-24: Hiệu chỉnh Guide-Tone CRF & Khử Ảo Giác (Bước A + Bước B)
+- **Bước A (`AI/src/music_theory.py`):**
+  - Bỏ bậc `3` trưởng khỏi mặt nạ hợp âm `11` tự nhiên; chỉnh `tension_only` của bậc `13` tập trung vào nốt `13` (`9` bán cung).
+  - Bổ sung `resolve_jazz_chord_theory()`: quy đổi `Xm7b5/b3 → Ym6` (`Cm7b5/Eb → Ebm6`), `R7b9/3 → (R+4)dim7` (`E7b9/Ab → Abdim7`), `9(13)` (`Ab9(13)`), nâng cấp `m11` / `m13`.
+- **Bước B (`AI/src/serve.py`):**
+  - Hiệu chỉnh emission CRF (`_calibrate_v5_crf_and_bass`): chống trễ giọng ở vòng `ii-V-I` (`Eb7 → Ebm7`), khôi phục thế đảo 1 (`Ab/C, Gb/Bb, Eb/G, F/A`) và thế đảo 3 (`Eb/Db`), phân biệt `Ab9(13)` với `Fm7/Ab`.
+  - Xử lý kẹt `stay_bonus` sau `sus4` (`C9sus4 → C7` giải sạch về `C9sus4 → C`), rút gọn `R7/b7 → R/b7`, gộp phân đoạn nhiễu ngắn độ tin cậy thấp.
+
+---
+
+### `[v5.1.0]` — 2026-11-19..23: Kiến trúc `Model v5.1 (Bass-First)` & Tối ưu Demucs GPU
+- **Model `v5.1`:** Thêm CQT 5 quãng tám (`C1..B5`, 60 bins), `BassPedalHoldLayer` (`tau = 1.15s`), chuỗi phân cấp `TrueBassHead → RootHead → ChordTypeHead → SlashBassHead`.
+- **Tối ưu `htdemucs_ft` trên GPU VRAM thấp (`<= 6.5 GB`):** Tự động giải phóng VRAM tạm thời trước khi tách nhạc, stream cửa sổ `6s` lên CUDA (`peak VRAM ~1.04 GB`), và lưu cache stem tại `AI/results/.demucs_cache/`.
+
+---
+
+## Phần 2. Kế Hoạch Đầy Đủ (Master Plan)
+
+### Giai đoạn 1 — Đã triển khai ngay (Phương án 1: Zero-Retrain trên `model_v5_1`)
+1. Khóa cứng & quy đổi toàn bộ 7 hợp âm sai chuẩn (`dom11, maj11, m7b9, m7#11, m7b13, b5, 7sus2`).
+2. Kích hoạt nhóm hợp âm mới có sẵn nền âm học trong `v3`: `add4`, `madd4`, `maj9#11`, `6`, `m6`, `6/9`, `9#11`, `13#11`, `13b9`.
+3. Kích hoạt luật **Diatonic Key Fallback** bằng `key_logits` cho các đoạn khuyết bậc 3 (`1 + 5`).
+
+---
+
+### Danh mục Hợp Âm Chưa Đủ Dataset — Lưu Trữ Chờ Xử Lý Sau (Backlog)
+Các hợp âm dưới đây có số mẫu gốc cực thấp hoặc bằng `0` trong `DE/data/export/v3` (`149,850` đoạn train). **Chưa mở vội ở giai đoạn hiện tại** để tránh hiện tượng đoán mò (hallucination), sẽ đưa vào cùng đợt bổ sung dữ liệu ở Giai đoạn 2:
+
+| Họ Skeleton | Hợp âm cần bổ sung sau | Số mẫu hiện có (`train` / `tổng v3`) | Trạng thái |
+| :--- | :--- | :---: | :--- |
+| **Gia đình hợp âm 6** | `Cm6/9` (`min6/9`) | `3` / `3` | Chờ bổ sung data |
+| **`DOM7_ALT`** | `7b5b9` | `9` / `20` | Chờ bổ sung data |
+| **`DOM7_ALT`** | `7b5#9` | `3` / `6` | Chờ bổ sung data |
+| **`DOM7_ALT`** | `7#5#9` | `4` / `6` | Chờ bổ sung data |
+| **`DOM7_ALT`** | `7#5b9` | `1` / `11` | Chờ bổ sung data |
+| **`HDIM_SHELL`** | `m11b5` (`hdim11`) | `0` / `0` | Chưa có mẫu (`0`) — chờ sinh data |
+| **`SUS4_SHELL`** | `7b9sus4` | `0` / `0` | Chưa có mẫu (`0`) — chờ sinh data |
+| **`SUS4_SHELL`** | `13b9sus4` | `0` / `0` | Chưa có mẫu (`0`) — chờ sinh data |
+
+*(Lưu ý thêm: màu đơn `7#5` hiện cũng chỉ có `43` mẫu train, nên cần được nhân bản/bổ sung cùng đợt).*
+
+---
+
+### Giai đoạn 2 — Kế Hoạch Train Lại `Model v6` (Để sau khi sẵn sàng)
+
+#### Bước 2.1. Chuẩn hóa lại Data Pipeline (`DE`)
+- Cập nhật `DE/src/data_processing/application/mappers/harte_mapper.py` và `classes.json`:
+  - Cứu **`1,398` mẫu thật** của họ hợp âm 6 (`:maj6` = `927`, `:min6` = `270`, `:maj6(9)` = `201`) đang bị đánh dấu `PARTIAL` (`ext = None`) sang `OK` (tạo thêm họ `SIXTH_SHELL` hoặc extension riêng).
+  - Tách nhãn tường minh cho `add4`, `madd4`, `maj9#11`, `9#11`, `13#11`, `13b9`.
+  - Xóa vĩnh viễn 7 tổ hợp không hợp lệ (`dom11`, `maj11`, `m7b9`, `m7#11`, `m7b13`, `b5`, `7sus2`) khỏi `VALID_COMBO_TUPLES` ngay từ bước export dataset `v4`.
+  - Áp dụng tone bài hát (`estimate_local_keys`) để gán nhãn Trưởng/Thứ chuẩn cho các đoạn `:5` / `:(1,5)` đủ điều kiện hoặc giữ cờ `missing_third` riêng.
+
+#### Bước 2.2. Bổ sung Dataset cho 8 hợp âm hiếm trong Backlog
+- Sử dụng kho SoundFont có sẵn tại `DE/data/datasets/soundfonts` (Grand Piano, Rhodes EP, Acoustic/Jazz Guitar, Strings + Bass):
+  - Render đa thế bấm (root position, drop-2, rootless shell voicing, đảo bass) × 12 giọng × nhiều tempo/velocity cho 8 loại hợp âm thiếu mẫu (`m6/9`, `7b5b9`, `7b5#9`, `7#5#9`, `7#5b9`, `m11b5`, `7b9sus4`, `13b9sus4`) và `7#5` (~`500–1,000` đoạn mỗi màu).
+  - Cho chạy qua cùng bộ lọc `htdemucs_ft` (`other + bass`) hoặc trộn nhiễu phòng thu nhẹ để đồng nhất miền âm học (domain matching) với nhạc thật.
+
+#### Bước 2.3. Nâng cấp Kiến trúc & Huấn luyện `Model v6`
+- Thay vì nhồi hàng chục tổ hợp màu hiếm vào một lớp `Softmax` đơn nhãn dễ bị lệch phân phối:
+  - Giữ **CRF Skeleton Head** cho khung nền (`MAJ`, `MAJ6`, `MAJ7`, `DOM7`, `MIN`, `MIN6`, `MIN7`, `MIN_MAJ7`, `HDIM`, `DIM`, `AUG`, `SUS2`, `SUS4`).
+  - Thay tầng chọn màu đơn lẻ bằng **Multi-Label Tension Head** (dự đoán độc lập xác suất có mặt của từng bậc `b9, 9, #9, add4/11, #11/b5, #5/b13, 6/13` bằng `BCEWithLogitsLoss` + `sustain_env`), giúp model ghép tổ hợp tự nhiên mọi màu (`7#5b9`, `13b9sus4`, `maj9#11`, `m6/9`...) mà không sợ thiếu tổ hợp chéo.
+  - Khởi tạo ấm (`--warm_ckpt`) từ `model_v5_1` để giữ nguyên toàn bộ bộ trích xuất MERT + CQT Bass-First và rút ngắn thời gian train trên GPU.
+
 
 ### 1. Chẩn đoán thực nghiệm trên `D:\TestPIANO.wav` & Thiết kế `70_plan_v5_jazz_context.md`
 - Soi trực tiếp phổ Chroma CQT, RMS và xác suất thô của `model_v4_5s_p2.onnx` trên `D:\TestPIANO.wav` (cả có và không Demucs):

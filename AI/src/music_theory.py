@@ -80,6 +80,25 @@ for _tid, _qe in enumerate(VALID_COMBO_TUPLES):
     TYPE_TO_SKEL[_tid] = _sid
     SKEL_TYPE_MASK[_sid, _tid] = True
 
+# v5.1.2 Taxonomy Cleanup (PA1):
+# 7 chords eliminated from user-facing output (`dom11`, `maj11`, `m7b9`, `m7#11`, `m7b13`, `b5`, `7sus2`).
+# Note: `(0, 10)` and `(2, 10)` keep their acoustic logits in `ChordTypeHead` because in v3 they were trained on
+# `:maj(11)` (`add4`) and `:11` (`9sus4`), then `resolve_jazz_chord_theory` deterministically remaps them.
+BANNED_COMBO_TUPLES: tuple[tuple[int, int], ...] = (
+    (0, 10),  # maj11 (does not exist -> add4 / maj9#11 / maj9)
+    (2, 10),  # dom11 (does not exist -> 9sus4 / 7sus4 / 9)
+    (1, 7),   # m7b9
+    (1, 11),  # m7#11
+    (1, 13),  # m7b13
+    (0, 1),   # maj b5
+    (4, 5),   # 7sus2
+)
+DEPRECATED_TYPE_MASK: np.ndarray = np.zeros(N_TYPES, dtype=bool)
+for _dq, _de in ((1, 7), (1, 11), (1, 13), (0, 1), (4, 5)):
+    _dtid = int(QE_TO_TYPE[_dq, _de])
+    if _dtid >= 0:
+        DEPRECATED_TYPE_MASK[_dtid] = True
+
 # Tension / color types that require sustained upper-voice evidence to upgrade over the base shell type
 SKEL_BASE_TYPE: np.ndarray = np.array(
     [
@@ -104,17 +123,25 @@ REL_PITCH_INDEX: np.ndarray = (np.arange(12)[:, None] + np.arange(12)[None, :]) 
 
 
 def _build_relative_interval_masks() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return `(shell_mask, full_mask, tension_only_mask)` of shape `(41, 12)` in relative semitones."""
+    """Return `(shell_mask, full_mask, tension_only_mask)` of shape `(41, 12)` in relative semitones.
+
+    Music-theory rules enforced for 7 / 9 / 11 / 13:
+    - Natural `11` (`ext=10` on `maj`/`dom`) omits the clashing major `3rd` (`4` semitones, minor-9th avoid interval)
+      and voices `{1, 4(11), 5, 7/b7, 9}` (making `dom 11` acoustically equivalent to `9sus4`).
+    - Natural `13` (`ext=12`) treats the `13th` (`9` semitones) as the primary tension in `tension_only_mask`
+      so voicings with or without the optional `9th` (`1-3-b7-13` vs `1-3-b7-9-13`) both score full tension support.
+    """
     shell = np.zeros((N_TYPES, 12), dtype=np.float32)
     full = np.zeros((N_TYPES, 12), dtype=np.float32)
+    tension_only = np.zeros((N_TYPES, 12), dtype=np.float32)
 
     base_triads = {
-        0: [0, 4, 7],   # maj
-        1: [0, 3, 7],   # min
+        0: [0, 4, 7],      # maj
+        1: [0, 3, 7],      # min
         2: [0, 4, 7, 10],  # dom (implies b7)
-        3: [0, 3, 6],   # dim
-        4: [0, 2, 7],   # sus2
-        5: [0, 5, 7],   # sus4
+        3: [0, 3, 6],      # dim
+        4: [0, 2, 7],      # sus2
+        5: [0, 5, 7],      # sus4
     }
 
     for tid, (q, e) in enumerate(VALID_COMBO_TUPLES):
@@ -125,6 +152,10 @@ def _build_relative_interval_masks() -> tuple[np.ndarray, np.ndarray, np.ndarray
         elif e == 2:  # #5
             sh.discard(7)
             sh.add(8)
+        elif e == 10 and q in (0, 2):
+            # Avoid minor-9th clash between major 3rd (4) and natural 11th (5)
+            sh.discard(4)
+            sh.add(5)
 
         # 7th guide tones
         if e == 3:  # maj7
@@ -141,31 +172,42 @@ def _build_relative_interval_masks() -> tuple[np.ndarray, np.ndarray, np.ndarray
                 sh.add(10)
 
         fu = set(sh)
+        tens: set[int] = set()
         if e == 6:  # add9 (no 7th)
             fu.add(2)
+            tens.add(2)
         elif e == 7:  # b9
             fu.add(1)
+            tens.add(1)
         elif e == 8:  # nat9
             fu.add(2)
+            tens.add(2)
         elif e == 9:  # #9
             fu.add(3)
-        elif e == 10:  # nat11
+            tens.add(3)
+        elif e == 10:  # nat11 (on min11, 5 is tension; on dom11/9sus4, 5 is in shell and 2+5 confirm suspension)
             fu.update((2, 5))
+            tens.update((5,) if q == 1 else (2, 5))
         elif e == 11:  # #11
             fu.update((2, 6))
-        elif e == 12:  # nat13
+            tens.add(6)
+        elif e == 12:  # nat13 (9 semitones = 6th/13th is the defining color; 9th is optional in shell voicings)
             fu.update((2, 9))
+            tens.add(9)
         elif e == 13:  # b13
             fu.add(8)
+            tens.add(8)
         elif e == 14:  # alt (b9, #9, #11/b5, b13/#5)
             fu.update((1, 3, 6, 8))
+            tens.update((1, 3, 6, 8))
 
         for iv in sh:
             shell[tid, iv % 12] = 1.0
         for iv in fu:
             full[tid, iv % 12] = 1.0
+        for iv in tens:
+            tension_only[tid, iv % 12] = 1.0
 
-    tension_only = np.clip(full - shell, 0.0, 1.0)
     return shell, full, tension_only
 
 
@@ -346,3 +388,189 @@ def estimate_local_keys(
         out_keys[i] = best_k
 
     return out_keys
+
+
+def resolve_power_chord_quality_by_key(
+    root_id: int,
+    key_id: int | None,
+    default_qual: int = 0,
+) -> int:
+    """Resolve Major (`0`) vs Minor (`1`) quality using song/local `key_id` (`0..11` Maj, `12..23` Min)
+    when a chord voices only `1 + 5` (missing 3rd, e.g. `C5` in Key of C Major -> `C`, never `Cm`).
+    """
+    if key_id is None or key_id < 0 or key_id >= 24 or root_id < 0 or root_id >= 12:
+        return int(default_qual)
+    if key_id < 12:
+        deg = (int(root_id) - int(key_id)) % 12
+        if deg in (0, 5, 7, 3, 8, 10):  # I, IV, V (+ modal bIII, bVI, bVII)
+            return 0
+        if deg in (2, 4, 9):            # ii, iii, vi
+            return 1
+        return int(default_qual)
+    tonic_min = int(key_id) - 12
+    deg = (int(root_id) - tonic_min) % 12
+    if deg in (0, 5, 7):                # i, iv, v (natural minor when 3rd is absent)
+        return 1
+    if deg in (3, 8, 10):               # bIII, bVI, bVII (e.g. C, F, G in A minor)
+        return 0
+    return int(default_qual)
+
+
+def resolve_jazz_chord_theory(
+    root_id: int,
+    quality_id: int,
+    ext_id: int,
+    bass_id: int,
+    rel_sustain: np.ndarray,
+    tb_prob: np.ndarray | None = None,
+    key_id: int | None = None,
+) -> tuple[int, int, int, int, str | None]:
+    """Apply Jazz/Pop music-theory equivalence, v5.1.2 PA1 taxonomy rules & Diatonic Key Fallback.
+
+    Args:
+        root_id, quality_id, ext_id, bass_id: Base decoded chord IDs.
+        rel_sustain: `(12,)` mean sustained pitch-class activation rotated relative to `root_id`
+            (`0=1, 1=b9, 2=9, 3=b3/#9, 4=3, 5=4/11, 6=b5/#11, 7=5, 8=#5/b13, 9=6/13, 10=b7, 11=maj7`).
+        tb_prob: Optional `(13,)` mean physical `TrueBass` probability (`0..11`, `12=N`) in absolute pitch class.
+        key_id: Optional `0..23` (`0..11` Maj, `12..23` Min) song/local key for missing-3rd (`1+5`) resolution.
+
+    Returns:
+        `(new_root, new_qual, new_ext, new_bass, suffix_override)`.
+    """
+    r, q, e, b = int(root_id), int(quality_id), int(ext_id), int(bass_id)
+    if r < 0 or r >= 12:
+        return r, q, e, b, None
+
+    s_1 = float(rel_sustain[0])
+    s_b9 = float(rel_sustain[1])
+    s_9 = float(rel_sustain[2])
+    s_b3 = float(rel_sustain[3])
+    s_3 = float(rel_sustain[4])
+    s_4 = float(rel_sustain[5])
+    s_b5 = float(rel_sustain[6])
+    s_5 = float(rel_sustain[7])
+    s_sharp5 = float(rel_sustain[8])
+    s_13 = float(rel_sustain[9])
+    s_b7 = float(rel_sustain[10])
+    s_maj7 = float(rel_sustain[11])
+
+    # 0. Eliminate all 7 banned combos (`b5`, `m7b9`, `m7#11`, `m7b13`, `7sus2`, `maj11`, `dom11`)
+    if q == 0 and e == 1:
+        e = 2 if s_sharp5 >= 0.35 else 0
+    elif q == 1 and e in (7, 11, 13):
+        e = 4
+    elif q == 4 and e == 5:
+        if s_b7 >= 0.35 and s_4 >= 0.35:
+            return r, 5, 8, b, None
+        e = 0
+    elif q == 0 and e == 10:  # `maj11` does not exist -> `maj9#11` / `maj9` / `maj7` or `add4`
+        if s_maj7 >= 0.30:
+            if s_b5 >= 0.40 and s_9 >= 0.36:
+                return r, 0, 11, b, "maj9#11"
+            return r, 0, (8 if s_9 >= 0.36 else 3), b, None
+        if s_4 >= 0.42 and s_3 >= 0.30:
+            return r, 0, 0, b, "add4"
+        return r, 0, (6 if s_9 >= 0.42 else 0), b, None
+    elif q == 2 and e == 10:  # `dom11` does not exist -> `m11` / `9sus4` / `7sus4` / `9` / `7`
+        if s_b3 >= 0.48 and s_3 < 0.14 and s_b5 < 0.35:
+            return r, 1, 10, b, None
+        if s_3 < 0.30 and s_b3 < 0.28:
+            return r, 5, (8 if s_9 >= 0.28 else 5), b, None
+        e = 8 if s_9 >= 0.36 else 5
+
+    # 1. Diatonic Key Fallback for missing-3rd (`1 + 5` power chords, where both `3` and `b3` are absent)
+    if q in (0, 1) and e == 0 and (b == 12 or b == r):
+        if s_3 < 0.18 and s_b3 < 0.18 and abs(s_3 - s_b3) < 0.10 and (s_5 >= 0.28 or s_1 >= 0.35):
+            q_diatonic = resolve_power_chord_quality_by_key(r, key_id, default_qual=q)
+            return r, q_diatonic, 0, b, None
+
+    # 2. Half-diminished `Xm7b5` over its minor 3rd `Y = (X + 3) % 12` === root-position `Ym6`
+    y_m6 = (r + 3) % 12
+    if q == 3 and e == 4:
+        if b == y_m6:
+            return y_m6, 1, 0, 12, "m6"
+        if b == 12 and tb_prob is not None:
+            if float(tb_prob[r]) < 0.12 and float(tb_prob[y_m6]) >= 0.22 and s_b3 >= 0.50:
+                return y_m6, 1, 0, 12, "m6"
+
+    # 3. `SUS4_SHELL` resolution & `9sus4`
+    if q == 5 and e in (0, 5):
+        if e == 0 and s_3 > s_4 + 0.12 and s_3 >= 0.38:
+            return r, 0, 0, b, None
+        if s_b7 >= 0.34 and s_9 >= 0.36 and s_4 >= 0.40:
+            return r, 5, 8, b, None
+
+    # 4. `MAJ_SHELL` (`add4`, `6`, `6/9`)
+    if q == 0 and e in (0, 6):
+        if s_3 >= 0.38 and s_4 >= 0.54 and s_maj7 < 0.18 and s_b7 < 0.20 and s_4 > s_9 + 0.12:
+            return r, 0, 0, b, "add4"
+        if (
+            (b == 12 or b == r)
+            and (tb_prob is None or float(tb_prob[r]) >= 0.58)
+            and s_3 >= 0.45
+            and s_5 >= 0.38
+            and s_13 >= 0.60
+            and s_maj7 < 0.14
+            and s_b7 < 0.16
+        ):
+            if s_9 >= 0.50:
+                return r, 0, 6, 12, "6/9"
+            return r, 0, 0, 12, "6"
+
+    # 5. `MAJ7_SHELL` (`maj9#11`)
+    if q == 0 and e in (3, 8, 11, 12):
+        if s_3 >= 0.32 and s_maj7 >= 0.28 and s_9 >= 0.44 and s_b5 >= 0.44 and s_4 < 0.28:
+            return r, 0, 11, b, "maj9#11"
+
+    # 6. `MIN_SHELL` (`madd4`, `m6`)
+    if q == 1 and e in (0, 6):
+        if s_b3 >= 0.42 and s_4 >= 0.55 and s_b7 < 0.20 and s_4 > s_9 + 0.12 and s_13 < 0.45:
+            return r, 1, 0, b, "madd4"
+        if (
+            (b == 12 or b == r)
+            and (tb_prob is None or float(tb_prob[r]) >= 0.50)
+            and s_b3 >= 0.45
+            and s_13 >= 0.56
+            and s_b7 < 0.22
+        ):
+            return r, 1, 0, 12, "m6"
+
+    # 7. `DOM7_NAT` / `DOM7_ALT` (`dim7` rootless, `b3` guard, `9sus4`, `13b9`, `13#11`, `9#11`, `7#5`, `9(13)`)
+    if q == 2:
+        # Rootless `R7b9` over its major 3rd `(R + 4) % 12` === `(R + 4)dim7` (when `#5` is absent)
+        if e == 7 and s_sharp5 < 0.35:
+            third_pc = (r + 4) % 12
+            if b == third_pc:
+                return third_pc, 3, 5, 12, None
+            if tb_prob is not None and float(tb_prob[third_pc]) > float(tb_prob[r]) + 0.12 and float(tb_prob[r]) < 0.35:
+                return third_pc, 3, 5, 12, None
+
+        # Minor-3rd guard: without a Major 3rd (`s_3 < 0.14`), strong `b3` (`>= 0.48`) is `m7`/`m11`, never `dom7`/`9sus4`
+        if s_b3 >= 0.48 and s_3 < 0.14 and s_b5 < 0.35:
+            return r, 1, (10 if s_4 >= 0.55 else 4), b, None
+
+        if e in (5, 8) and s_4 >= 0.48 and s_3 < 0.20 and s_b3 < 0.24 and s_4 > s_3 + 0.25:
+            return r, 5, (8 if s_9 >= 0.34 else 5), b, None
+
+        if s_3 >= 0.30:
+            if s_b9 >= 0.38 and s_13 >= 0.48 and s_sharp5 < 0.35:
+                return r, 2, 7, b, "13b9"
+            if s_b5 >= 0.44 and s_13 >= 0.48 and s_b9 < 0.22 and s_4 < 0.30:
+                return r, 2, 11, b, "13#11"
+            if s_9 >= 0.44 and s_b5 >= 0.44 and s_13 < 0.45 and s_b9 < 0.22 and s_4 < 0.30:
+                return r, 2, 11, b, "9#11"
+            if e in (5, 7, 13, 14) and s_sharp5 >= 0.46 and s_5 < 0.22 and s_b9 < 0.20:
+                return r, 2, 2, b, None
+            if e in (5, 8, 12) and s_9 >= 0.46 and s_13 >= 0.46 and s_sharp5 < 0.35:
+                return r, 2, 12, b, "9(13)"
+
+    # 8. `MIN7_SHELL` (`m6` when `b7` is absent and `6th` is sustained; `m11` / `m13` upgrades)
+    if q == 1 and e == 4:
+        if (b == 12 or b == r) and s_b3 >= 0.45 and s_13 >= 0.58 and s_b7 < 0.24:
+            return r, 1, 0, 12, "m6"
+        if s_4 >= 0.58 and s_4 > s_9 + 0.15:
+            return r, 1, 10, b, None
+        if s_13 >= 0.62 and s_b7 >= 0.40:
+            return r, 1, 12, b, None
+
+    return r, q, e, b, None

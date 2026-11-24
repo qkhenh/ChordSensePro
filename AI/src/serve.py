@@ -13,6 +13,7 @@ import numpy as np
 
 from src.crf import viterbi_crf_numpy
 from src.music_theory import (
+    DEPRECATED_TYPE_MASK,
     FLAT_KEY_IDS,
     N_SKELETONS,
     N_TYPES,
@@ -22,6 +23,8 @@ from src.music_theory import (
     SKEL_TYPE_MASK,
     TYPE_TENSION_REL_MASK,
     TYPE_TO_QE,
+    resolve_jazz_chord_theory,
+    resolve_power_chord_quality_by_key,
 )
 
 # Add PyTorch bundled CUDA DLLs to PATH so onnxruntime-gpu can find them
@@ -92,9 +95,28 @@ USE_DEMUCS_DEFAULT = os.environ.get("SERVE_USE_DEMUCS", "1").lower() in ("1", "t
 DEMUCS_MODE_DEFAULT = os.environ.get("SERVE_DEMUCS_MODE", "auto").lower()  # "auto" | "always" | "off"
 DEMUCS_MODEL = os.environ.get("SERVE_DEMUCS_MODEL", "htdemucs_ft")
 DEMUCS_SEGMENT = float(os.environ.get("SERVE_DEMUCS_SEGMENT", "6.0"))
+def _resolve_default_serve_model() -> str:
+    env_p = os.environ.get("SERVE_MODEL_PATH")
+    if env_p:
+        return env_p
+    base_dir = Path(__file__).resolve().parent.parent / "results"
+    for cand in (
+        "model_v5_1_fullsong_p3.onnx",
+        "model_v5_fullsong_p3.onnx",
+        "model_v5_p3.onnx",
+        "model_v5_20s_p2.onnx",
+        "model_v4_5s_p2.onnx",
+        "model_v3_5s_p2.onnx",
+        "model_p2.onnx",
+    ):
+        if (base_dir / cand).exists():
+            return str(base_dir / cand)
+    return "results/model_v5_1_fullsong_p3.onnx"
+
+
 HOST = os.environ.get("SERVE_HOST", "0.0.0.0")
 PORT = int(os.environ.get("SERVE_PORT", "8000"))
-MODEL_PATH = os.environ.get("SERVE_MODEL_PATH", "results/model_v5_p3.onnx")
+MODEL_PATH = _resolve_default_serve_model()
 CLASSES_JSON = os.environ.get("SERVE_CLASSES_JSON", "../DE/data/export/v3/classes.json")
 
 ROOT_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -171,17 +193,29 @@ def canonical_bass_id(root_id: int, bass_id: int) -> int:
     return int(bass_id)
 
 
+_DEPRECATED_QE_FALLBACK: dict[tuple[int, int], tuple[int, int]] = {
+    (0, 10): (0, 8),  # maj11 -> maj9
+    (2, 10): (5, 8),  # dom11 -> 9sus4
+    (1, 7): (1, 4),   # m7b9 -> m7
+    (1, 11): (1, 4),  # m7#11 -> m7
+    (1, 13): (1, 4),  # m7b13 -> m7
+    (0, 1): (0, 2),   # b5 -> aug
+    (4, 5): (4, 0),   # 7sus2 -> sus2
+}
+
+
 def canonicalize_chord_tuple(
     root_id: int, quality_id: int, ext_id: int, bass_id: int = 12
 ) -> tuple[int, int, int, int]:
-    """Canonicalize root-bass identity and symmetric diminished-7th slash inversions."""
+    """Canonicalize root-bass identity, symmetric `dim7` inversions, and deprecated chord combos."""
     if root_id < 0 or root_id >= 12:
         return -1, -1, -1, 12
+    q_c, e_c = _DEPRECATED_QE_FALLBACK.get((int(quality_id), int(ext_id)), (int(quality_id), int(ext_id)))
     b = canonical_bass_id(root_id, bass_id)
     # Symmetric dim7: Cdim7 == Ebdim7/C == F#dim7/C == Adim7/C -> spell with bass as root
-    if quality_id == 3 and ext_id == 5 and 0 <= b < 12 and (root_id - b) % 3 == 0:
+    if q_c == 3 and e_c == 5 and 0 <= b < 12 and (root_id - b) % 3 == 0:
         return b, 3, 5, 12
-    return int(root_id), int(quality_id), int(ext_id), b
+    return int(root_id), q_c, e_c, b
 
 
 def chord_name(
@@ -190,16 +224,20 @@ def chord_name(
     ext_id: int,
     bass_id: int = 12,
     prefer_flats: bool = False,
+    suffix_override: str | None = None,
 ) -> str:
     if root_id < 0 or root_id >= 12:
         return "N"
     names = ROOT_NAMES_FLAT if prefer_flats else ROOT_NAMES
     r = names[root_id]
-    suffix = CHORD_SUFFIX.get((quality_id, ext_id))
-    if suffix is None:
-        q = QUALITY_NAMES[quality_id]
-        e = EXT_NAMES[ext_id]
-        suffix = QUALITY_SUFFIX[q] + EXT_SUFFIX[e]
+    if suffix_override is not None:
+        suffix = suffix_override
+    else:
+        suffix = CHORD_SUFFIX.get((quality_id, ext_id))
+        if suffix is None:
+            q = QUALITY_NAMES[quality_id]
+            e = EXT_NAMES[ext_id]
+            suffix = QUALITY_SUFFIX[q] + EXT_SUFFIX[e]
     name = r + suffix
     if 0 <= bass_id < 12 and bass_id != root_id:
         name += "/" + names[bass_id]
@@ -280,16 +318,24 @@ class HarmonicSeparator:
         self.segment = segment
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model = get_model(model_name)
-        self.model.to(self.device)
+        # Keep model on CPU when idle (0 MB idle VRAM); moved to `self.device` only during active separation
+        self.model.cpu()
         self.model.eval()
         self.samplerate = int(getattr(self.model, "samplerate", 44100))
         self.sources = list(getattr(self.model, "sources", ["drums", "bass", "other", "vocals"]))
         log.info(
             f"HarmonicSeparator ready: model={model_name}, sr={self.samplerate}, "
-            f"segment={segment}s, device={self.device}"
+            f"segment={segment}s, target_device={self.device}"
         )
 
-    def separate_waveform(self, wav_float: np.ndarray, sr: int, target_sr: int = SAMPLE_RATE) -> np.ndarray:
+    def separate_waveform(
+        self,
+        wav_float: np.ndarray,
+        sr: int,
+        target_sr: int = SAMPLE_RATE,
+        progress_cb: Any | None = None,
+        show_progress: bool = True,
+    ) -> np.ndarray:
         """Separate `wav_float` (shape `(N,)` or `(C, N)` in `[-1, 1]`) -> mono `int16` at `target_sr`."""
         import torch
         from demucs.apply import apply_model
@@ -315,32 +361,55 @@ class HarmonicSeparator:
                 ch1 = librosa.resample(stereo[1], orig_sr=sr, target_sr=self.samplerate)
                 wav_t = torch.from_numpy(np.stack([ch0, ch1], axis=0))
 
+        total_samples = int(wav_t.shape[-1])
+        seg_samples = int(self.segment * self.samplerate)
         ref = wav_t.mean(0)
         ref_mean = ref.mean()
         ref_std = ref.std() + 1e-8
-        wav_norm = (wav_t - ref_mean) / ref_std
+        # Keep full-song mix on CPU RAM so Demucs only streams 6s chunks to CUDA (~1.0 GB peak VRAM instead of 2.5+ GB!)
+        wav_norm_cpu = ((wav_t - ref_mean) / ref_std).unsqueeze(0).cpu()
+
+        def _demucs_cb(d: dict) -> None:
+            if progress_cb is None or d.get("state") != "end":
+                return
+            try:
+                n_m = max(1, int(d.get("models", 1)))
+                m_i = int(d.get("model_idx_in_bag", 0))
+                off = int(d.get("segment_offset", 0))
+                sub_f = min(1.0, float(off + seg_samples) / max(total_samples, 1))
+                progress_cb(min(1.0, (m_i + sub_f) / float(n_m)))
+            except Exception:
+                pass
 
         def _run_apply(dev: str):
-            self.model.to(dev)
-            with torch.no_grad():
-                out = apply_model(
-                    self.model,
-                    wav_norm.unsqueeze(0).to(dev),
-                    segment=self.segment,
-                    split=True,
-                    overlap=0.25,
-                    device=dev,
-                    progress=True,
-                )[0]
-            return out.cpu() * ref_std + ref_mean
+            try:
+                if dev == "cuda":
+                    torch.cuda.empty_cache()
+                self.model.to(dev)
+                with torch.no_grad():
+                    out = apply_model(
+                        self.model,
+                        wav_norm_cpu,
+                        segment=self.segment,
+                        split=True,
+                        overlap=0.25,
+                        device=dev,
+                        progress=show_progress,
+                        callback=(_demucs_cb if progress_cb is not None else None),
+                    )[0]
+                return out.cpu() * ref_std + ref_mean
+            finally:
+                # Always park Demucs back on CPU & release CUDA cache immediately after separation
+                self.model.cpu()
+                if dev == "cuda" and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         try:
             stems = _run_apply(self.device)
         except RuntimeError as exc:
             if self.device == "cuda" and "out of memory" in str(exc).lower():
-                log.warning("Demucs CUDA OOM — falling back to CPU")
+                log.warning("Demucs CUDA OOM on this call — retrying on CPU without disabling CUDA permanently")
                 torch.cuda.empty_cache()
-                self.device = "cpu"
                 stems = _run_apply("cpu")
             else:
                 raise
@@ -381,7 +450,10 @@ class ONNXPredictor:
         if not _ORT_AVAILABLE:
             raise RuntimeError("onnxruntime not installed: pip install onnxruntime-gpu")
 
-        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        providers: list[Any] = [
+            ("CUDAExecutionProvider", {"arena_extend_strategy": "kSameAsRequested"}),
+            "CPUExecutionProvider",
+        ]
         opts = ort.SessionOptions()
         opts.log_severity_level = 3
         self.session = ort.InferenceSession(model_path, sess_options=opts, providers=providers)
@@ -456,6 +528,12 @@ class ONNXPredictor:
         outs = self.session.run(None, {self.input_name: inp})
         cqt = outs[1][0] if len(outs) >= 2 else None
         return outs[0][0], cqt
+
+    def encode_chunks_batch_v5(self, wav_batch_f32: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
+        """Run batched v5 acoustic encoder on `(B, N)` -> `(emb_batch: (B, T, 256), cqt_batch: (B, T, 60) | None)`."""
+        outs = self.session.run(None, {self.input_name: wav_batch_f32.astype(np.float32, copy=False)})
+        cqt_b = outs[1] if len(outs) >= 2 else None
+        return outs[0], cqt_b
 
     def decode_song_v5(
         self,
@@ -708,8 +786,13 @@ def _compute_song_frame_rms_db(audio_int16: np.ndarray, n_frames: int) -> np.nda
     return 20.0 * np.log10(np.maximum(rms_s, 1e-6))
 
 
-def _compute_decay_lock_scale(rms_db_crf: np.ndarray) -> np.ndarray:
-    """Compute Onset-Decay Lock multiplier (`>= 1.0`) per CRF step to freeze decaying chord tails."""
+def _compute_decay_lock_scale(
+    rms_db_crf: np.ndarray,
+    sustain_crf: np.ndarray | None = None,
+) -> np.ndarray:
+    """Compute Onset-Decay Lock multiplier (`>= 1.0`) per CRF step to freeze decaying chord tails,
+    while unlocking immediately whenever upper-voice harmonic chroma shifts (`Ab -> Abmaj9`, `Bbmaj7 -> Bbm`).
+    """
     n = len(rms_db_crf)
     if n <= 2:
         return np.ones(n, dtype=np.float32)
@@ -718,16 +801,177 @@ def _compute_decay_lock_scale(rms_db_crf: np.ndarray) -> np.ndarray:
     for t in range(1, n):
         cur = float(rms_db_crf[t])
         diff = cur - float(rms_db_crf[t - 1])
-        if diff > 1.8:
-            # New chord attack / note strike -> reset peak, unlock transitions
+        chroma_flux = 0.0
+        if sustain_crf is not None and t < len(sustain_crf):
+            prev_idx = max(0, t - 2)
+            chroma_flux = float(np.linalg.norm(np.maximum(0.0, sustain_crf[t] - sustain_crf[prev_idx])))
+        if diff > 1.8 or chroma_flux > 0.34:
+            # New chord attack OR clear upper-voice harmonic shift -> reset peak, unlock transitions
             peak_db = cur
             scale[t] = 1.0
         else:
             peak_db = max(peak_db, cur)
             drop_db = peak_db - cur
             if diff <= 0.3 and drop_db >= 6.0:
-                scale[t] = min(3.0, 1.0 + (drop_db - 6.0) / 8.0)
+                scale[t] = min(2.5, 1.0 + (drop_db - 6.0) / 9.0)
     return scale
+
+
+def _calibrate_v5_crf_and_bass(
+    crf_em: np.ndarray,
+    bass_logits: np.ndarray,
+    sustain_env: np.ndarray,
+    tb_logits: np.ndarray | None,
+    stride: int,
+    key_logits: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Calibrate CRF skeleton emissions & slash bass logits using sustained 12-pitch guide tones
+    and physical `TrueBass` probabilities (`0` retraining needed):
+    - Protects minor `b3` vs major `3` (`Ebm7` vs `Eb7` during fast `ii-V-I` tonicizations)
+    - Suppresses false `maj7` / `dom7` when the 7th pitch is acoustically absent (`C7 -> C`, `Abmaj7 -> Ab7`)
+    - Moves suspended `11` (`4th` strong, `3rd` absent) from `DOM7_NAT` to `SUS4_SHELL` (`C9sus4 -> C`)
+    - Recovers first-inversion triads `X/Y` (`Gb/Bb`, `Ab/C`, `Eb/G`, `F/A`) and `X/b7` (`Eb/Db`)
+    - Disambiguates Dominant `R9(13)` from relative minor slash `(R+9)m/R` (`Ab9(13)`, `Gb9(13)`)
+    """
+    n_crf = len(crf_em)
+    total_frames = len(sustain_env)
+    em_adj = crf_em.copy()
+    b_adj = bass_logits.copy()
+
+    sustain_crf = np.array(
+        [
+            sustain_env[i * stride: min(total_frames, (i + 1) * stride)].mean(axis=0)
+            for i in range(n_crf)
+        ],
+        dtype=np.float32,
+    )
+
+    if tb_logits is not None and len(tb_logits) == total_frames:
+        tb_prob_f = _softmax(tb_logits, axis=-1)
+        tb_crf = np.array(
+            [
+                tb_prob_f[i * stride: min(total_frames, (i + 1) * stride)].mean(axis=0)
+                for i in range(n_crf)
+            ],
+            dtype=np.float32,
+        )
+    else:
+        tb_crf = None
+
+    raw_prob_crf = _softmax(crf_em, axis=-1)
+
+    for r in range(12):
+        base = 1 + r * N_SKELETONS
+        s_b3 = sustain_crf[:, (r + 3) % 12]
+        s_3 = sustain_crf[:, (r + 4) % 12]
+        s_4 = sustain_crf[:, (r + 5) % 12]
+        s_b5 = sustain_crf[:, (r + 6) % 12]
+        s_9 = sustain_crf[:, (r + 2) % 12]
+        s_13 = sustain_crf[:, (r + 9) % 12]
+        s_b7 = sustain_crf[:, (r + 10) % 12]
+        s_maj7 = sustain_crf[:, (r + 11) % 12]
+
+        # 1. Clear minor 3rd with absent major 3rd -> transfer falsely key-biased `R:DOM7_NAT` to `R:MIN7_SHELL`
+        #    Gated on `DOM7_NAT >= 0.08` & `b5 < 0.35` so `Em7b5` (`HDIM`) and `F/A` are never disturbed!
+        m_min_only = (raw_prob_crf[:, base + 2] >= 0.08) & (s_b3 >= 0.48) & (s_3 < 0.15) & (s_b5 < 0.35)
+        if m_min_only.any():
+            em_adj[m_min_only, base + 2] -= 2.10  # DOM7_NAT
+            em_adj[m_min_only, base + 4] += 0.65  # MIN_SHELL
+            m_min7 = m_min_only & (s_b7 >= 0.35)
+            em_adj[m_min7, base + 5] += 1.95      # MIN7_SHELL
+
+        # 2. Absent major 7th when `3 + 9 + 13` Dominant shell sounds -> promote `DOM7_NAT` over `MAJ7_SHELL`
+        m_dom_over_maj7 = (s_maj7 < 0.12) & (s_3 >= 0.48) & (s_9 >= 0.48) & (s_13 >= 0.48)
+        if m_dom_over_maj7.any():
+            em_adj[m_dom_over_maj7, base + 1] -= 1.20
+            em_adj[m_dom_over_maj7, base + 2] += 1.15
+
+        # 3. True `sus4` (`4th` strong, BOTH major `3rd` and minor `b3` absent!) -> `SUS4_SHELL` instead of `DOM7_NAT`
+        m_sus4 = (s_4 >= 0.55) & (s_3 < 0.18) & (s_b3 < 0.22) & (s_b7 >= 0.38)
+        if m_sus4.any():
+            em_adj[m_sus4, base + 11] += 0.85     # SUS4_SHELL
+            em_adj[m_sus4, base + 2] -= 0.65      # DOM7_NAT (unlocks C9sus4 -> C resolution!)
+
+        m_no_b7 = (s_b7 < 0.16) & (s_3 >= 0.45) & (s_9 < 0.42)
+        if m_no_b7.any():
+            em_adj[m_no_b7, base + 2] -= 0.65
+
+    # Diatonic Key Fallback on CRF emissions when BOTH `3` and `b3` are absent (`1 + 5` power chord)
+    if key_logits is not None and len(key_logits) == total_frames:
+        kp_f = _softmax(key_logits, axis=-1)
+        global_kp = kp_f.mean(axis=0)
+        for i_c in range(n_crf):
+            loc_kp = kp_f[i_c * stride: min(total_frames, (i_c + 1) * stride)].mean(axis=0)
+            k_id = int((0.55 * loc_kp + 0.45 * global_kp).argmax())
+            for r in range(12):
+                s_b3_i = float(sustain_crf[i_c, (r + 3) % 12])
+                s_3_i = float(sustain_crf[i_c, (r + 4) % 12])
+                s_5_i = float(sustain_crf[i_c, (r + 7) % 12])
+                if s_3_i < 0.18 and s_b3_i < 0.18 and abs(s_3_i - s_b3_i) < 0.10 and s_5_i >= 0.30:
+                    q_pref = resolve_power_chord_quality_by_key(r, k_id, default_qual=-1)
+                    base_r = 1 + r * N_SKELETONS
+                    if q_pref == 0:
+                        em_adj[i_c, base_r + 0] += 0.55
+                        em_adj[i_c, base_r + 4] -= 0.45
+                    elif q_pref == 1:
+                        em_adj[i_c, base_r + 4] += 0.55
+                        em_adj[i_c, base_r + 0] -= 0.45
+
+    if tb_crf is not None:
+        for y in range(12):
+            bass_strong = tb_crf[:, y] >= 0.62
+
+            # 4. First-inversion Major triad `X/Y` (`x = (y + 8) % 12`) vs Relative Minor `Ym / Ym7`
+            #    Requires `X` already plausible in raw CRF (`>= 0.04`) and `Ym7`'s b7 weak so true `Em7` stays intact.
+            x = (y + 8) % 12
+            s_x = sustain_crf[:, x]
+            s_x5 = sustain_crf[:, (y + 3) % 12]
+            s_y5 = sustain_crf[:, (y + 7) % 12]
+            s_yb7 = sustain_crf[:, (y + 10) % 12]
+            m_inv1 = (
+                bass_strong
+                & (raw_prob_crf[:, 1 + x * N_SKELETONS + 0] >= 0.04)
+                & (s_x >= 0.52)
+                & (s_x5 >= 0.52)
+                & (s_x > s_y5 + 0.15)
+                & (s_yb7 < 0.30)
+            )
+            if m_inv1.any():
+                em_adj[m_inv1, 1 + x * N_SKELETONS + 0] += 1.25
+                em_adj[m_inv1, 1 + y * N_SKELETONS + 4] -= 0.75
+                em_adj[m_inv1, 1 + y * N_SKELETONS + 5] -= 0.80
+                f_mask = np.repeat(m_inv1, stride)[:total_frames]
+                b_adj[f_mask, y] += 1.60
+
+            # 5. Third-inversion Major triad `X/b7` (`Eb/Db`: bass `y`, triad root `x2 = (y + 2) % 12`) vs `Ymaj9`
+            x2 = (y + 2) % 12
+            m_inv3 = (
+                (tb_crf[:, y] >= 0.58)
+                & (sustain_crf[:, x2] >= 0.58)
+                & (sustain_crf[:, (y + 6) % 12] >= 0.48)  # Major 3rd of X (tritone #11 against bass Y!)
+                & (sustain_crf[:, (y + 9) % 12] >= 0.48)  # 5th of X
+                & (sustain_crf[:, (y + 7) % 12] < 0.25)   # Bass Y's own 5th is absent
+            )
+            if m_inv3.any():
+                em_adj[m_inv3, 1 + x2 * N_SKELETONS + 0] += 1.55
+                em_adj[m_inv3, 1 + y * N_SKELETONS + 1] -= 1.20
+                f_mask3 = np.repeat(m_inv3, stride)[:total_frames]
+                b_adj[f_mask3, y] += 1.65
+
+            # 6. Dominant `Y9(13)` over bass `Y` vs relative minor slash `(Y+9)m / Y` (`Ab9(13)`, `Gb9(13)`)
+            rel_min = (y + 9) % 12
+            m_dom13 = (
+                (tb_crf[:, y] >= 0.65)
+                & (sustain_crf[:, (y + 4) % 12] >= 0.52)  # Major 3rd of Y!
+                & (sustain_crf[:, rel_min] >= 0.55)       # 13th of Y
+                & ((sustain_crf[:, (y + 10) % 12] >= 0.32) | (sustain_crf[:, (y + 2) % 12] >= 0.52))
+            )
+            if m_dom13.any():
+                em_adj[m_dom13, 1 + y * N_SKELETONS + 2] += 1.20
+                em_adj[m_dom13, 1 + rel_min * N_SKELETONS + 4] -= 0.80
+                em_adj[m_dom13, 1 + rel_min * N_SKELETONS + 5] -= 0.80
+
+    return em_adj, b_adj, sustain_crf
 
 
 def _decode_raw_waveform(data: bytes, filename: str = "") -> tuple[np.ndarray, int]:
@@ -1146,31 +1390,54 @@ def _infer_v5_full_song(
                 windows.append((last, audio[last: last + chunk_samples]))
 
     acc_emb = np.zeros((total_frames, predictor.context_dim), dtype=np.float32)
-    cqt_bins = int(getattr(predictor, "cqt_bins", 60))
     acc_cqt: np.ndarray | None = None
     acc_w = np.zeros(total_frames, dtype=np.float32)
+    has_batch_enc = hasattr(predictor, "encode_chunks_batch_v5")
     has_full_enc = hasattr(predictor, "encode_chunk_v5_full")
 
-    for pos, crop in windows:
-        wav = _normalize(crop)
-        if has_full_enc:
-            emb, cqt_c = predictor.encode_chunk_v5_full(wav)
-        else:
-            emb = predictor.encode_chunk_v5(wav)
-            cqt_c = None
-        n_f = len(emb)
-        tw = _triangle_weights(n_f)
-        start_f = int(round(pos / float(MERT_HOP_SAMPLES)))
-        end_f = min(total_frames, start_f + n_f)
-        span = end_f - start_f
-        if span <= 0:
-            continue
-        acc_emb[start_f:end_f] += emb[:span] * tw[:span, None]
-        if cqt_c is not None:
-            if acc_cqt is None:
-                acc_cqt = np.zeros((total_frames, cqt_c.shape[-1]), dtype=np.float32)
-            acc_cqt[start_f:end_f] += cqt_c[:span] * tw[:span, None]
-        acc_w[start_f:end_f] += tw[:span]
+    if has_batch_enc and len(windows) > 1:
+        enc_bs = 4
+        for b0 in range(0, len(windows), enc_bs):
+            sub_w = windows[b0: b0 + enc_bs]
+            wav_b = np.stack([_normalize(crop) for _, crop in sub_w], axis=0)
+            emb_b, cqt_b = predictor.encode_chunks_batch_v5(wav_b)
+            for idx_b, (pos, _) in enumerate(sub_w):
+                emb = emb_b[idx_b]
+                cqt_c = cqt_b[idx_b] if cqt_b is not None else None
+                n_f = len(emb)
+                tw = _triangle_weights(n_f)
+                start_f = int(round(pos / float(MERT_HOP_SAMPLES)))
+                end_f = min(total_frames, start_f + n_f)
+                span = end_f - start_f
+                if span <= 0:
+                    continue
+                acc_emb[start_f:end_f] += emb[:span] * tw[:span, None]
+                if cqt_c is not None:
+                    if acc_cqt is None:
+                        acc_cqt = np.zeros((total_frames, cqt_c.shape[-1]), dtype=np.float32)
+                    acc_cqt[start_f:end_f] += cqt_c[:span] * tw[:span, None]
+                acc_w[start_f:end_f] += tw[:span]
+    else:
+        for pos, crop in windows:
+            wav = _normalize(crop)
+            if has_full_enc:
+                emb, cqt_c = predictor.encode_chunk_v5_full(wav)
+            else:
+                emb = predictor.encode_chunk_v5(wav)
+                cqt_c = None
+            n_f = len(emb)
+            tw = _triangle_weights(n_f)
+            start_f = int(round(pos / float(MERT_HOP_SAMPLES)))
+            end_f = min(total_frames, start_f + n_f)
+            span = end_f - start_f
+            if span <= 0:
+                continue
+            acc_emb[start_f:end_f] += emb[:span] * tw[:span, None]
+            if cqt_c is not None:
+                if acc_cqt is None:
+                    acc_cqt = np.zeros((total_frames, cqt_c.shape[-1]), dtype=np.float32)
+                acc_cqt[start_f:end_f] += cqt_c[:span] * tw[:span, None]
+            acc_w[start_f:end_f] += tw[:span]
 
     inv_acc_w = 1.0 / np.maximum(acc_w[:, None], 1e-6)
     song_emb = acc_emb * inv_acc_w
@@ -1197,6 +1464,11 @@ def _infer_v5_full_song(
 
     stride = predictor.crf_stride
     n_crf = len(crf_em)
+    tb_logits_raw = dec.get("true_bass_logits")
+    crf_em, bass_logits, sustain_crf = _calibrate_v5_crf_and_bass(
+        crf_em, bass_logits, sustain_env, tb_logits_raw, stride, key_logits=key_logits
+    )
+
     rms_crf = np.array(
         [
             float(frame_rms_db[i * stride: min(total_frames, (i + 1) * stride)].mean())
@@ -1213,7 +1485,7 @@ def _infer_v5_full_song(
     quiet_steps = rms_crf < dynamic_sil_floor
     crf_em[quiet_steps, 0] += 5.0
 
-    decay_scale = _compute_decay_lock_scale(rms_crf)
+    decay_scale = _compute_decay_lock_scale(rms_crf, sustain_crf=sustain_crf)
     crf_path_ds = viterbi_crf_numpy(
         crf_em,
         crf_trans,
@@ -1237,17 +1509,25 @@ def _infer_v5_full_song(
         np.repeat(crf_em, stride, axis=0)[:total_frames], axis=-1
     )
     bass_prob_all = _softmax(bass_logits, axis=-1)
-    if "true_bass_logits" in dec:
-        tb_prob_all = _softmax(dec["true_bass_logits"], axis=-1)
+    tb_prob_all: np.ndarray | None = None
+    if tb_logits_raw is not None:
+        tb_prob_all = _softmax(tb_logits_raw, axis=-1)
         tb_pad = np.pad(tb_prob_all[:, :12], ((0, 0), (0, 1)))
         bass_prob_all = 0.65 * bass_prob_all + 0.35 * tb_pad
     key_prob_all = _softmax(key_logits, axis=-1)
+    active_key_frames = crf_path > 0
+    global_key_prob = (
+        key_prob_all[active_key_frames].mean(axis=0)
+        if active_key_frames.any()
+        else key_prob_all.mean(axis=0)
+    )
     has_tension_type = TYPE_TENSION_REL_MASK.sum(axis=-1) > 0.5  # (41,)
 
     root_ids = np.full(total_frames, -1, dtype=np.int64)
     qual_ids = np.full(total_frames, -1, dtype=np.int64)
     ext_ids = np.full(total_frames, -1, dtype=np.int64)
     bass_ids = np.full(total_frames, 12, dtype=np.int64)
+    suffix_overrides: list[str | None] = [None] * total_frames
     confs = np.zeros(total_frames, dtype=np.float32)
     prefer_flats_frame = np.zeros(total_frames, dtype=bool)
 
@@ -1266,8 +1546,9 @@ def _infer_v5_full_song(
         sk_cur = (st_cur - 1) % N_SKELETONS
         seg_len = span_e - span_s
 
-        # Local key spelling for this harmonic span
+        # Local + Song key context for enharmonic spelling & missing-3rd (`1 + 5`) diatonic fallback
         mean_k = key_prob_all[span_s:span_e].mean(axis=0)
+        eff_key_id = int((0.55 * mean_k + 0.45 * global_key_prob).argmax())
         best_key_id = int(mean_k.argmax())
         prefer_flats_frame[span_s:span_e] = best_key_id in FLAT_KEY_IDS
 
@@ -1283,7 +1564,7 @@ def _infer_v5_full_song(
         bass_ids[span_s:span_e] = b_path
 
         # Within-Skeleton Jazz Tension & Sustained Color Resolution (`F` + sustained `G` -> `Fadd9`)
-        allowed = SKEL_TYPE_MASK[sk_cur]  # (41,) bool
+        allowed = SKEL_TYPE_MASK[sk_cur] & (~DEPRECATED_TYPE_MASK)  # (41,) bool
         allowed_idx = np.nonzero(allowed)[0]
         if len(allowed_idx) == 1:
             chosen_types = np.full(seg_len, int(allowed_idx[0]), dtype=np.int64)
@@ -1344,9 +1625,57 @@ def _infer_v5_full_song(
         r_hi = r_lo + N_SKELETONS
         root_confs = crf_frame_prob[span_s:span_e, r_lo:r_hi].sum(axis=-1)
         cond_skel_confs = crf_frame_prob[span_s:span_e, st_cur] / np.maximum(root_confs, 1e-6)
-        root_ids[span_s:span_e] = r_cur
-        qual_ids[span_s:span_e] = TYPE_TO_QE[chosen_types, 0]
-        ext_ids[span_s:span_e] = TYPE_TO_QE[chosen_types, 1]
+        raw_q = TYPE_TO_QE[chosen_types, 0]
+        raw_e = TYPE_TO_QE[chosen_types, 1]
+
+        # Apply Step-A Jazz chord theory equivalence & multi-tension resolution per sub-run inside the span
+        sub_s = 0
+        while sub_s < seg_len:
+            sub_e = sub_s + 1
+            while (
+                sub_e < seg_len
+                and raw_q[sub_e] == raw_q[sub_s]
+                and raw_e[sub_e] == raw_e[sub_s]
+                and bass_ids[span_s + sub_e] == bass_ids[span_s + sub_s]
+            ):
+                sub_e += 1
+            fs_abs, fe_abs = span_s + sub_s, span_s + sub_e
+            mean_rel_s = sustain_env[fs_abs:fe_abs][:, REL_PITCH_INDEX[r_cur]].mean(axis=0)
+            mean_tb = tb_prob_all[fs_abs:fe_abs].mean(axis=0) if tb_prob_all is not None else None
+            nr, nq, ne, nb, sfx = resolve_jazz_chord_theory(
+                r_cur,
+                int(raw_q[sub_s]),
+                int(raw_e[sub_s]),
+                int(bass_ids[fs_abs]),
+                mean_rel_s,
+                tb_prob=mean_tb,
+                key_id=eff_key_id,
+            )
+            # Suppress transition-dragged bare `R7` (`C9sus4 -> C7` -> `C`) when `MAJ_SHELL` wins and `b7` is absent or decaying from `sus4`
+            if nr == r_cur and nq == 2 and ne == 5 and nb == 12 and sfx is None:
+                p_maj = float(crf_frame_prob[fs_abs:fe_abs, 1 + r_cur * N_SKELETONS + 0].mean())
+                p_dom = float(crf_frame_prob[fs_abs:fe_abs, 1 + r_cur * N_SKELETONS + 2].mean())
+                b7_pc = (r_cur + 10) % 12
+                b7_decaying = (
+                    (fe_abs - fs_abs) >= 6
+                    and float(sustain_env[max(fs_abs, fe_abs - 4):fe_abs, b7_pc].mean())
+                    < float(sustain_env[fs_abs:min(fe_abs, fs_abs + 4), b7_pc].mean()) - 0.08
+                )
+                prev_same_sus = fs_abs > 0 and int(root_ids[fs_abs - 1]) == r_cur and int(qual_ids[fs_abs - 1]) == 5
+                if p_maj > p_dom * 1.02 and (float(mean_rel_s[10]) < 0.34 or b7_decaying or prev_same_sus):
+                    nq, ne = 0, 0
+            # Simplify `R7 / b7` -> `R / b7` (`Bb7/Ab -> Bb/Ab`, `Eb7/Db -> Eb/Db`) since `/b7` already states the 7th!
+            if nq == 2 and ne == 5 and 0 <= nb < 12 and nb == (nr + 10) % 12 and sfx is None:
+                nq, ne = 0, 0
+            root_ids[fs_abs:fe_abs] = nr
+            qual_ids[fs_abs:fe_abs] = nq
+            ext_ids[fs_abs:fe_abs] = ne
+            bass_ids[fs_abs:fe_abs] = nb
+            if sfx is not None:
+                for k_f in range(fs_abs, fe_abs):
+                    suffix_overrides[k_f] = sfx
+            sub_s = sub_e
+
         confs[span_s:span_e] = np.clip(
             weighted_chord_conf(root_confs, cond_skel_confs, type_confs), 0.0, 1.0
         )
@@ -1356,35 +1685,42 @@ def _infer_v5_full_song(
     for g in range(total_frames):
         r_g = int(root_ids[g])
         silent = r_g < 0 or r_g >= 12
+        sfx_g = suffix_overrides[g]
         if silent:
-            r_c, q_c, e_c, b_c, c_val = -1, -1, -1, 12, 0.0
+            r_c, q_c, e_c, b_c, c_val, sfx_g = -1, -1, -1, 12, 0.0, None
         else:
             r_c, q_c, e_c, b_c = canonicalize_chord_tuple(
                 r_g, int(qual_ids[g]), int(ext_ids[g]), int(bass_ids[g])
             )
             c_val = float(confs[g])
             if c_val < confidence_threshold:
-                r_c, q_c, e_c, b_c = -1, -1, -1, 12
+                r_c, q_c, e_c, b_c, sfx_g = -1, -1, -1, 12, None
                 silent = True
 
         s_ms = round(g * frame_ms, 1)
         e_ms = duration_ms if g == total_frames - 1 else round((g + 1) * frame_ms, 1)
         use_flats = bool(prefer_flats_frame[g]) if AUTO_KEY_SPELLING else False
-        frame_results.append({
+        rec: dict[str, Any] = {
             "start_ms": s_ms,
             "end_ms": e_ms,
             "root_id": r_c,
             "quality_id": q_c,
             "ext_id": e_c,
             "bass_id": b_c,
-            "chord": chord_name(r_c, q_c, e_c, b_c, prefer_flats=use_flats),
+            "chord": chord_name(r_c, q_c, e_c, b_c, prefer_flats=use_flats, suffix_override=sfx_g),
             "confidence": round(c_val, 4),
             "silent": silent,
-        })
+        }
+        if sfx_g is not None:
+            rec["_suffix_override"] = sfx_g
+        frame_results.append(rec)
 
-    merged = _prune_short_segments(frame_results, min_duration_ms=min_duration_ms)
+    merged = _prune_short_segments(frame_results, min_duration_ms=min_duration_ms, prune_low_conf=True)
     if AUTO_KEY_SPELLING:
         merged = apply_key_spelling(merged)
+    else:
+        for m_seg in merged:
+            m_seg.pop("_suffix_override", None)
     if merged:
         merged[0]["start_ms"] = 0.0
         merged[-1]["end_ms"] = duration_ms
@@ -1432,6 +1768,7 @@ def apply_key_spelling(
     out = []
     for seg in segments:
         s = seg.copy()
+        sfx = s.pop("_suffix_override", None)
         r, q, e, b = canonicalize_chord_tuple(
             int(s["root_id"]),
             int(s["quality_id"]),
@@ -1439,7 +1776,7 @@ def apply_key_spelling(
             int(s.get("bass_id", 12)),
         )
         s["root_id"], s["quality_id"], s["ext_id"], s["bass_id"] = r, q, e, b
-        s["chord"] = chord_name(r, q, e, b, prefer_flats=use_flats)
+        s["chord"] = chord_name(r, q, e, b, prefer_flats=use_flats, suffix_override=sfx)
         out.append(s)
     return out
 
@@ -1447,18 +1784,33 @@ def apply_key_spelling(
 def _prune_short_segments(
     segments: list[dict[str, Any]],
     min_duration_ms: float = MIN_DURATION_MS,
+    prune_low_conf: bool = False,
 ) -> list[dict[str, Any]]:
-    """Iteratively absorb micro-segments `< min_duration_ms` (including staircase `A -> B -> C`)."""
+    """Iteratively absorb micro-segments `< min_duration_ms` (and low-confidence transition hallucinations)."""
     if len(segments) <= 1 or min_duration_ms <= 0:
         return _merge_consecutive(segments)
 
     cur = _merge_consecutive(segments)
     while len(cur) > 1:
-        candidates = [
-            i
-            for i, seg in enumerate(cur)
-            if (float(seg["end_ms"]) - float(seg["start_ms"])) < min_duration_ms
-        ]
+        candidates = []
+        for i, seg in enumerate(cur):
+            dur = float(seg["end_ms"]) - float(seg["start_ms"])
+            if dur < min_duration_ms:
+                candidates.append(i)
+            elif prune_low_conf and not seg.get("silent", False) and 0 < i < len(cur) - 1:
+                l_seg, r_seg = cur[i - 1], cur[i + 1]
+                if not l_seg.get("silent", False) and not r_seg.get("silent", False):
+                    conf_i = float(seg.get("confidence", 1.0))
+                    # Same-root micro tail flicker (e.g. D7(#5b9) -> 360ms D7) or weak <680ms transition glitch
+                    same_root_tail = (dur < 460.0) and (seg["root_id"] == l_seg["root_id"] or seg["root_id"] == r_seg["root_id"])
+                    weak_glitch = (
+                        dur < 820.0
+                        and conf_i < 0.44
+                        and float(l_seg.get("confidence", 0.0)) >= conf_i + 0.08
+                        and float(r_seg.get("confidence", 0.0)) >= conf_i + 0.08
+                    )
+                    if same_root_tail or weak_glitch:
+                        candidates.append(i)
         if not candidates:
             break
 
@@ -1495,7 +1847,7 @@ def _prune_short_segments(
         if target is None:
             break
 
-        cur[idx] = {
+        rep_seg: dict[str, Any] = {
             "start_ms": seg["start_ms"],
             "end_ms": seg["end_ms"],
             "root_id": target["root_id"],
@@ -1506,6 +1858,9 @@ def _prune_short_segments(
             "confidence": target["confidence"],
             "silent": target["silent"],
         }
+        if "_suffix_override" in target:
+            rep_seg["_suffix_override"] = target["_suffix_override"]
+        cur[idx] = rep_seg
         cur = _merge_consecutive(cur)
 
     return cur
@@ -1848,13 +2203,14 @@ def _vote_and_merge(
     return _merge_consecutive(smoothed)
 
 
-def _chord_key(r: dict) -> tuple[int, int, int, int]:
-    return canonicalize_chord_tuple(
+def _chord_key(r: dict) -> tuple[int, int, int, int, str]:
+    rc, qc, ec, bc = canonicalize_chord_tuple(
         int(r["root_id"]),
         int(r["quality_id"]),
         int(r["ext_id"]),
         int(r.get("bass_id", 12)),
     )
+    return rc, qc, ec, bc, str(r.get("_suffix_override") or "")
 
 
 def _smooth_jitter(results: list[dict], max_jitter_frames: int = 1) -> list[dict]:
@@ -1891,16 +2247,17 @@ def _merge_consecutive(results: list[dict]) -> list[dict]:
     if not results:
         return results
     first = results[0].copy()
-    r0, q0, e0, b0 = _chord_key(first)
+    r0, q0, e0, b0, sfx0 = _chord_key(first)
     first["root_id"], first["quality_id"], first["ext_id"], first["bass_id"] = r0, q0, e0, b0
     if r0 >= 0 and first.get("chord") in (None, "", "N"):
-        first["chord"] = chord_name(r0, q0, e0, b0)
+        first["chord"] = chord_name(r0, q0, e0, b0, suffix_override=(sfx0 or None))
     merged = [first]
 
     for r in results[1:]:
         prev = merged[-1]
-        rc, qc, ec, bc = _chord_key(r)
-        same = (rc, qc, ec, bc) == (prev["root_id"], prev["quality_id"], prev["ext_id"], prev.get("bass_id", 12))
+        rc, qc, ec, bc, sfxc = _chord_key(r)
+        prev_sfx = str(prev.get("_suffix_override") or "")
+        same = (rc, qc, ec, bc, sfxc) == (prev["root_id"], prev["quality_id"], prev["ext_id"], prev.get("bass_id", 12), prev_sfx)
         if same and bool(r.get("silent", False)) == bool(prev.get("silent", False)):
             w_prev = max(float(prev["end_ms"]) - float(prev["start_ms"]), 1.0)
             w_cur = max(float(r["end_ms"]) - float(r["start_ms"]), 1.0)
