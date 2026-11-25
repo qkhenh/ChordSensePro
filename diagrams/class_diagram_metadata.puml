@@ -1,0 +1,82 @@
+@startuml class_diagram_metadata
+!pragma layout elk
+' UML 2.5 class diagram (2 of 2) — analysis metadata, detected rhythm and the person's
+' rhythm edits. Build of 2026-11-25. Source: DE/src/analysis_contract/models.py (contract 1.2).
+skinparam dpi 200
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor #FFFFFF
+  BorderColor #1F2937
+}
+hide empty methods
+hide circle
+
+class AnalysisMetadata {
+  durationMs : Integer
+  modelVersion : String
+  pipelineVersion : String
+  structure : {pending, done, unavailable}
+}
+class KeyEstimate {
+  tonic : RootNote
+  mode : {major, minor}
+  confidence : Real
+}
+class BeatGrid {
+  tempoBpm : Real
+  timeSignature : TimeSignature
+  beatsPerBar : Integer
+  firstBeatOffsetMs : Integer
+}
+class RhythmAnalysis {
+  status : {detected, unknown}
+  beatsMs : Integer [*]
+  downbeatsMs : Integer [*]
+  meterConfidence : Real
+  alternative : TimeSignature [0..1]
+}
+class MeterSegment {
+  startBar : Integer
+  timeSignature : TimeSignature
+  beatsPerBar : Integer
+  tempoBpm : Real
+}
+class SongSection {
+  startMs : Integer
+  endMs : Integer
+  label : SectionLabel
+  number : Integer [0..1]
+}
+class TimeSignature <<dataType>> {
+  numerator : Integer
+  denominator : {2, 4, 8, 16}
+}
+class RhythmEdits {
+  meter : TimeSignature [0..1]
+  tempoScale : {0.5, 1, 2}
+  shiftBeats : Integer
+}
+class MeterChange {
+  atMs : Integer
+  timeSignature : TimeSignature
+  beatsPerBar : Integer
+}
+class ManualGrid {
+  tempoBpm : Real
+  timeSignature : TimeSignature
+  firstDownbeatMs : Integer
+}
+
+AnalysisMetadata *-- "1" KeyEstimate : key
+AnalysisMetadata *-- "1" BeatGrid : beatGrid
+AnalysisMetadata *-- "0..1" RhythmAnalysis : rhythm
+AnalysisMetadata *-- "0..*" SongSection : sections {ordered}
+RhythmAnalysis *-- "0..*" MeterSegment : segments {ordered}
+
+RhythmEdits *-- "0..*" MeterChange : meterChanges {ordered}
+RhythmEdits *-- "0..1" ManualGrid : manualGrid
+RhythmEdits *-- "0..*" SongSection : sections
+
+@enduml

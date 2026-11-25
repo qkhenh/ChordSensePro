@@ -1,68 +1,78 @@
-@startuml
-skinparam conditionStyle insideDiamond
+@startuml activity_diagram
+' UML 2.5 activity diagram — Learning Flow: analyze a song, practice it, correct a chord.
+' Business-level view (Ambler / Microsoft activity diagram guidelines): three swimlanes
+' (fewer than five), one initial node at the top and one activity final node at the bottom
+' (every branch merges back before it), decision diamonds without text, every flow leaving
+' a decision guarded with a complete, non-overlapping set of guards, each fork paired with a
+' join. Technical steps of the analysis are in the sequence diagram.
+skinparam dpi 200
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam conditionStyle diamond
 skinparam activity {
-    BackgroundColor #74C0FC
-    BorderColor #1C7ED6
-    FontColor #000000
-    FontSize 12
-    ArrowColor #2B2D42
-    DiamondBackgroundColor #E7F5FF
-    DiamondBorderColor #1C7ED6
+  BackgroundColor #FFFFFF
+  BorderColor #1F2937
+  DiamondBackgroundColor #FFFFFF
+  DiamondBorderColor #1F2937
 }
-skinparam partition {
-    BorderColor #495057
-    FontColor #212529
-    FontSize 13
-    BackgroundColor #FFFFFF
+skinparam swimlane {
+  BorderColor #1F2937
+  TitleFontStyle bold
 }
 
-|Musician (User)|
+|Musician|
 start
-:Upload audio file or enter YouTube URL;
+:Choose a song\n(file, link or demo);
 
-|Frontend Client|
-:Validate audio source format & duration;
-if (Is audio source valid?) then (Yes)
-
-|Backend Server|
-:Generate Job ID and enqueue processing task;
-
-|AI Pipeline Worker|
-:Separate instrument stems using Demucs;
-:Track tempo and downbeat positions using Madmom;
-:Recognize chord progression sequence using MERT;
-:Assemble event-based timeline JSON;
-
-|Frontend Client|
-:Fetch metadata and chord event timeline;
-:Harmonic Engine computes Roman numerals & scale modes;
-:Render interactive Smart Grid synced with Web Audio;
-
-|Musician (User)|
-:Listen and audit detected chord progression;
-if (Chord correction needed?) then (Yes)
-    :Open Edit Marker on target bar;
-    :Input modified root, bass, or chord quality;
-    |Frontend Client|
-    :Recalculate Roman degree and scale mode instantly;
-    :Flag chord event as user-edited;
-else (No)
+|Web Application|
+:Check the file type and size;
+if () then ([accepted])
+  :Send the analysis request;
+  |Server|
+  :Check the daily quota\nand the source;
+  if () then ([accepted])
+    :Create the analysis job;
+    fork
+      |Web Application|
+      :Show the analysis progress;
+    fork again
+      |Server|
+      :Analyze the song\n(chords, beats, key);
+      if () then ([succeeded])
+        :Save the chart\nto the library;
+      else ([failed])
+        :Refund the analysis;
+      endif
+    end fork
+  else ([refused])
+  endif
+else ([not accepted])
 endif
 
-|Musician (User)|
-:Practice with A/B loop, dynamic metronome, and speed shift;
-:Save custom chart to personal playlist;
-
-|Backend Server|
-:Persist custom chart into PostgreSQL JSONB;
-
-|Frontend Client|
-:Display sync confirmation toast;
+|Web Application|
+if () then ([chart ready])
+  :Open the Practice Workspace;
+  |Musician|
+  while () is ([continue practicing])
+    :Play and loop a section;
+    if () then ([a chord is wrong])
+      :Correct the chord;
+      |Web Application|
+      :Show the corrected chord;
+      if () then ([Free User])
+        :Keep the correction\non this device;
+      else ([Paid User])
+        |Server|
+        :Save the correction\nto the account;
+      endif
+    else ([chords are right])
+    endif
+    |Musician|
+  endwhile ([finished])
+else ([no chart])
+  |Web Application|
+  :Show the reason (file not accepted,\nquota used up with its reset time,\nor analysis failed);
+endif
+|Musician|
 stop
-
-|Frontend Client|
-else (No)
-    :Display invalid audio source error;
-    stop
-endif
 @enduml

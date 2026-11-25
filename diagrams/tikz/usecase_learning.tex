@@ -1,0 +1,61 @@
+% UML 2.5 use case diagram (1 of 2) — learning and practice. Build of 2026-11-25.
+% Compile: lualatex usecase_learning.tex (standalone PDF, included in the report).
+% Grid (cm): actors x=0; column A x=4.2 (use cases an actor starts, in the order they
+% happen); column B x=10.0 and C x=13.9 (use cases that extend another, placed below it).
+% Rows 1.5 cm apart. All use cases are drawn alike; their implementation status is in the
+% report's status table.
+\documentclass[tikz, border=3mm]{standalone}
+\input{uml-usecase-style.tex}
+
+\begin{document}
+\begin{tikzpicture}
+
+% ---------------- base use cases: column A, in time order ----------------
+\node[uc] (UC00) at (4.2,  0.00) {UC-00 Register\\an Account};
+\node[uc] (UC01) at (4.2, -1.50) {UC-01 Log In};
+\node[uc] (UC02) at (4.2, -3.00) {UC-02 Analyze\\a Song};
+\node[uc] (UC07) at (4.2, -4.50) {UC-07 Manage the\\Library and Playlists};
+\node[uc] (UC04) at (4.2, -6.00) {UC-04 Practice\\a Song};
+\node[uc] (UC19) at (4.2, -8.10) {UC-19 Report a Chord\\Error and Send Feedback};
+\node[uc] (UC22) at (4.2, -9.60) {UC-22 Export\\a Chord Chart};
+\node[uc] (UC03) at (4.2,-11.10) {UC-03 Detect Chords\\from a MIDI Instrument};
+\node[uc] (UC06) at (4.2,-12.60) {UC-06 Practice\\with the Microphone};
+
+% ---------------- extending use cases: below the use case they extend ----------------
+\node[uc] (UC05) at (10.0,-6.00) {UC-05 Edit\\a Chord};
+\node[uc] (UC18) at (10.0,-7.00) {UC-18 Use\\the Metronome};
+\node[uc] (UC20) at (10.0,-8.00) {UC-20 Correct the Rhythm\\and Song Sections};
+
+% ---------------- system boundary ----------------
+\begin{scope}[on background layer]
+  \node[boundary, fit=(UC00)(UC06)(UC20), inner xsep=4mm, inner ysep=5mm,
+        label={[anchor=north, font=\sffamily\bfseries\footnotesize]north:ChordSense Pro}] (SYS) {};
+\end{scope}
+
+% ---------------- actors (primary actors top-left, specialised actor below its parent) ----
+\actor{Guest}{(0, 0.00)}{Guest}
+\actor{Reg}{(0,-1.50)}{Registered User}
+\actor{Free}{(0,-5.10)}{Free User}
+\actor{Paid}{(0,-11.10)}{Paid User (Pro)}
+
+\draw[gen] ($(Free.north)+(0,0.05)$) -- ($(Reg-label.south)+(0,-0.05)$);
+\draw[gen] ($(Paid.north)+(0,0.05)$) -- ($(Free-label.south)+(0,-0.05)$);
+
+% ---------------- associations (no arrowheads) ----------------
+\draw[assoc] (Guest.east) -- (UC00.west);
+\draw[assoc] (Reg.east)   -- (UC01.west);
+\draw[assoc] (Free.east)  -- (UC02.west);
+\draw[assoc] (Free.east)  -- (UC07.west);
+\draw[assoc] (Free.east)  -- (UC04.west);
+\draw[assoc] (Free.east)  -- (UC19.west);
+\draw[assoc] (Paid.east)  -- (UC22.west);
+\draw[assoc] (Paid.east)  -- (UC03.west);
+\draw[assoc] (Paid.east)  -- (UC06.west);
+
+% ---------------- «extend»: from the extending use case to the base use case ----------------
+\draw[dep] (UC05.west) -- node[deplabel, pos=0.5] {\guillemotleft extend\guillemotright} (UC04.east);
+\draw[dep] (UC18.west) -- node[deplabel, pos=0.45] {\guillemotleft extend\guillemotright} (UC04.-14);
+\draw[dep] (UC20.west) -- node[deplabel, pos=0.35] {\guillemotleft extend\guillemotright} (UC04.-30);
+
+\end{tikzpicture}
+\end{document}

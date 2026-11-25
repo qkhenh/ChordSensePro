@@ -1,0 +1,116 @@
+@startuml class_diagram
+!pragma layout elk
+' UML 2.5 class diagram (1 of 2) — users, jobs, analysis results and charts. Build of 2026-11-25.
+' Source: DE/src/identity/domain/models.py, DE/src/ingestion/domain/job.py,
+' DE/src/analysis_contract/models.py (contract 1.2). AnalysisMetadata and RhythmEdits are
+' detailed in class_diagram_metadata.puml; here their attribute compartments are elided.
+skinparam dpi 200
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor #FFFFFF
+  BorderColor #1F2937
+}
+hide empty methods
+hide circle
+
+package "Identity" {
+  class User {
+    id : UUID
+    email : String
+    name : String [0..1]
+    passwordHash : String
+    role : Role
+    isActive : Boolean
+  }
+  enum Role <<enumeration>> {
+    guest
+    free
+    paid
+    teacher
+    student
+    expert
+    music_pm
+    it_admin
+  }
+}
+
+package "Ingestion" {
+  class Job {
+    id : UUID
+    sourceKind : SourceKind
+    contentHash : String [0..1]
+    state : JobState
+    stage : JobStage [0..1]
+    progress : Real
+    quotaCharged : Boolean
+  }
+  class JobError {
+    code : ErrorCode
+    message : String
+    retryable : Boolean
+  }
+}
+
+package "Analysis contract" {
+  class AnalysisResult {
+    schemaVersion : String
+    contentHash : String
+  }
+  class Chart {
+    id : UUID
+    title : String
+    isCustomized : Boolean
+    version : Integer
+    updatedAt : DateTime
+  }
+  class ChartSource {
+    kind : SourceKind
+    url : String [0..1]
+    contentHash : String
+  }
+  class PlaybackSource {
+    kind : {file, youtube, soundcloud, direct}
+    audioUrl : String [0..1]
+  }
+  class ChordEvent {
+    eventId : String
+    startMs : Integer
+    endMs : Integer
+    symbol : String
+  }
+  class ChordLabel {
+    root : RootNote
+    quality : ChordQuality
+    extension : ChordExtension
+    bass : RootNote [0..1]
+  }
+  class EventOverride {
+    op : {set, delete, insert}
+  }
+  class AnalysisMetadata
+  class RhythmEdits
+  hide AnalysisMetadata members
+  hide RhythmEdits members
+}
+
+User "1" -- "0..*" Job : submits >
+User "1" -- "0..*" Chart : owns >
+Job *-- "0..1" JobError : error
+Job --> "0..1" Chart : resultChart
+Job ..> AnalysisResult : <<create>>
+AnalysisResult ..> Chart : <<create>>
+
+AnalysisResult *-- "1" AnalysisMetadata : metadata
+AnalysisResult *-- "0..*" ChordEvent : chordEvents\n{ordered}
+
+Chart *-- "1" ChartSource : source
+ChartSource *-- "1" PlaybackSource : playback
+Chart *-- "1" AnalysisMetadata : metadata
+Chart *-- "0..*" ChordEvent : aiEvents\n{ordered}
+Chart *-- "0..*" EventOverride : overrides
+Chart *-- "0..1" RhythmEdits : rhythmEdits
+EventOverride *-- "0..1" ChordEvent : event
+ChordEvent *-- "1" ChordLabel : chord
+@enduml

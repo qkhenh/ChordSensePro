@@ -1,0 +1,86 @@
+@startuml deployment_diagram
+!pragma layout elk
+' UML 2.5 deployment diagram — overall architecture of the build of 2026-11-25.
+' Nodes (<<device>>, <<executionEnvironment>>) hold the deployed artifacts and components;
+' communication paths connect nodes and are labelled with their protocol.
+' Dashed nodes are optional: they exist only when INGEST_JOB_RUNNER=celery.
+skinparam dpi 200
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam node {
+  BackgroundColor #FFFFFF
+  BorderColor #1F2937
+}
+skinparam component {
+  BackgroundColor #FFFFFF
+  BorderColor #1F2937
+}
+skinparam artifact {
+  BackgroundColor #FFFFFF
+  BorderColor #1F2937
+}
+skinparam database {
+  BackgroundColor #FFFFFF
+  BorderColor #1F2937
+}
+
+node "User device" <<device>> as DEV {
+  node "Web browser" <<executionEnvironment>> as BROWSER {
+    artifact "web SPA bundle\n(React 19, Vite)" as SPA
+    component "Practice Workspace\n(Web Audio clock,\nHarmony Engine)" as WS
+    database "IndexedDB\n(Free users' edit layers)" as IDB
+  }
+}
+
+node "Application server" <<device>> as APPSRV {
+  node "Python 3.11 / uvicorn" <<executionEnvironment>> as PY {
+    component "API (FastAPI)" as API
+    component "Identity" as IDN
+    component "Ingestion" as ING
+    component "Rhythm\n(Beat This! + decoder)" as RHY
+  }
+  artifact "ffmpeg / ffprobe" as FF
+  artifact "yt-dlp + deno" as YTDLP
+  folder "DATA_DIR\n(audio, peaks, tmp)" as FILES
+}
+
+node "AI model server" <<device>> as AISRV {
+  node "Python venv (AI/.venv)" <<executionEnvironment>> as AIPY {
+    component "AI Model Service\n(serve.py, port 8001)" as AIS
+    artifact "chord model v5.1\n(ONNX)" as MODEL
+  }
+}
+
+node "Database server" <<device>> as DBSRV {
+  database "PostgreSQL 18\n(schema app)" as PG
+}
+
+node "Worker host" <<device>> as WORKER #line.dashed {
+  node "Celery worker" <<executionEnvironment>> as CEL #line.dashed {
+    component "Ingestion" as ING2
+  }
+  node "Redis" <<executionEnvironment>> as REDIS #line.dashed
+}
+
+cloud "Media platforms\n(YouTube, SoundCloud,\npublic audio hosts)" as MEDIA
+
+' Inside nodes
+SPA ..> WS : <<manifest>>
+WS ..> IDB : <<use>>
+MODEL ..> AIS : <<manifest>>
+API ..> IDN : <<use>>
+API ..> ING : <<use>>
+ING ..> RHY : <<use>>
+ING ..> FF : <<use>>
+ING ..> YTDLP : <<use>>
+ING ..> FILES : <<use>>
+
+' Communication paths between nodes
+DEV -- APPSRV : HTTPS (REST/JSON),\nWebSocket
+APPSRV -- DBSRV : TCP (asyncpg)
+APPSRV -- AISRV : HTTP (POST /predict)
+APPSRV -- MEDIA : HTTPS
+APPSRV -- WORKER : Redis protocol\n(job queue, progress)
+WORKER -- DBSRV : TCP (asyncpg)
+WORKER -- AISRV : HTTP (POST /predict)
+@enduml

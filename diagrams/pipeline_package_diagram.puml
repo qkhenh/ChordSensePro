@@ -1,0 +1,79 @@
+@startuml pipeline_package_diagram
+!pragma layout elk
+' UML 2.5 package diagram — bounded contexts and layers of the data-engineering code (DE/src).
+' Dependencies were measured from the imports of every module (2026-11-25) and are drawn
+' between contexts; inside data_ingest the layer-level dependencies are drawn too, because
+' application -> infrastructure is where the code departs from the inward rule.
+' The legacy song_analysis context (used only by the unused IngestService) is omitted.
+set separator ::
+skinparam dpi 200
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam package {
+  BackgroundColor #FFFFFF
+  BorderColor #1F2937
+}
+
+package "dags" <<Airflow wiring>> {
+}
+
+package data_ingest {
+  package data_ingest::application {
+  }
+  package data_ingest::domain {
+  }
+  package data_ingest::infrastructure {
+  }
+}
+package data_loader {
+  package data_loader::application {
+  }
+  package data_loader::domain {
+  }
+}
+package data_processing {
+  package data_processing::application {
+  }
+  package data_processing::domain {
+  }
+}
+package training_data {
+  package training_data::domain {
+  }
+  package training_data::infrastructure {
+  }
+}
+package user_analytics {
+  package user_analytics::domain {
+  }
+  package user_analytics::infrastructure {
+  }
+}
+package shared {
+  package shared::application {
+  }
+  package shared::domain {
+  }
+  package shared::infrastructure {
+  }
+}
+
+' Context-level dependencies (aggregated from module imports)
+dags ..> data_ingest : <<import>>
+dags ..> user_analytics : <<import>>
+dags ..> shared : <<import>>
+data_ingest ..> data_loader : <<import>>
+data_ingest ..> data_processing : <<import>>
+data_ingest ..> training_data : <<import>>
+data_ingest ..> shared : <<import>>
+data_processing ..> data_loader : <<import>>
+data_processing ..> shared : <<import>>
+data_loader ..> shared : <<import>>
+training_data ..> shared : <<import>>
+user_analytics ..> shared : <<import>>
+
+' Layer-level dependencies inside data_ingest
+data_ingest::application ..> data_ingest::domain : <<import>>
+data_ingest::application ..> data_ingest::infrastructure : <<import>>
+data_ingest::infrastructure ..> data_ingest::domain : <<import>>
+@enduml

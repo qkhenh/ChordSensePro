@@ -1,0 +1,61 @@
+@startuml sequence_chord_edit
+' UML 2.5 sequence diagram — correcting a chord in the Practice Workspace (UC-05 Edit a Chord).
+' Paid users save the override layer under an optimistic version lock; Free users keep it
+' on the device. Build of 2026-11-25. Same conventions as sequence_diagram.puml.
+skinparam dpi 200
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam sequenceMessageAlign left
+skinparam ParticipantBackgroundColor #FFFFFF
+skinparam ParticipantBorderColor #1F2937
+skinparam DatabaseBackgroundColor #FFFFFF
+skinparam DatabaseBorderColor #1F2937
+skinparam LifeLineBorderColor #6B7280
+autonumber
+hide footbox
+
+actor "Musician" as U
+participant ":PracticeWorkspace" as W
+participant ":HarmonyEngine" as H
+participant ":LocalEdits\n(IndexedDB)" as L
+participant ":ApiServer" as A
+database ":PostgreSQL" as DB
+
+U -> W : choose "Edit chord" on a bar
+activate W
+W -> H : equivalents(chord), roman(chord, key)
+activate H
+H --> W : suggestions, romanNumeral
+deactivate H
+W --> U : show the edit dialog with suggestions
+U -> W : pick, build or type a chord
+W -> H : parse(symbol, key)
+activate H
+alt symbol not valid
+  H --> W : error
+  W --> U : show the message; the chart is unchanged
+else symbol valid
+  H --> W : chordLabel
+  deactivate H
+  W -> W : applyOverride(eventId, chordLabel)
+  W --> U : show the new chord and its Roman numeral
+  alt Paid User
+    W -> A : PATCH /charts/{id}/events(baseVersion, overrides)
+    activate A
+    A -> DB : replaceOverrides(chartId, owner, baseVersion, overrides)
+    alt stored version = baseVersion
+      DB --> A : chart (version + 1)
+      A --> W : 200 (chart)
+    else stored version changed
+      DB --> A : none
+      A --> W : 409 version_conflict (version)
+      W -> L : put(chartId, overrides)
+      W --> U : show the conflict notice with "Reload"
+    end
+    deactivate A
+  else Free User
+    W -> L : put(chartId, overrides)
+  end
+end
+deactivate W
+@enduml

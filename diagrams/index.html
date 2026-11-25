@@ -16,38 +16,139 @@
     </style>
 </head>
 <body>
-    <h1>ChordSense Pro - Standard UML Specification Diagrams</h1>
-    
+    <h1>ChordSense Pro - UML 2.5 Diagrams (build of 2026-11-25)</h1>
+    <p style="text-align:center;color:#94a3b8">Use case diagrams: hand-placed TikZ (tikz/*.tex, compiled with lualatex).
+    Other diagrams: PlantUML 1.2024.8, ELK layout (orthogonal edges) for class, deployment and package diagrams.
+    Grey use cases carry the stereotype &laquo;planned&raquo;.</p>
     <div class="card">
-        <h2>1. Use Case Diagram (Clean 2-Package Layout, Zero Crossing, Strict UML)</h2>
+        <h2>1. Use Case Diagram 1/2 &mdash; Learning and Practice</h2>
         <div class="actions">
-            <a class="btn" href="usecase_diagram.svg" download>Download SVG</a>
-            <a class="btn" href="usecase_diagram.png" download>Download PNG</a>
+            <a class="btn" href="usecase_learning.svg" download>Download SVG</a>
+            <a class="btn" href="usecase_learning.png" download>Download PNG</a>
+            <a class="btn" href="tikz/usecase_learning.tex" download>Source</a>
         </div>
         <div class="img-container">
-            <img src="usecase_diagram.svg" alt="Use Case Diagram" />
+            <img src="usecase_learning.svg" alt="Use Case Diagram 1/2 &mdash; Learning and Practice" />
         </div>
     </div>
 
     <div class="card">
-        <h2>2. Sequence Diagram (Clean Spacing, No Bottom Duplicate Footbox, Alt Frames)</h2>
+        <h2>2. Use Case Diagram 2/2 &mdash; Education and Administration</h2>
         <div class="actions">
-            <a class="btn" href="sequence_diagram.svg" download>Download SVG</a>
-            <a class="btn" href="sequence_diagram.png" download>Download PNG</a>
+            <a class="btn" href="usecase_admin.svg" download>Download SVG</a>
+            <a class="btn" href="usecase_admin.png" download>Download PNG</a>
+            <a class="btn" href="tikz/usecase_admin.tex" download>Source</a>
         </div>
         <div class="img-container">
-            <img src="sequence_diagram.svg" alt="Sequence Diagram" />
+            <img src="usecase_admin.svg" alt="Use Case Diagram 2/2 &mdash; Education and Administration" />
         </div>
     </div>
 
     <div class="card">
-        <h2>3. Activity Diagram (True Diamond Decisions, Merge Diamond Removed, Swimlanes)</h2>
+        <h2>3. Activity Diagram &mdash; Learning Flow</h2>
         <div class="actions">
             <a class="btn" href="activity_diagram.svg" download>Download SVG</a>
             <a class="btn" href="activity_diagram.png" download>Download PNG</a>
+            <a class="btn" href="activity_diagram.puml" download>Source</a>
         </div>
         <div class="img-container">
-            <img src="activity_diagram.svg" alt="Activity Diagram" />
+            <img src="activity_diagram.svg" alt="Activity Diagram &mdash; Learning Flow" />
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>4. Sequence Diagram &mdash; Analysing an Uploaded Song (UC-02)</h2>
+        <div class="actions">
+            <a class="btn" href="sequence_diagram.svg" download>Download SVG</a>
+            <a class="btn" href="sequence_diagram.png" download>Download PNG</a>
+            <a class="btn" href="sequence_diagram.puml" download>Source</a>
+        </div>
+        <div class="img-container">
+            <img src="sequence_diagram.svg" alt="Sequence Diagram &mdash; Analysing an Uploaded Song (UC-02)" />
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>5. Sequence Diagram &mdash; Correcting a Chord (UC-05)</h2>
+        <div class="actions">
+            <a class="btn" href="sequence_chord_edit.svg" download>Download SVG</a>
+            <a class="btn" href="sequence_chord_edit.png" download>Download PNG</a>
+            <a class="btn" href="sequence_chord_edit.puml" download>Source</a>
+        </div>
+        <div class="img-container">
+            <img src="sequence_chord_edit.svg" alt="Sequence Diagram &mdash; Correcting a Chord (UC-05)" />
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>6. Deployment Diagram &mdash; Overall Architecture</h2>
+        <div class="actions">
+            <a class="btn" href="deployment_diagram.svg" download>Download SVG</a>
+            <a class="btn" href="deployment_diagram.png" download>Download PNG</a>
+            <a class="btn" href="deployment_diagram.puml" download>Source</a>
+        </div>
+        <div class="img-container">
+            <img src="deployment_diagram.svg" alt="Deployment Diagram &mdash; Overall Architecture" />
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>7. Class Diagram 1/2 &mdash; Users, Jobs, Results and Charts</h2>
+        <div class="actions">
+            <a class="btn" href="class_diagram.svg" download>Download SVG</a>
+            <a class="btn" href="class_diagram.png" download>Download PNG</a>
+            <a class="btn" href="class_diagram.puml" download>Source</a>
+        </div>
+        <div class="img-container">
+            <img src="class_diagram.svg" alt="Class Diagram 1/2 &mdash; Users, Jobs, Results and Charts" />
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>8. Class Diagram 2/2 &mdash; Analysis Metadata and Rhythm</h2>
+        <div class="actions">
+            <a class="btn" href="class_diagram_metadata.svg" download>Download SVG</a>
+            <a class="btn" href="class_diagram_metadata.png" download>Download PNG</a>
+            <a class="btn" href="class_diagram_metadata.puml" download>Source</a>
+        </div>
+        <div class="img-container">
+            <img src="class_diagram_metadata.svg" alt="Class Diagram 2/2 &mdash; Analysis Metadata and Rhythm" />
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>9. Package Diagram &mdash; Data Engineering Contexts and Layers</h2>
+        <div class="actions">
+            <a class="btn" href="pipeline_package_diagram.svg" download>Download SVG</a>
+            <a class="btn" href="pipeline_package_diagram.png" download>Download PNG</a>
+            <a class="btn" href="pipeline_package_diagram.puml" download>Source</a>
+        </div>
+        <div class="img-container">
+            <img src="pipeline_package_diagram.svg" alt="Package Diagram &mdash; Data Engineering Contexts and Layers" />
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>10. Activity Diagram &mdash; Training-Data ETL (DAG 1 and DAG 2)</h2>
+        <div class="actions">
+            <a class="btn" href="pipeline_activity.svg" download>Download SVG</a>
+            <a class="btn" href="pipeline_activity.png" download>Download PNG</a>
+            <a class="btn" href="pipeline_activity.puml" download>Source</a>
+        </div>
+        <div class="img-container">
+            <img src="pipeline_activity.svg" alt="Activity Diagram &mdash; Training-Data ETL (DAG 1 and DAG 2)" />
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>11. Activity Diagram &mdash; Nightly Analytics Roll-up (DAG 3)</h2>
+        <div class="actions">
+            <a class="btn" href="pipeline_dag3_activity.svg" download>Download SVG</a>
+            <a class="btn" href="pipeline_dag3_activity.png" download>Download PNG</a>
+            <a class="btn" href="pipeline_dag3_activity.puml" download>Source</a>
+        </div>
+        <div class="img-container">
+            <img src="pipeline_dag3_activity.svg" alt="Activity Diagram &mdash; Nightly Analytics Roll-up (DAG 3)" />
         </div>
     </div>
 </body>

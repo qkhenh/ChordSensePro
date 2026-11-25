@@ -1,0 +1,30 @@
+@startuml pipeline_dag3_activity
+' UML 2.5 activity diagram — DAG 3 dag_analytics_rollup (nightly at 23:30).
+' Source: DE/dags/dag_analytics_rollup.py, dags/wrapper/analytics_rollup_wrapper.py.
+' chord_attempts is written by the microphone practice mode (UC-06), which is planned:
+' in the current build the table receives no rows and the DAG finds nothing to roll up.
+skinparam dpi 200
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam conditionStyle diamond
+skinparam activity {
+  BackgroundColor #FFFFFF
+  BorderColor #1F2937
+  DiamondBackgroundColor #FFFFFF
+  DiamondBorderColor #1F2937
+}
+skinparam note {
+  BackgroundColor #FFFFFF
+  BorderColor #6B7280
+}
+
+|DAG 3: dag_analytics_rollup (23:30 daily)|
+start
+:aggregate_attempts: read today's chord_attempts\nand compute accuracy per (user, chord);
+note right: chord_attempts (PostgreSQL)
+:rolling_accuracy: average today's accuracy with\nthe two previous days of the same (user, chord);
+while () is ([(user, chord) row left])
+  :update_mastery: recompute the mastery level\nand upsert user_chord_mastery;
+endwhile ([all rows done])
+stop
+@enduml

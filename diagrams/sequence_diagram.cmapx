@@ -1,0 +1,8 @@
+<map id="sequence_diagram_map" name="sequence_diagram_map">
+<area shape="rect" id="id1" href="accepted" title="accepted" alt="" coords="31,539,129,562"/>
+<area shape="rect" id="id2" href="analysis" title="analysis" alt="" coords="176,1724,294,1747"/>
+<area shape="rect" id="id3" href="no" title="no" alt="" coords="626,1133,770,1156"/>
+<area shape="rect" id="id4" href="daily" title="daily" alt="" coords="176,397,330,420"/>
+<area shape="rect" id="id5" href="failed" title="failed" alt="" coords="31,2147,244,2170"/>
+<area shape="rect" id="id6" href="cached" title="cached" alt="" coords="771,991,1061,1014"/>
+</map>

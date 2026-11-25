@@ -1,0 +1,72 @@
+@startuml pipeline_activity
+' UML 2.5 activity diagram — training-data ETL: DAG 1 (extract) and DAG 2 (transform + load).
+' Source: DE/dags/dag_ingest_raw.py, dag_process_audio.py, dags/wrapper/*,
+' DE/src/data_ingest/application/{ingest_raw_service,process_audio_service}.py,
+' DE/src/data_processing/application/pipeline_factory.py (PIPELINE_VERSION=2, the default).
+' DAG 1 ends with a send-signal action; DAG 2 starts with the matching accept-event action.
+skinparam dpi 200
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam conditionStyle diamond
+skinparam activity {
+  BackgroundColor #FFFFFF
+  BorderColor #1F2937
+  DiamondBackgroundColor #FFFFFF
+  DiamondBorderColor #1F2937
+}
+skinparam note {
+  BackgroundColor #FFFFFF
+  BorderColor #6B7280
+}
+
+|DAG 1: dag_ingest_raw (every 30 min)|
+start
+:pick_urls: take up to 20 pending rows\nof crawl_queue, mark them running;
+note right: crawl_queue (PostgreSQL)
+while () is ([URL left in the batch])
+  if () then ([already staged])
+    :Mark row skipped;
+  else ([not staged])
+    if () then ([annotation declared])
+      :Download the annotation;
+    else ([no annotation])
+    endif
+    :Download audio with the AudioDispatcher\n(downloader chosen by source type);
+    if () then ([download failed])
+      :Mark row failed\nand remove partial files;
+    else ([downloaded])
+      :Stage RawAudioJob (status pending);
+      note right: raw_audio_jobs (MongoDB)\nWAV under DATA_DIR/tmp
+    endif
+  endif
+endwhile ([batch done])
+:send_summary (log and e-mail);
+:trigger dag_process_audio>
+stop
+
+|DAG 2: dag_process_audio|
+:dag_process_audio triggered<
+:reset_stale_jobs: jobs processing for\nmore than 30 min go back to pending;
+:pick_pending_jobs: take up to 20 pending\nRawAudioJobs, mark them processing;
+while () is ([job left in the batch])
+  if () then ([song already stored])
+    :Mark job done;
+  else ([song not stored])
+    :AlignmentCheckHandler: compare the WAV with\nthe annotation (duration, chroma offset);
+    :SeparateHandler: Demucs htdemucs_ft\nharmonic stem (skipped for clean sources);
+    :AnnotationHandler: parse chord labels\n(JAMS, JAAH, Harte, RWC, Hooktheory, ...);
+    :LabelHandler: map labels to\nroot / quality / extension / bass ids;
+    :SampleWriterHandler: write the 24 kHz stem\nand build section and chord rows;
+    if () then ([chain failed])
+      :Mark job and crawl_queue row failed;
+    else ([chain succeeded])
+      :Replace the song in training_sections\nand training_chords;
+      note right: PostgreSQL
+      :Mark job and crawl_queue row done;
+    endif
+    :Delete the temporary WAV directory;
+  endif
+endwhile ([batch done])
+:send_summary (log and e-mail);
+stop
+@enduml

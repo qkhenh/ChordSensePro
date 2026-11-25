@@ -1,0 +1,46 @@
+% Shared TikZ styles for the UML 2.5 use case diagrams of the report.
+% Conventions followed (Ambler, The Elements of UML 2.0 Style; Microsoft UML use case
+% guidelines): actors are roles drawn outside the system boundary, primary actors top-left,
+% a specialised actor below its parent with the generalization arrow pointing to the parent
+% (shared-target style: one hollow triangle under the parent, one trunk, one branch per
+% child); use cases are horizontal ellipses named with a strong verb, stacked top to bottom
+% in the order they happen; an included use case sits to the right of its base, an extending
+% use case below its base; associations carry no arrowheads. All use cases are drawn alike;
+% the implementation status is given in the report's status table, not in the diagram.
+% Layout is placed by hand on a grid.
+\usetikzlibrary{arrows.meta,shapes.geometric,positioning,calc,fit,backgrounds}
+
+\definecolor{umlline}{HTML}{1F2937}
+
+\tikzset{
+  every node/.style={font=\sffamily\footnotesize},
+  % a use case: an ellipse that hugs its (at most two-line) name
+  uc/.style={ellipse, draw=umlline, line width=0.5pt, fill=white, align=center,
+             inner xsep=0.3mm, inner ysep=0.2mm, minimum height=8mm, minimum width=26mm},
+  assoc/.style={draw=umlline, line width=0.5pt},
+  gen/.style={draw=umlline, line width=0.5pt, -{Triangle[open, length=2.6mm, width=2.6mm]}},
+  dep/.style={draw=umlline, line width=0.5pt, dashed, -{Straight Barb[length=2mm, width=2.2mm]}},
+  deplabel/.style={font=\sffamily\scriptsize, fill=white, inner sep=0.8pt},
+  boundary/.style={draw=umlline, line width=0.7pt},
+}
+
+% \actor{node name}{position}{label}: a stick figure; the node is the figure's body.
+\newcommand{\actor}[3]{%
+  \begin{scope}[shift={#2}, line width=0.6pt, draw=umlline]
+    \draw (0,0.34) circle (0.13);
+    \draw (0,0.21) -- (0,-0.14);
+    \draw (-0.23,0.08) -- (0.23,0.08);
+    \draw (0,-0.14) -- (-0.18,-0.42);
+    \draw (0,-0.14) -- (0.18,-0.42);
+    \node[inner sep=0pt, minimum width=5mm, minimum height=10mm] (#1) at (0,0) {};
+    \node[below=0.46cm of #1.center, align=center, font=\sffamily\footnotesize] (#1-label) {#3};
+  \end{scope}%
+}
+
+% \specialize{child}{parent}{trunk x}: generalization from a child actor (placed to the
+% right of the trunk) to its parent, drawn orthogonally: a horizontal branch from the child
+% to the trunk, then up the trunk to the hollow triangle under the parent's name. Branches
+% of several children share the trunk and the triangle (UML shared-target style).
+\newcommand{\specialize}[3]{%
+  \draw[gen] ($(#1.west)+(0.02,0)$) -- (#3,0 |- #1.west) -- ($(#2-label.south)+(0,-0.05)$);%
+}

@@ -1,0 +1,69 @@
+% UML 2.5 use case diagram (2 of 2) — Education package, content and administration.
+% Build of 2026-11-25. UC-04 is repeated only as the use case included by UC-10 (it is
+% specified in diagram 1); the included use case sits to the right of its base.
+% Grid (cm): general actors x=-1.5 (the generalization trunk runs below them), specialised
+% actors x=0.3; use cases x=5.0, included use case x=11.0; rows 1.3 cm apart, one group per
+% actor, in the order the groups are specified.
+\documentclass[tikz, border=3mm]{standalone}
+\input{uml-usecase-style.tex}
+
+\begin{document}
+\begin{tikzpicture}
+
+% ---------------- use cases, grouped by actor ----------------
+\node[uc] (UC08) at (5.0,  0.00) {UC-08 Create a Class\\and Enroll Students};
+\node[uc] (UC09) at (5.0, -1.30) {UC-09 Publish Repertoire and\\Annotate the Master Chart};
+\node[uc] (UC11) at (5.0, -2.60) {UC-11 Monitor\\Practice Telemetry};
+\node[uc] (UC10) at (5.0, -4.00) {UC-10 Join a Class and Practice\\the Assigned Repertoire};
+\node[uc] (UC04) at (11.0,-4.00) {UC-04 Practice\\a Song};
+
+\node[uc] (UC12) at (5.0, -5.70) {UC-12 Monitor Revenue\\and Product Usage};
+\node[uc] (UC13) at (5.0, -7.00) {UC-13 Configure the\\Subscription Policy};
+\node[uc] (UC14) at (5.0, -8.30) {UC-14 Handle Feedback\\and Flag AI Quality};
+\node[uc] (UC21) at (5.0, -9.60) {UC-21 Curate the\\Chord Dictionary};
+
+\node[uc] (UC15) at (5.0,-11.20) {UC-15 Monitor Infrastructure\\and Compute Resources};
+\node[uc] (UC16) at (5.0,-12.50) {UC-16 Protect the Gateway\\and Review Audit Logs};
+\node[uc] (UC17) at (5.0,-13.80) {UC-17 Deploy or Roll Back\\an AI Model};
+
+% ---------------- system boundary ----------------
+\begin{scope}[on background layer]
+  \node[boundary, fit=(UC08)(UC17)(UC04), inner xsep=4mm, inner ysep=5mm,
+        label={[anchor=north, font=\sffamily\bfseries\footnotesize]north:ChordSense Pro}] (SYS) {};
+\end{scope}
+
+% ---------------- actors: specialised actors below and to the right of their parent ----
+\actor{Paid}{(-1.5, 0.20)}{Paid User (Pro)}
+\actor{Teacher}{(0.3,-1.30)}{Teacher}
+\actor{Student}{(0.3,-4.00)}{Student}
+\actor{Reg}{(-1.5,-5.60)}{Registered User}
+\actor{PM}{(0.3,-7.00)}{Music Platform\\Manager}
+\actor{Expert}{(0.3,-9.60)}{Expert}
+\actor{IT}{(0.3,-12.50)}{IT Administrator}
+
+% ---------------- generalization: child --> parent, one shared triangle per parent ----
+\specialize{Teacher}{Paid}{-1.5}
+\specialize{Student}{Paid}{-1.5}
+\specialize{PM}{Reg}{-1.5}
+\specialize{Expert}{Reg}{-1.5}
+\specialize{IT}{Reg}{-1.5}
+
+% ---------------- associations (no arrowheads) ----------------
+\draw[assoc] (Teacher.east) -- (UC08.west);
+\draw[assoc] (Teacher.east) -- (UC09.west);
+\draw[assoc] (Teacher.east) -- (UC11.west);
+\draw[assoc] (Student.east) -- (UC10.west);
+\draw[assoc] (PM.east) -- (UC12.west);
+\draw[assoc] (PM.east) -- (UC13.west);
+\draw[assoc] (PM.east) -- (UC14.west);
+\draw[assoc] (PM.east) -- (UC21.west);
+\draw[assoc] (Expert.east) -- (UC21.west);
+\draw[assoc] (IT.east) -- (UC15.west);
+\draw[assoc] (IT.east) -- (UC16.west);
+\draw[assoc] (IT.east) -- (UC17.west);
+
+% ---------------- «include»: from the base use case to the included use case ----------------
+\draw[dep] (UC10.east) -- node[deplabel, above=0.4mm] {\guillemotleft include\guillemotright} (UC04.west);
+
+\end{tikzpicture}
+\end{document}

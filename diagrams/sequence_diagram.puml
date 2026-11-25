@@ -1,72 +1,90 @@
-@startuml
+@startuml sequence_diagram
+' UML 2.5 sequence diagram — analysing an uploaded song (UC-02 Analyze a Song). Build of 2026-11-25.
+' Conventions (Ambler / Microsoft sequence diagram guidelines): one initiating event; the human
+' actor at the far left, the reactive database at the far right; lifelines named ":Type";
+' messages between software parts written as operation signatures, messages to and from the
+' person in prose; filled arrow = synchronous call, open arrow (->>) = asynchronous message,
+' dashed arrow = reply (shown only where the returned value is used later);
+' alt fragments carry guards (PlantUML draws the square brackets).
+skinparam dpi 200
+skinparam shadowing false
+skinparam defaultFontName Helvetica
+skinparam sequenceMessageAlign left
+skinparam ParticipantBackgroundColor #FFFFFF
+skinparam ParticipantBorderColor #1F2937
+skinparam DatabaseBackgroundColor #FFFFFF
+skinparam DatabaseBorderColor #1F2937
+skinparam LifeLineBorderColor #6B7280
 autonumber
 hide footbox
-skinparam sequence {
-    ParticipantBackgroundColor #FF6B6B
-    ParticipantBorderColor #C92A2A
-    ParticipantFontColor white
-    ParticipantFontSize 13
-    LifeLineBorderColor #FA5252
-    LifeLineBackgroundColor #8CE99A
-    ArrowColor #2B2D42
-    ArrowFontColor #10002B
-    ActorBorderColor #2B2D42
-    ActorBackgroundColor #EDF2F4
-    GroupBorderColor #C92A2A
-    GroupHeaderFontColor #C92A2A
-}
 
-actor Musician as "Musician"
-participant UI as "Workspace UI"
-participant Audio as "Web Audio Player"
-participant Engine as "Client Harmonic Engine"
-participant Server as "Backend System"
-database DB as "Database"
+actor "Musician" as U
+participant ":WebClient" as C
+participant ":ApiServer" as A
+participant ":JobExecutor" as X
+participant ":Normalizer" as N
+participant ":RhythmAnalyzer" as R
+participant ":AIModelService" as M
+database ":PostgreSQL" as DB
 
-Musician -> UI : Click Play button
-activate UI
-UI -> Audio : Start audio playback at current time
-activate Audio
-Audio --> UI : Return playback timestamp in milliseconds
-deactivate Audio
-UI -> UI : Highlight active bar on Smart Grid (< 100ms sync)
-deactivate UI
-
-Musician -> UI : Click chord cell to edit (Open Edit Marker)
-activate UI
-UI -> Musician : Display Edit Marker modal dialog
-deactivate UI
-
-Musician -> UI : Submit corrected chord (e.g. Root = C, Quality = maj9)
-activate UI
-UI -> Engine : Recalculate harmonic context (Chord = Cmaj9, Key = G)
-activate Engine
-
-alt Invalid Chord Form
-    Engine --> UI : Return syntax validation error
-    UI --> Musician : Display "Invalid Chord Format" warning message
-else Valid Chord Form
-    Engine --> UI : Return Roman degree (IVmaj9) and scale mode (C Lydian)
-    deactivate Engine
-    UI -> UI : Update Smart Grid display instantly (Zero Latency)
-
-    Musician -> UI : Click "Save to Playlist"
-    UI -> Server : Send update request with modified chord events
-    activate Server
-    Server -> DB : Update song chart timeline (PostgreSQL JSONB)
-    activate DB
-
-    alt Valid Save and Update
-        DB --> Server : Return database confirmation (200 OK)
-        Server --> UI : Confirm chart successfully persisted
-        UI --> Musician : Display "Custom Chart Saved" toast notification
-    else Failed Save
-        DB --> Server : Return database error (500 Error)
-        deactivate DB
-        Server --> UI : Return internal server error response
-        deactivate Server
-        UI --> Musician : Display error alert and save chart to LocalStorage
-    end
+U -> C : choose an audio file
+activate C
+C -> A : POST /analyze/file(file)
+activate A
+A -> A : checkUpload(file, user)
+alt daily quota used up
+  A --> C : 429 quota_exceeded
+  deactivate A
+  C --> U : show the reset time and the upgrade offer
+else accepted
+  A -> DB : consume(user), add(job)
+  A ->> X : enqueue(jobId)
+  activate X
+  A --> C : 202 (jobId)
+  deactivate A
+  C -> A : open WebSocket /ws/jobs/{jobId}
+  activate A
 end
-deactivate UI
+
+X -> N : normalize(file)
+activate N
+N --> X : audio (WAV, contentHash)
+deactivate N
+X -> DB : getCached(contentHash)
+alt cached result of this model version
+  DB --> X : result
+  X -> DB : refund(job)
+else no cached result
+  X ->> A : publish(progress: beat_tracking)
+  A ->> C : progress(beat_tracking)
+  X -> R : analyze(audio)
+  activate R
+  R --> X : rhythm
+  deactivate R
+  X ->> A : publish(progress: recognizing)
+  A ->> C : progress(recognizing)
+  X -> M : POST /predict(audio)
+  activate M
+  M --> X : chordSegments
+  deactivate M
+  X -> X : toEvents(chordSegments, rhythm)
+end
+
+alt analysis succeeded
+  X -> DB : add(chart), put(result), markDone(jobId, chartId)
+  X ->> A : publish(progress: done, chartId)
+  A ->> C : progress(done, chartId)
+  C -> A : GET /charts/{chartId}
+  A -> DB : getChart(chartId, owner)
+  A --> C : 200 (chart)
+  C --> U : show the Practice Workspace
+else failed or past the deadline
+  X -> DB : refund(job), markFailed(jobId, error)
+  X ->> A : publish(progress: failed, error)
+  A ->> C : progress(failed, error)
+  C --> U : show the error and suggest another source
+end
+deactivate X
+deactivate A
+deactivate C
 @enduml
