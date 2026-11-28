@@ -11,18 +11,23 @@ from typing import Any
 
 import numpy as np
 
-from src.crf import viterbi_crf_numpy
+from src.crf import viterbi_crf_numpy, viterbi_dynamic_crf_numpy
 from src.music_theory import (
     DEPRECATED_TYPE_MASK,
     FLAT_KEY_IDS,
+    N_INVERSIONS_V6,
     N_SKELETONS,
+    N_SKELETONS_V6,
+    N_TENSIONS_V6,
     N_TYPES,
     REL_PITCH_INDEX,
     ROOT_SILENCE_ID,
+    SKEL14_BASE_QE,
     SKEL_BASE_TYPE,
     SKEL_TYPE_MASK,
     TYPE_TENSION_REL_MASK,
     TYPE_TO_QE,
+    assemble_v6_chord_name,
     resolve_jazz_chord_theory,
     resolve_power_chord_quality_by_key,
 )
@@ -101,6 +106,8 @@ def _resolve_default_serve_model() -> str:
         return env_p
     base_dir = Path(__file__).resolve().parent.parent / "results"
     for cand in (
+        "model_v6_fullsong_p3.onnx",
+        "model_v6_20s_p2.onnx",
         "model_v5_1_fullsong_p3.onnx",
         "model_v5_fullsong_p3.onnx",
         "model_v5_p3.onnx",
@@ -111,7 +118,7 @@ def _resolve_default_serve_model() -> str:
     ):
         if (base_dir / cand).exists():
             return str(base_dir / cand)
-    return "results/model_v5_1_fullsong_p3.onnx"
+    return "results/model_v6_fullsong_p3.onnx"
 
 
 HOST = os.environ.get("SERVE_HOST", "0.0.0.0")
@@ -300,6 +307,84 @@ def detect_solo_clean_audio(wav_stereo_or_mono: np.ndarray, sr: int) -> bool:
         return False
 
 
+def route_audio_stems_dynamic(
+    wav_stereo_or_mono: np.ndarray,
+    sr: int,
+    target_sr: int,
+    separator: HarmonicSeparator | None,
+    window_s: float = 4.0,
+    xfade_ms: float = 250.0,
+) -> np.ndarray:
+    """Windowed Solo-Piano vs Full-Band dynamic stem router (`4.0s` windows + `250ms` cosine crossfade).
+
+    - Clean solo-piano / acoustic sections (no drums, no vocal fricatives) stay on pristine RAW audio
+      (preventing `htdemucs_ft` harmonic distortion like `C -> Cm` on thin piano intros).
+    - Full-band / vocal / drum sections run through `htdemucs_ft` (`other + bass`).
+    - Returns mono `int16` waveform at `target_sr`.
+    """
+    mono_raw = wav_stereo_or_mono.mean(axis=0) if wav_stereo_or_mono.ndim > 1 else wav_stereo_or_mono
+    mono_raw = mono_raw.astype(np.float32)
+
+    def _to_target_sr(x: np.ndarray, orig_sr: int) -> np.ndarray:
+        if orig_sr == target_sr:
+            return x.astype(np.float32)
+        if _TORCHAUDIO_AVAILABLE:
+            import torch
+            return torchaudio.functional.resample(torch.from_numpy(x).unsqueeze(0), orig_sr, target_sr).squeeze(0).numpy()
+        import librosa
+        return librosa.resample(x, orig_sr=orig_sr, target_sr=target_sr).astype(np.float32)
+
+    raw_24k = _to_target_sr(mono_raw, sr)
+    if separator is None or len(raw_24k) < target_sr * 2:
+        return (np.clip(raw_24k, -1.0, 1.0) * 32767.0).astype(np.int16)
+
+    win_n = max(target_sr * 2, int(round(window_s * target_sr)))
+    n_tot = len(raw_24k)
+    n_wins = max(1, int(np.ceil(n_tot / float(win_n))))
+    win_is_solo = np.zeros(n_wins, dtype=bool)
+
+    for wi in range(n_wins):
+        s0 = wi * win_n
+        s1 = min(n_tot, s0 + win_n)
+        seg = raw_24k[s0:s1]
+        if len(seg) < target_sr:
+            win_is_solo[wi] = win_is_solo[wi - 1] if wi > 0 else True
+        else:
+            win_is_solo[wi] = detect_solo_clean_audio(seg, target_sr)
+
+    if bool(np.all(win_is_solo)):
+        log.info("Windowed router: 100% clean solo instrument — bypassing Demucs")
+        return (np.clip(raw_24k, -1.0, 1.0) * 32767.0).astype(np.int16)
+
+    demucs_i16 = separator.separate_waveform(wav_stereo_or_mono, sr=sr, target_sr=target_sr)
+    if not bool(np.any(win_is_solo)):
+        return demucs_i16
+
+    demucs_f = demucs_i16.astype(np.float32) / 32768.0
+    m_len = min(len(raw_24k), len(demucs_f))
+    raw_24k = raw_24k[:m_len]
+    demucs_f = demucs_f[:m_len]
+
+    # Build smooth [0..1] raw_weight mask with 250ms cosine crossfade across window transitions
+    raw_w = np.zeros(m_len, dtype=np.float32)
+    for wi in range(n_wins):
+        if win_is_solo[wi]:
+            s0 = wi * win_n
+            s1 = min(m_len, s0 + win_n)
+            raw_w[s0:s1] = 1.0
+
+    xf = max(1, int(round(xfade_ms / 1000.0 * target_sr)))
+    if xf > 1 and m_len > xf:
+        kernel = 0.5 - 0.5 * np.cos(2.0 * np.pi * np.linspace(0.0, 1.0, xf, dtype=np.float32))
+        kernel /= max(float(kernel.sum()), 1e-8)
+        raw_w = np.convolve(np.pad(raw_w, (xf // 2, xf - 1 - xf // 2), mode="edge"), kernel, mode="valid")[:m_len]
+
+    blended = raw_w * raw_24k + (1.0 - raw_w) * demucs_f
+    solo_pct = 100.0 * float(win_is_solo.mean())
+    log.info(f"Windowed router: blended {solo_pct:.1f}% solo-raw + {100.0 - solo_pct:.1f}% htdemucs_ft")
+    return (np.clip(blended, -1.0, 1.0) * 32767.0).astype(np.int16)
+
+
 class HarmonicSeparator:
     """Demucs `htdemucs_ft` harmonic stem extractor (`other + bass`, matching DE training v2/v3)."""
 
@@ -478,17 +563,20 @@ class ONNXPredictor:
         dec_path = p.with_name(dec_name)
         self.decoder_session = None
         self.is_v5 = False
+        self.is_v6 = False
         if dec_path.exists():
             self.decoder_session = ort.InferenceSession(str(dec_path), sess_options=opts, providers=providers)
             self.is_v5 = True
+            self.is_v6 = int(self.v5_meta.get("arch_version", 5)) >= 6
             self.is_frame_level = True
-            self.crf_stride = int(self.v5_meta.get("crf_stride", 4))
+            self.crf_stride = int(self.v5_meta.get("crf_stride", 2 if self.is_v6 else 4))
             self.context_dim = int(self.v5_meta.get("context_dim", 256))
-            self.cqt_bins = int(self.v5_meta.get("cqt_bins", 60))
+            self.cqt_bins = int(self.v5_meta.get("cqt_bins", 96 if self.is_v6 else 60))
             self.has_v5_cqt = bool(outputs_meta and len(outputs_meta) >= 2)
             self.dec_has_cqt = any(m.name == "cqt" for m in self.decoder_session.get_inputs())
             log.info(
-                f"ONNX v5 Full-Song Context Decoder loaded: {dec_path} (bass_first_cqt={self.dec_has_cqt})"
+                f"ONNX v{6 if self.is_v6 else 5} Full-Song Context Decoder loaded: {dec_path} "
+                f"(cqt_bins={self.cqt_bins}, stride={self.crf_stride})"
             )
         else:
             self.is_frame_level = bool(
@@ -639,6 +727,113 @@ class ONNXPredictor:
         if has_tbass:
             res_ola["true_bass_logits"] = acc_tbass * inv_w[:, None]
         return res_ola
+
+    def decode_song_v6(
+        self,
+        song_emb: np.ndarray,
+        frame_rms_db: np.ndarray,
+        song_cqt: np.ndarray | None = None,
+    ) -> dict[str, np.ndarray]:
+        """Run Model v6 Full-Song Context Decoder in ONE pass (up to ~6 min songs, overlap-add beyond)."""
+        if self.decoder_session is None:
+            raise RuntimeError("v6 decoder_session is not initialized")
+
+        total_frames, _ = song_emb.shape
+        cqt_bins = int(getattr(self, "cqt_bins", 96))
+        if song_cqt is None:
+            song_cqt = np.zeros((total_frames, cqt_bins), dtype=np.float32)
+
+        def _unpack(outs: list[np.ndarray]) -> dict[str, np.ndarray]:
+            return {
+                "crf_emissions": outs[0][0],
+                "crf_transitions": outs[1],
+                "crf_start": outs[2],
+                "crf_end": outs[3],
+                "crf_dyn_params": outs[4],
+                "tension_logits_by_root": outs[5][0],
+                "inv_logits_by_root": outs[6][0],
+                "bass_logits": outs[7][0],
+                "true_bass_logits": outs[8][0],
+                "boundary_logits": outs[9][0],
+                "key_logits": outs[10][0],
+                "sustain_env": outs[11][0],
+                "fast_chord_env": outs[12][0],
+            }
+
+        # Single full-song pass up to ~6.0 minutes (27,000 frames @ 75 Hz) so Intro Piano attends to Full Band/Outro!
+        max_single_frames = 27000
+        if total_frames <= max_single_frames:
+            feed = {
+                "emb": song_emb[np.newaxis, :, :].astype(np.float32),
+                "frame_rms_db": frame_rms_db[np.newaxis, :].astype(np.float32),
+                "cqt": song_cqt[np.newaxis, :, :].astype(np.float32),
+            }
+            return _unpack(self.decoder_session.run(None, feed))
+
+        # Overlap-add fallback for ultra-long recordings (>6 min)
+        stride = self.crf_stride
+        win_f = 18000
+        step_f = 9000
+        total_crf = int(np.ceil(total_frames / float(stride)))
+        acc_crf = np.zeros((total_crf, 1 + 12 * N_SKELETONS_V6), dtype=np.float32)
+        acc_wc = np.zeros(total_crf, dtype=np.float32)
+        acc_tens = np.zeros((total_frames, 12, N_TENSIONS_V6), dtype=np.float32)
+        acc_inv = np.zeros((total_frames, 12, N_INVERSIONS_V6), dtype=np.float32)
+        acc_bass = np.zeros((total_frames, 13), dtype=np.float32)
+        acc_tb = np.zeros((total_frames, 13), dtype=np.float32)
+        acc_bnd = np.zeros((total_frames, 2), dtype=np.float32)
+        acc_key = np.zeros((total_frames, 24), dtype=np.float32)
+        acc_sus = np.zeros((total_frames, 12), dtype=np.float32)
+        acc_fast = np.zeros((total_frames, 12), dtype=np.float32)
+        acc_w = np.zeros(total_frames, dtype=np.float32)
+
+        starts = list(range(0, max(1, total_frames - win_f + 1), step_f))
+        if not starts or starts[-1] + win_f < total_frames:
+            starts.append(max(0, ((total_frames - win_f) // stride) * stride))
+
+        crf_trans = crf_start = crf_end = crf_dyn = None
+        for s in starts:
+            e = min(total_frames, s + win_f)
+            d = _unpack(self.decoder_session.run(None, {
+                "emb": song_emb[np.newaxis, s:e, :].astype(np.float32),
+                "frame_rms_db": frame_rms_db[np.newaxis, s:e].astype(np.float32),
+                "cqt": song_cqt[np.newaxis, s:e, :].astype(np.float32),
+            }))
+            crf_trans, crf_start, crf_end, crf_dyn = d["crf_transitions"], d["crf_start"], d["crf_end"], d["crf_dyn_params"]
+            tw = _triangle_weights(e - s)
+            acc_tens[s:e] += d["tension_logits_by_root"] * tw[:, None, None]
+            acc_inv[s:e] += d["inv_logits_by_root"] * tw[:, None, None]
+            acc_bass[s:e] += d["bass_logits"] * tw[:, None]
+            acc_tb[s:e] += d["true_bass_logits"] * tw[:, None]
+            acc_bnd[s:e] += d["boundary_logits"] * tw[:, None]
+            acc_key[s:e] += d["key_logits"] * tw[:, None]
+            acc_sus[s:e] += d["sustain_env"] * tw[:, None]
+            acc_fast[s:e] += d["fast_chord_env"] * tw[:, None]
+            acc_w[s:e] += tw
+
+            cs = s // stride
+            ce = min(total_crf, cs + len(d["crf_emissions"]))
+            tw_c = _triangle_weights(ce - cs)
+            acc_crf[cs:ce] += d["crf_emissions"][: ce - cs] * tw_c[:, None]
+            acc_wc[cs:ce] += tw_c
+
+        iw = 1.0 / np.maximum(acc_w, 1e-6)
+        iwc = 1.0 / np.maximum(acc_wc, 1e-6)
+        return {
+            "crf_emissions": acc_crf * iwc[:, None],
+            "crf_transitions": crf_trans,
+            "crf_start": crf_start,
+            "crf_end": crf_end,
+            "crf_dyn_params": crf_dyn,
+            "tension_logits_by_root": acc_tens * iw[:, None, None],
+            "inv_logits_by_root": acc_inv * iw[:, None, None],
+            "bass_logits": acc_bass * iw[:, None],
+            "true_bass_logits": acc_tb * iw[:, None],
+            "boundary_logits": acc_bnd * iw[:, None],
+            "key_logits": acc_key * iw[:, None],
+            "sustain_env": acc_sus * iw[:, None],
+            "fast_chord_env": acc_fast * iw[:, None],
+        }
 
     def predict_frame_probs(
         self, wav_float32: np.ndarray
@@ -1017,6 +1212,9 @@ def load_audio_bytes(
                     import librosa
                     mono = librosa.resample(mono, orig_sr=sr_orig, target_sr=target_sr)
             return (np.clip(mono, -1.0, 1.0) * 32767.0).astype(np.int16)
+
+        if mode == "auto" and wav_stereo.shape[-1] >= sr_orig * 8:
+            return route_audio_stems_dynamic(wav_stereo, sr=sr_orig, target_sr=target_sr, separator=separator)
 
         return separator.separate_waveform(wav_stereo, sr=sr_orig, target_sr=target_sr)
 
@@ -1866,6 +2064,438 @@ def _prune_short_segments(
     return cur
 
 
+def _is_valid_harmonic_passing(
+    left: dict[str, Any],
+    mid: dict[str, Any],
+    right: dict[str, Any],
+) -> bool:
+    """Return True if `mid` (`240-750ms`) is a genuine functional passing chord between `left` and `right`.
+
+    Protects:
+    - Circle-of-Fifths `ii -> V -> I` (or secondary dominant `V/x -> x`, `right_root == (mid_root + 5) % 12`)
+    - Tritone substitution (`bII7 -> I`, `right_root == (mid_root + 11) % 12`)
+    - Modal borrow (`IV -> ivm6 -> I`, same root major->minor or minor->I)
+    - Stepwise bass / slash passing line (`G -> D/F# -> Em7`, bass moves `+/-1` or `+/-2` semitones!)
+    """
+    r_l, r_m, r_r = int(left.get("root_id", -1)), int(mid.get("root_id", -1)), int(right.get("root_id", -1))
+    if not (0 <= r_l < 12 and 0 <= r_m < 12 and 0 <= r_r < 12):
+        return False
+
+    b_l = int(left.get("bass_id", 12))
+    b_m = int(mid.get("bass_id", 12))
+    b_r = int(right.get("bass_id", 12))
+    eff_bl = b_l if 0 <= b_l < 12 else r_l
+    eff_bm = b_m if 0 <= b_m < 12 else r_m
+    eff_br = b_r if 0 <= b_r < 12 else r_r
+
+    # 1. Stepwise passing bass line (e.g. G -> D/F# -> Em7: G -> F# -> E = -1, -2)
+    step_lm = (eff_bm - eff_bl) % 12
+    step_mr = (eff_br - eff_bm) % 12
+    if step_lm in (1, 2, 10, 11) and step_mr in (1, 2, 10, 11) and eff_bm != eff_bl and eff_bm != eff_br:
+        return True
+
+    # 2. Dominant / Circle-of-Fifths resolution (`V -> I` or `ii -> V -> I`)
+    if (r_r - r_m) % 12 == 5:
+        return True
+    if (r_m - r_l) % 12 == 5 and (r_r - r_m) % 12 in (5, 2, 11):
+        return True
+
+    # 3. Tritone substitution (`bII7 -> I`, descending semitone)
+    if (r_r - r_m) % 12 == 11 and int(mid.get("quality_id", -1)) in (2, 3, 5):
+        return True
+
+    # 4. Modal borrow (`IVmaj7 -> ivm6 -> I` or `I -> V/3 -> vi`)
+    if r_m == r_l and int(left.get("quality_id", -1)) == 0 and int(mid.get("quality_id", -1)) == 1:
+        return True
+
+    return False
+
+
+def _prune_short_segments_v6(
+    segments: list[dict[str, Any]],
+    min_duration_ms: float = MIN_DURATION_MS,
+) -> list[dict[str, Any]]:
+    """Harmonic-Gated Passing Filter for Model v6.
+
+    - Unconditionally absorbs ultra-short jitter `< 240ms` (keeps output crisp & spam-free).
+    - Protects genuine passing chords (`240-750ms`) when backed by real chord/bass onset
+      (`_bnd_peak >= 0.45` or bass change) AND valid harmonic function (`ii-V-I`, tritone sub,
+      `IV -> ivm6`, stepwise slash bass `G -> D/F# -> Em7`).
+    - Still prunes same-root decay-tail flickers (`< 460ms`) and unconfirmed low-confidence glitches.
+    """
+    if len(segments) <= 1 or min_duration_ms <= 0:
+        return _merge_consecutive(segments)
+
+    cur = _merge_consecutive(segments)
+    hard_min_ms = min(240.0, float(min_duration_ms))
+
+    while len(cur) > 1:
+        candidates: list[int] = []
+        for i, seg in enumerate(cur):
+            dur = float(seg["end_ms"]) - float(seg["start_ms"])
+            if dur < hard_min_ms:
+                candidates.append(i)
+                continue
+
+            if seg.get("silent", False):
+                if dur < min_duration_ms:
+                    candidates.append(i)
+                continue
+
+            bnd_p = float(seg.get("_bnd_peak", 0.0))
+            bass_chg = bool(seg.get("_bass_chg", False))
+            conf_i = float(seg.get("confidence", 1.0))
+
+            if 0 < i < len(cur) - 1 and not cur[i - 1].get("silent", False) and not cur[i + 1].get("silent", False):
+                l_seg, r_seg = cur[i - 1], cur[i + 1]
+                is_harmonic_pass = (bnd_p >= 0.45 or bass_chg) and _is_valid_harmonic_passing(l_seg, seg, r_seg)
+
+                if dur < min_duration_ms:
+                    if not (is_harmonic_pass and conf_i >= 0.34):
+                        candidates.append(i)
+                elif dur < 750.0 and not is_harmonic_pass:
+                    same_root_tail = (dur < 460.0) and (
+                        seg["root_id"] == l_seg["root_id"] or seg["root_id"] == r_seg["root_id"]
+                    ) and (not bass_chg) and (bnd_p < 0.45)
+                    weak_non_harmonic = (
+                        conf_i < 0.38
+                        and bnd_p < 0.38
+                        and float(l_seg.get("confidence", 0.0)) >= conf_i + 0.10
+                        and float(r_seg.get("confidence", 0.0)) >= conf_i + 0.10
+                    )
+                    if same_root_tail or weak_non_harmonic:
+                        candidates.append(i)
+            elif dur < min_duration_ms:
+                candidates.append(i)
+
+        if not candidates:
+            break
+
+        idx = min(candidates, key=lambda i: float(cur[i]["end_ms"]) - float(cur[i]["start_ms"]))
+        seg = cur[idx]
+        left = cur[idx - 1] if idx > 0 else None
+        right = cur[idx + 1] if idx + 1 < len(cur) else None
+
+        if left is not None and right is not None:
+            l_act = not left.get("silent", False) and 0 <= left["root_id"] < 12
+            r_act = not right.get("silent", False) and 0 <= right["root_id"] < 12
+            if l_act and not r_act:
+                target = left
+            elif r_act and not l_act:
+                target = right
+            else:
+                l_score = (float(left["end_ms"]) - float(left["start_ms"])) * max(float(left["confidence"]), 0.05)
+                r_score = (float(right["end_ms"]) - float(right["start_ms"])) * max(float(right["confidence"]), 0.05)
+                target = left if l_score >= r_score else right
+        else:
+            target = left if left is not None else right
+
+        if target is None:
+            break
+
+        rep = target.copy()
+        rep["start_ms"] = seg["start_ms"]
+        rep["end_ms"] = seg["end_ms"]
+        cur[idx] = rep
+        cur = _merge_consecutive(cur)
+
+    for s in cur:
+        s.pop("_bnd_peak", None)
+        s.pop("_bass_chg", None)
+    return cur
+
+
+def _infer_v6_full_song(
+    predictor: ONNXPredictor,
+    audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    crop_s: int = CROP_S,
+    step_s: float = STEP_S,
+    rms_threshold_db: float = RMS_THRESHOLD_DB,
+    confidence_threshold: float = CONFIDENCE_THRESHOLD,
+    min_duration_ms: float = MIN_DURATION_MS,
+) -> list[dict[str, Any]]:
+    """Full-song Model v6 inference: 5s Encoder (MERT+CQT96) -> Single-Pass Full-Song Context Decoder ->
+    DynamicBoundaryCRF (169 states, stride=2) -> Joint Inversion/Slash & 7-D Tension Assembly ->
+    Harmonic-Gated Passing Filter.
+    """
+    chunk_samples = crop_s * sample_rate
+    step_samples = max(MERT_HOP_SAMPLES, int(round(step_s * sample_rate / MERT_HOP_SAMPLES)) * MERT_HOP_SAMPLES)
+    audio_len = len(audio)
+    duration_ms = round(audio_len / sample_rate * 1000.0, 1)
+
+    windows: list[tuple[int, np.ndarray]] = []
+    if audio_len < chunk_samples:
+        pad = np.zeros(chunk_samples, dtype=np.int16)
+        pad[:audio_len] = audio
+        windows.append((0, pad))
+    else:
+        pos = 0
+        while pos + chunk_samples <= audio_len:
+            windows.append((pos, audio[pos : pos + chunk_samples]))
+            pos += step_samples
+        if pos < audio_len:
+            last = audio_len - chunk_samples
+            if last != pos - step_samples:
+                windows.append((last, audio[last : last + chunk_samples]))
+
+    total_frames = max(1, mert_output_length(max(audio_len, chunk_samples)))
+    if audio_len < chunk_samples:
+        total_frames = max(1, int(np.ceil(audio_len / MERT_HOP_SAMPLES)))
+
+    c_dim = getattr(predictor, "context_dim", 256)
+    acc_emb = np.zeros((total_frames, c_dim), dtype=np.float32)
+    acc_cqt: np.ndarray | None = None
+    acc_w = np.zeros(total_frames, dtype=np.float32)
+
+    enc_bs = 4
+    for b0 in range(0, len(windows), enc_bs):
+        sub_w = windows[b0 : b0 + enc_bs]
+        wav_b = np.stack([_normalize(crop) for _, crop in sub_w], axis=0)
+        emb_b, cqt_b = predictor.encode_chunks_batch_v5(wav_b)
+        for idx_b, (pos, _) in enumerate(sub_w):
+            emb = emb_b[idx_b]
+            cqt_c = cqt_b[idx_b] if cqt_b is not None else None
+            n_f = len(emb)
+            tw = _triangle_weights(n_f)
+            start_f = int(round(pos / float(MERT_HOP_SAMPLES)))
+            end_f = min(total_frames, start_f + n_f)
+            span = end_f - start_f
+            if span <= 0:
+                continue
+            acc_emb[start_f:end_f] += emb[:span] * tw[:span, None]
+            if cqt_c is not None:
+                if acc_cqt is None:
+                    acc_cqt = np.zeros((total_frames, cqt_c.shape[-1]), dtype=np.float32)
+                acc_cqt[start_f:end_f] += cqt_c[:span] * tw[:span, None]
+            acc_w[start_f:end_f] += tw[:span]
+
+    inv_acc_w = 1.0 / np.maximum(acc_w[:, None], 1e-6)
+    song_emb = acc_emb * inv_acc_w
+    song_cqt = (acc_cqt * inv_acc_w) if acc_cqt is not None else None
+
+    raw_frame_rms_db = _compute_song_frame_rms_db(audio, total_frames)
+    peak_lin = float(np.max(np.abs(audio.astype(np.float32))) / 32768.0) if len(audio) else 0.0
+    gain_offset_db = float(np.clip(-1.0 - 20.0 * np.log10(max(peak_lin, 1e-4)), 0.0, 15.0))
+    frame_rms_db = raw_frame_rms_db + gain_offset_db
+
+    dec = predictor.decode_song_v6(song_emb, frame_rms_db, song_cqt=song_cqt)
+    crf_em = dec["crf_emissions"].copy()               # (T_crf, 169)
+    crf_trans = dec["crf_transitions"]                 # (169, 169)
+    crf_start = dec["crf_start"]                       # (169,)
+    crf_end = dec["crf_end"]                           # (169,)
+    crf_dyn = dec["crf_dyn_params"]                    # (2,)
+    stay_scale = float(crf_dyn[0]) if len(crf_dyn) >= 1 else 0.85
+    trans_boost = float(crf_dyn[1]) if len(crf_dyn) >= 2 else 1.25
+
+    tens_logits = dec["tension_logits_by_root"]        # (T, 12, 7)
+    inv_logits = dec["inv_logits_by_root"]             # (T, 12, 5)
+    bass_logits = dec["bass_logits"]                   # (T, 13)
+    tb_logits = dec["true_bass_logits"]                # (T, 13)
+    bnd_logits = dec["boundary_logits"]                # (T, 2)
+    key_logits = dec["key_logits"]                     # (T, 24)
+    sustain_env = dec["sustain_env"]                   # (T, 12)
+
+    stride = predictor.crf_stride
+    n_crf = len(crf_em)
+    bnd_probs = 1.0 / (1.0 + np.exp(-np.clip(bnd_logits.astype(np.float64), -20.0, 20.0)))
+    bnd_chord_f = bnd_probs[:, 0].astype(np.float32)
+    bnd_bass_f = bnd_probs[:, 1].astype(np.float32)
+
+    bnd_crf = np.array(
+        [float(bnd_chord_f[i * stride : min(total_frames, (i + 1) * stride)].max()) for i in range(n_crf)],
+        dtype=np.float32,
+    )
+    rms_crf = np.array(
+        [float(frame_rms_db[i * stride : min(total_frames, (i + 1) * stride)].mean()) for i in range(n_crf)],
+        dtype=np.float32,
+    )
+    sustain_crf = np.array(
+        [sustain_env[i * stride : min(total_frames, (i + 1) * stride)].mean(axis=0) for i in range(n_crf)],
+        dtype=np.float32,
+    )
+
+    active_rms = frame_rms_db[frame_rms_db > -58.0]
+    p95_db = float(np.percentile(active_rms, 95)) if len(active_rms) > 8 else float(frame_rms_db.max())
+    true_silence_db = min(float(rms_threshold_db), -50.0)
+    dynamic_sil_floor = max(true_silence_db, p95_db - 40.0)
+    crf_em[rms_crf < dynamic_sil_floor, 0] += 5.0
+
+    decay_scale = _compute_decay_lock_scale(rms_crf, sustain_crf=sustain_crf)
+    crf_path_ds = viterbi_dynamic_crf_numpy(
+        crf_em,
+        crf_trans,
+        start_transitions=crf_start,
+        end_transitions=crf_end,
+        boundary_prob=bnd_crf,
+        boundary_stay_scale=stay_scale,
+        boundary_trans_boost=trans_boost,
+        decay_lock_scale=decay_scale,
+    )
+    crf_path = np.repeat(crf_path_ds, stride)[:total_frames]
+    if len(crf_path) < total_frames:
+        crf_path = np.pad(crf_path, (0, total_frames - len(crf_path)), mode="edge")
+    crf_path[frame_rms_db < true_silence_db] = 0
+
+    frame_ms = MERT_HOP_SAMPLES / float(sample_rate) * 1000.0
+    hop_scale = 13.333 / max(frame_ms, 1.0)
+    crf_frame_prob = _softmax(np.repeat(crf_em, stride, axis=0)[:total_frames], axis=-1)
+    bass_prob_all = _softmax(bass_logits, axis=-1)
+    tb_prob_all = _softmax(tb_logits, axis=-1)
+    bass_prob_mix = 0.60 * bass_prob_all + 0.40 * np.pad(tb_prob_all[:, :12], ((0, 0), (0, 1)))
+    key_prob_all = _softmax(key_logits, axis=-1)
+    active_k = crf_path > 0
+    global_key_prob = key_prob_all[active_k].mean(axis=0) if active_k.any() else key_prob_all.mean(axis=0)
+    global_key_id = int(global_key_prob.argmax())
+    global_prefer_flats = global_key_id in FLAT_KEY_IDS
+
+    segments_raw: list[dict[str, Any]] = []
+    span_s = 0
+    prev_eff_bass = -1
+
+    while span_s < total_frames:
+        st_cur = int(crf_path[span_s])
+        span_e = span_s + 1
+        while span_e < total_frames and crf_path[span_e] == st_cur:
+            span_e += 1
+
+        s_ms = round(span_s * frame_ms, 1)
+        e_ms = duration_ms if span_e == total_frames else round(span_e * frame_ms, 1)
+
+        if st_cur <= 0:
+            segments_raw.append({
+                "start_ms": s_ms,
+                "end_ms": e_ms,
+                "root_id": -1,
+                "quality_id": -1,
+                "ext_id": -1,
+                "bass_id": 12,
+                "chord": "N",
+                "confidence": 0.0,
+                "silent": True,
+                "_bnd_peak": 0.0,
+                "_bass_chg": False,
+            })
+            prev_eff_bass = -1
+            span_s = span_e
+            continue
+
+        r_cur = (st_cur - 1) // N_SKELETONS_V6
+        sk_cur = (st_cur - 1) % N_SKELETONS_V6
+        q_base, e_base = SKEL14_BASE_QE[sk_cur]
+
+        mean_k = key_prob_all[span_s:span_e].mean(axis=0)
+        eff_key_id = int((0.55 * mean_k + 0.45 * global_key_prob).argmax())
+        use_flats = (eff_key_id in FLAT_KEY_IDS) if AUTO_KEY_SPELLING else False
+        if AUTO_KEY_SPELLING:
+            use_flats = global_prefer_flats
+
+        # Joint Inversion + TrueBass + SlashBass decoding inside locked `(Root, Skel14)` span
+        inv_p_seg = _softmax(inv_logits[span_s:span_e, r_cur, :], axis=-1)
+        p_non_root_inv = 1.0 - inv_p_seg[:, 0]
+        bp_seg = bass_prob_mix[span_s:span_e].copy()
+        bp_seg[:, 12] += bp_seg[:, r_cur]
+        bp_seg[:, r_cur] = 0.0
+        bp_sum = bp_seg.sum(axis=-1, keepdims=True)
+        bp_seg = np.where(bp_sum > 0, bp_seg / np.maximum(bp_sum, 1e-12), bp_seg)
+        log_bp = np.log(np.clip(bp_seg, 1e-7, 1.0))
+        # When InversionHead confirms an inversion (`p_non_root_inv >= 0.48`), lower root-position bias cleanly
+        slash_max = bp_seg[:, :12].max(axis=-1)
+        weak_slash = (slash_max < SLASH_BASS_THRESHOLD) & (p_non_root_inv < 0.48)
+        log_bp[weak_slash, 12] += 0.70
+        b_path = _viterbi_sticky_1d(log_bp, BASS_SWITCH_PENALTY * hop_scale)
+
+        r_lo = 1 + r_cur * N_SKELETONS_V6
+        r_hi = r_lo + N_SKELETONS_V6
+        root_confs = crf_frame_prob[span_s:span_e, r_lo:r_hi].sum(axis=-1)
+        cond_skel_confs = crf_frame_prob[span_s:span_e, st_cur] / np.maximum(root_confs, 1e-6)
+
+        # Split span by distinct slash bass runs (preserves walking bass lines like Am -> Am/G -> F#m7b5!)
+        sub_s = 0
+        seg_len = span_e - span_s
+        while sub_s < seg_len:
+            b_val = int(b_path[sub_s])
+            sub_e = sub_s + 1
+            while sub_e < seg_len and int(b_path[sub_e]) == b_val:
+                sub_e += 1
+            fs_abs, fe_abs = span_s + sub_s, span_s + sub_e
+            sub_s_ms = round(fs_abs * frame_ms, 1)
+            sub_e_ms = duration_ms if fe_abs == total_frames else round(fe_abs * frame_ms, 1)
+
+            mean_tens_log = tens_logits[fs_abs:fe_abs, r_cur, :].mean(axis=0)
+            tens_prob = (1.0 / (1.0 + np.exp(-np.clip(mean_tens_log.astype(np.float64), -20.0, 20.0)))).astype(np.float32)
+            mean_rel_s = sustain_env[fs_abs:fe_abs][:, REL_PITCH_INDEX[r_cur]].mean(axis=0)
+
+            c_name = assemble_v6_chord_name(
+                r_cur,
+                sk_cur,
+                tens_prob,
+                bass_id=b_val,
+                prefer_flats=use_flats,
+                threshold=0.45,
+                rel_sustain=mean_rel_s,
+                key_id=eff_key_id,
+            )
+
+            t_conf = float(np.maximum(tens_prob, 1.0 - tens_prob).mean())
+            c_val = float(np.clip(
+                weighted_chord_conf(
+                    float(root_confs[sub_s:sub_e].mean()),
+                    float(cond_skel_confs[sub_s:sub_e].mean()),
+                    t_conf,
+                ),
+                0.0,
+                1.0,
+            ))
+
+            # Peak boundary probability around segment start (window [-3, +4] frames)
+            b_lo = max(0, fs_abs - 3)
+            b_hi = min(total_frames, fs_abs + 5)
+            bnd_peak = float(bnd_chord_f[b_lo:b_hi].max()) if b_hi > b_lo else 0.0
+            bass_peak = float(bnd_bass_f[b_lo:b_hi].max()) if b_hi > b_lo else 0.0
+            eff_bass = b_val if (0 <= b_val < 12) else r_cur
+            bass_changed = (prev_eff_bass >= 0 and eff_bass != prev_eff_bass) or (bass_peak >= 0.48)
+            prev_eff_bass = eff_bass
+
+            if c_val < confidence_threshold:
+                segments_raw.append({
+                    "start_ms": sub_s_ms,
+                    "end_ms": sub_e_ms,
+                    "root_id": -1,
+                    "quality_id": -1,
+                    "ext_id": -1,
+                    "bass_id": 12,
+                    "chord": "N",
+                    "confidence": round(c_val, 4),
+                    "silent": True,
+                    "_bnd_peak": bnd_peak,
+                    "_bass_chg": False,
+                })
+            else:
+                segments_raw.append({
+                    "start_ms": sub_s_ms,
+                    "end_ms": sub_e_ms,
+                    "root_id": int(r_cur),
+                    "quality_id": int(q_base),
+                    "ext_id": int(e_base),
+                    "bass_id": int(b_val if (0 <= b_val < 12 and b_val != r_cur) else 12),
+                    "chord": c_name,
+                    "confidence": round(c_val, 4),
+                    "silent": False,
+                    "_bnd_peak": bnd_peak,
+                    "_bass_chg": bass_changed,
+                })
+            sub_s = sub_e
+
+        span_s = span_e
+
+    merged = _prune_short_segments_v6(segments_raw, min_duration_ms=min_duration_ms)
+    if merged:
+        merged[0]["start_ms"] = 0.0
+        merged[-1]["end_ms"] = duration_ms
+    return merged
+
+
 def _infer_frame_level(
     predictor: ONNXPredictor,
     audio: np.ndarray,
@@ -1876,6 +2506,17 @@ def _infer_frame_level(
     confidence_threshold: float = CONFIDENCE_THRESHOLD,
     min_duration_ms: float = MIN_DURATION_MS,
 ) -> list[dict[str, Any]]:
+    if getattr(predictor, "is_v6", False) is True:
+        return _infer_v6_full_song(
+            predictor,
+            audio,
+            sample_rate=sample_rate,
+            crop_s=crop_s,
+            step_s=step_s,
+            rms_threshold_db=rms_threshold_db,
+            confidence_threshold=confidence_threshold,
+            min_duration_ms=min_duration_ms,
+        )
     if getattr(predictor, "is_v5", False) is True:
         return _infer_v5_full_song(
             predictor,

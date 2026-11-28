@@ -1,6 +1,55 @@
 # AI — Change Log
 
 ---
+## 2026-11-28 — Hoàn tất triển khai toàn bộ Codebase `Model v6` & `Dataset v4` (Sẵn sàng Train 8 Epochs/Phase)
+
+Triển khai hoàn chỉnh toàn bộ hệ thống theo đặc tả [`80_plan_v6_full_retrain.md`](file:///d:/qkhenh/Project/ChordSensePro/AI/markdown/80_plan_v6_full_retrain.md) với cấu hình rút gọn **8 epochs/phase** theo yêu cầu và đầy đủ 6 chốt chặn chống overfit:
+
+### 1. Data Engineering — Dataset `v4` (`DE/data/export/v4`)
+- [`harte_mapper.py`](file:///d:/qkhenh/Project/ChordSensePro/DE/src/data_processing/application/mappers/harte_mapper.py): Thêm parser `parse_v6_chord_targets()` giữ nguyên 100% tương thích ngược `map_harte()`, cứu toàn bộ họ hợp âm `6` (`MAJ6_SHELL = 1,842`, `MIN6_SHELL = 456`, tổng **2,298** mẫu thực tế trên `v4`!), phân rã 7-bit Multi-Label Tension (`b9, 9, #9, 4_11, #11, b13_#5, 6_13`), 5 lớp thế đảo (`root_pos, inv1_3rd, inv2_5th, inv3_7th, other_slash`), tách `missing_third` (`4,311` power chords) và loại bỏ hoàn toàn 7 hợp âm lỗi lý thuyết.
+- [`export_dataset_v4.py`](file:///d:/qkhenh/Project/ChordSensePro/DE/scripts/export_dataset_v4.py): Đã chạy thực tế xuất thành công `DE/data/export/v4` (`4,324 train / 1,251 val / 647 test`, `216,216` dòng hợp âm, hardlink 0 GB trùng lặp audio).
+- [`build_v4_piano_and_rare_pack.py`](file:///d:/qkhenh/Project/ChordSensePro/DE/scripts/build_v4_piano_and_rare_pack.py): Script render song-split `POP909` Solo Piano (`train/val/test_piano_pop`) và gói 9 hợp âm cực hiếm (`is_synthetic_rare=True`) kèm fallback synth piano thuần NumPy.
+
+### 2. Kiến trúc `ChordModelV6` & Huấn luyện Chống Overfit
+- [`music_theory.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/music_theory.py): Bổ sung 14 Skeletons / 169 CRF states, ma trận **6-D Tonnetz** (0 tham số), prior hòa thanh `build_functional_crf_prior_v6()` (`V->I` = `+0.55`, `ii->V` = `+0.40`, `ivm6->I` = `+0.40`, Tritone Sub = `+0.35`), và `assemble_v6_chord_name()` đảm bảo 0% hợp âm lỗi.
+- [`conformer.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/conformer.py): Thêm `DropPath`, `DualScalePassingSustainLayer` (`120ms` gated passing env vs `520ms` sustain env), `ParallelKernelConvModule` (`k=3 || k=15`), `BiConformerEncoderV6` và `FullSongCrossSectionAttention (stride=15)` giúp Intro Piano nhìn thẳng sang Full-Band/Outro.
+- [`crf.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/crf.py): Thêm `DynamicBoundaryCRF` (điều biến động `stay_bonus(t)` theo `p_chord_chg`, L2 anchor về prior nhạc lý) + `viterbi_dynamic_crf_numpy()` khớp 100% PyTorch.
+- [`model.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/model.py): Thêm `HarmonicCQTFilterbankV6` (**96 bins**, 24 bins/oct ở `C1..B3`), `BassPedalHoldLayerV6` (**4.00s horizon + Onset-Reset Gate** song song 100% ONNX opset-17), `OctavePitchBassModuleV6` (`E_below` + harmonic-suppressed onset flux), `ChordModelV6` (Confidence-Gated Global/Local Key, Factorized `TrueBass -> Root + Skel14 + Inv5 + Tension7D + SlashBass`, LoRA khóa tầng `[8, 21]`).
+- [`losses.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/losses.py), [`augment.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/augment.py), [`dataset.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/dataset.py), [`train.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/train.py), [`evaluate.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/evaluate.py): Thêm `ChordLossV6` (7 thành phần + `1.5×` trọng số passing chord `≤ 800ms` + `label_smoothing=0.08`), `HighRegisterPianoAugment` (`HPF 180-260Hz`), `CQT SpecAugment`, chặn cứng `0%` synthetic ở Phase 2 & `≤ 4%` ở Phase 1/3, **`ModelEMA`** (`0.995/0.998`), và chọn `best.pt` theo **Composite Score $S_{\text{val}}$** (`skel14_acc`, `short_passing_chord_f1`, `bass_slash_f1`, `tension_macro_f1`, `sixth_chord_f1`).
+
+### 3. ONNX Export, Serving Động, Config 8 Epochs & Colab Notebook
+- [`export_onnx.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/export_onnx.py): Xuất 2-stage ONNX v6 (`encoder + cqt96` & `full-song decoder + dynamic CRF params`).
+- [`serve.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/src/serve.py): Hỗ trợ tự động `arch_version == 6`, thêm **Windowed Solo-Piano Stem Router** (`route_audio_stems_dynamic` cửa sổ `4s` crossfade `250ms`), và **Harmonic-Gated Passing Filter** (`_prune_short_segments_v6`) bảo toàn bậc `V` trong `ii-V-I` và đảo bass lướt `G -> D/F# -> Em7` mà không sinh hợp âm rác.
+- Config huấn luyện **8 epochs / phase**: [`v6_20s_p1.yaml`](file:///d:/qkhenh/Project/ChordSensePro/AI/configs/v6_20s_p1.yaml), [`v6_20s_p2.yaml`](file:///d:/qkhenh/Project/ChordSensePro/AI/configs/v6_20s_p2.yaml), [`v6_fullsong_p3.yaml`](file:///d:/qkhenh/Project/ChordSensePro/AI/configs/v6_fullsong_p3.yaml), cập nhật [`colab_train.ipynb`](file:///d:/qkhenh/Project/ChordSensePro/AI/notebooks/colab_train.ipynb) và thêm [`eval_golden_songs.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/scripts/eval_golden_songs.py) + [`test_v6_model.py`](file:///d:/qkhenh/Project/ChordSensePro/AI/tests/test_v6_model.py).
+
+---
+## 2026-11-26 — Chẩn đoán chuyên sâu lỗi thực nghiệm `v5.1` & Lập Kế Hoạch Huấn Luyện Toàn Diện `Model v6` (`80_plan_v6_full_retrain.md`)
+
+### 1. Chẩn đoán pháp y (Forensic Analysis) trên kết quả kiểm thử thực tế & Code `v5.1`
+Đối chiếu chi tiết kết quả review thực tế trên 2 bài *Rồi Em Sẽ Gặp Một Chàng Trai Khác* (`150/185 = 81.1%`) và *Một Ngàn Nỗi Đau* (`74/94 = 78.7%`), bài *Phép Màu* (Only Piano / Ballad), cùng thống kê trực tiếp trên `DE/data/export/v3` (`216,216` dòng nhãn):
+
+1. **Nguyên nhân mất hợp âm bậc `V` trong vòng `2-5-1` sau commit `2271ad0`:**
+   - Rule `weak_glitch` trong `_prune_short_segments(prune_low_conf=True)` (`AI/src/serve.py`) xóa mọi phân đoạn `< 820ms` có `confidence < 0.44` nằm kẹp giữa hai hợp âm có `confidence` cao hơn `+0.08`. Trong thực tế, bậc `V` màu Jazz (`Ab9(13)`, `F7b9`, `Eb9sus4`) chia xác suất giữa nhiều họ nên `confidence` tự nhiên chỉ đạt `0.35–0.43` (ví dụ `F7b9` dài `747ms`, `conf=0.372` kẹp giữa `Cm7b5 (0.563)` và `A#m7 (0.558)`), dẫn tới bị cắt mất hoàn toàn.
+   - Đồng thời, rule `m_no_b7` trong `_calibrate_v5_crf_and_bass()` dựa trên cửa sổ trung bình nhân `sustain_env` dài `520ms`, làm hợp âm bậc `V` ngắn 1 phách bị phạt `-0.65` điểm emission; còn `D#7#9` bị nhầm thành `D#m7` (3 lần liên tiếp) vì nốt `#9` trùng cao độ với `b3` và thiếu prior tiến trình quãng 4 (`A#m7 → D#7#9 → G#m7`).
+2. **Nguyên nhân thực nghiệm trên bài *Phép Màu* (`257s`, ~71 BPM, 1 ô nhịp = `3.40s`) — Tại sao Intro/Verse 1 Only Piano sai & vỡ vụn, khi Guitar Bass vào (`45s+`) thì chuẩn, và Outro Only Piano (`218s+`) lại bắt đúng `G → D/F# → Em`:**
+   - **Thủ phạm #1 — Hết hạn bộ nhớ `BassPedalHoldLayer` ngay giữa ô nhịp (`1.70s` < `3.40s`):** `BassPedalHoldLayer` cũ chỉ có tầm nhìn tối đa `8 × 16 = 128 frames = 1.70s`. Trên *Phép Màu*, tay trái Piano gẩy `G` ở phách 1 (`2.67s` và `16.69s`), đúng **`+1.87s` sau (`4.59s` và `18.56s`)** bộ nhớ Bass rơi thẳng về `0`, khiến nửa sau ô nhịp bị rải tỉa tay phải quãng cao lừa thành `Em → C` và `Cm` (ngay cả `D/F#` ở `48.64s` tới `50.24s` = `+1.60s` cũng bị tuột thành `Bm/F# → Bm`).
+   - **Thủ phạm #2 — Chênh lệch âm vực tay trái giữa Intro (`Octave 3`) và Outro (`Octave 1–2`) + Cắt khúc `60s`:** Đo trực tiếp `CQT` trên *Phép Màu* cho thấy `LocalKeyHead` đã nhận ra `G major (0.76–0.86)` ngay từ đầu bài, NHƯNG ở Intro/Verse 1 (`8–28s`), Piano đánh treo cao ở Octave 3–4 (`cqt_oct1 = 0.044`, không có năng lượng Octave 1) làm `TrueBassHead` mất phương hướng (`tbass` chỉ đạt `0.26–0.36`); ngược lại ở Outro (`218–228s`), tay trái Piano đánh trầm xuống Octave 1–2 (`cqt_oct1 = 0.219` — mạnh gấp `5×` Intro!) và nằm chung cửa sổ `60s` ngay sau Điệp khúc nên bắt gọn `G (218.5s) → D/F# (221.9s) → Em (225.2s)`.
+   - **Thủ phạm #3 — Biến dạng hài âm do `htdemucs_ft` trên đoạn Piano + Vocal mỏng:** Tại `18.56s–20.16s`, audio Raw đoán `C` (thuộc giọng `G major`), nhưng khi qua `htdemucs_ft` bị cắt mất hài bậc 3 dính theo vocal nên biến thành ảo giác **`Cm`** và băm đoạn `20.16s–26.88s` thành 6 mảnh vụn; cộng thêm `BassPedalHoldLayer` thiếu **Onset-Reset** và CRF khóa cứng `(Root, Skeleton)` trước `SlashBass`.
+3. **Nguyên nhân bỏ sót Passing Chords đánh nhanh (`250ms–800ms`):**
+   - Đo trên `DE/data/export/v3`: có tới **`35,986 / 149,850` hợp âm (`24.0%` tập train)** có thời lượng `≤ 800ms` (`13.8% ≤ 500ms`), nhưng đang bị đè bẹp đồng thời bởi `MultiScaleSustainLayer (520ms)`, `Conformer (conv_kernel=15)`, `crf_stride=4 (53.3ms)` có `stay_bonus` tĩnh, và khóa `< 1000ms` trong `serve.py`.
+4. **Nguyên nhân mù họ hợp âm `6` (`Bmaj7 → Bm6`, `Ebm6`, `6/9`) & thiếu tổ hợp màu hiếm:**
+   - Trong `harte_mapper.py`, toàn bộ **~2,107 mẫu thật** thuộc họ hợp âm `6` (`:maj6 = 1,306`, `:min6 = 386`, `:maj6(9) = 246`, `:(3,5,13) = 129`...) đang bị gán `ext_id = None` (`PARTIAL`, bị mask `-100` khi train `ChordTypeHead`).
+
+### 2. Lập bản đặc tả [`80_plan_v6_full_retrain.md`](file:///d:/qkhenh/Project/ChordSensePro/AI/markdown/80_plan_v6_full_retrain.md) — Train lại từ đầu tới cuối `Model v6` (Kèm 6 Chốt Chặn Chống Overfit)
+Kết hợp kiến trúc từ 3 bài báo nghiên cứu trong `paper/` (*Harmony Transformer* ISMIR 2019, *BTC* ISMIR 2019, *MERT* ICLR 2024):
+- **Giai đoạn 1 — Dataset `DE/data/export/v4` + Gói `POP909` Solo Piano Bridge:** Hardlink 6,222 bài từ `v3`, cứu trọn vẹn ~2,107 mẫu họ `6` vào 2 họ sườn mới **`MAJ6_SHELL` & `MIN6_SHELL`** (nâng tổng lên **14 Skeletons / 169 CRF states**), tách nhãn 7-bit Multi-Label Tension + 5-class `inversion_id`, kết hợp render song-split `POP909` Solo Piano (`50% Raw / 50% Demucs`) từ `DE/data/datasets/`.
+- **Giai đoạn 2 — Kiến trúc `ChordModelV6`:**
+  - `HarmonicCQTFilterbankV6 (96 bins: 24 bins/oct cho C1..B3)` + **`Onset-Reset BassPedalHoldLayerV6`** xóa bóng ma bass cũ trong `13.3ms` khi bước lùi `G2 → F#2 → E2` nhưng giữ vững qua rải dây arpeggio `E2 → B2`.
+  - **Cổng `DualScalePassingSustainLayer` (`520ms` + `120ms` có `Polyphonic/Bass Onset Gate`):** Mở khóa cho Passing Chord (`≥ 2` nốt mới đồng thời ở `C2..G4` hoặc đổi đáy Bass) nhưng chặn đứng 1 nốt giai điệu chạy nhanh ở `>= C4`.
+  - **`BoundaryHead` (`p_chord_chg`, `p_bass_chg`) + `DynamicBoundaryCRF` (`crf_stride=2 = 26.7ms`)** điều biến động `stay_bonus(t)` và tích hợp prior hòa thanh (`ii–V–I`, Tritone Sub, `IVmaj7 → ivm6`), giải mã đồng thời **Joint `(Root, Skel14, Inversion)`** + **`7-Dim Multi-Label Tension Head (BCE)`** + đặc trưng **6-D Tonnetz** (0 tham số).
+- **Giai đoạn 3 & 4 — 6 Kỷ luật Chống Overfit, Huấn luyện 3 Pha (`EMA=0.998`) & Serving Động:** Giới hạn LoRA `r=16` ở tầng `8..21` của MERT, cấm 100% dữ liệu tổng hợp chạm vào MERT ở Phase 2, bật `DropPath=0.15` + `Label Smoothing=0.08` + `CQT SpecAugment` + `Raw/Demucs Mixup`, chọn `best.pt` theo Composite Score $S_{\text{val}}$, và nâng cấp `serve.py` lên **Windowed Solo-Piano Stem Routing (`4s` sliding crossfade)** không xóa nhầm bậc `V` / passing chords.
+
+---
 ## 2026-11-24 — 
 # ChordSensePro — Change Log & Kế Hoạch Chuẩn Hóa Nhạc Lý (Jazz / Pop)
 

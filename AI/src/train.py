@@ -13,13 +13,15 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 
-from src.augment import Augmenter
+from src.augment import Augmenter, apply_cqt_spec_augment_torch
 from src.config import Config, load_config
 from src.dataset import CachedSequenceDataset, ChordDataset, normalize_chunks_clamped
-from src.evaluate import compute_metrics, decode_v5_batch
+from src.evaluate import compute_metrics, compute_v6_metrics, decode_v5_batch, decode_v6_batch
 from src.losses import (
     ChordLoss,
     ChordLossV5,
+    ChordLossV6,
+    compute_skel14_class_weights,
     compute_smoothed_class_weights,
     compute_type_class_weights,
 )
@@ -34,6 +36,59 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+class ModelEMA:
+    """Exponential Moving Average of trainable weights for smooth generalization & zero-jitter validation."""
+
+    def __init__(self, model: torch.nn.Module, decay: float = 0.998):
+        self.decay = float(decay)
+        self.shadow: dict[str, torch.Tensor] = {}
+        self._backup: dict[str, torch.Tensor] = {}
+        self.num_updates = 0
+        for name, p in model.named_parameters():
+            if p.requires_grad and p.is_floating_point():
+                self.shadow[name] = p.detach().float().clone().cpu()
+
+    @torch.no_grad()
+    def update(self, model: torch.nn.Module) -> None:
+        if not self.shadow:
+            return
+        self.num_updates += 1
+        # Ramp effective decay smoothly during initial steps so early checkpoints are accurate
+        d = min(self.decay, (1.0 + self.num_updates) / (10.0 + self.num_updates))
+        for name, p in model.named_parameters():
+            if name in self.shadow:
+                src = p.detach().float().cpu()
+                self.shadow[name].mul_(d).add_(src, alpha=1.0 - d)
+
+    def apply_shadow(self, model: torch.nn.Module) -> None:
+        self._backup = {}
+        with torch.no_grad():
+            for name, p in model.named_parameters():
+                if name in self.shadow:
+                    self._backup[name] = p.detach().clone()
+                    p.copy_(self.shadow[name].to(device=p.device, dtype=p.dtype))
+
+    def restore(self, model: torch.nn.Module) -> None:
+        if not self._backup:
+            return
+        with torch.no_grad():
+            for name, p in model.named_parameters():
+                if name in self._backup:
+                    p.copy_(self._backup[name])
+        self._backup = {}
+
+    def state_dict(self) -> dict:
+        return {"decay": self.decay, "num_updates": self.num_updates, "shadow": self.shadow}
+
+    def load_state_dict(self, state: dict) -> None:
+        self.decay = float(state.get("decay", self.decay))
+        self.num_updates = int(state.get("num_updates", 0))
+        loaded = state.get("shadow", {})
+        for k, v in loaded.items():
+            if k in self.shadow and self.shadow[k].shape == v.shape:
+                self.shadow[k] = v.float().clone().cpu()
 
 
 def build_scheduler(optimizer: torch.optim.Optimizer, total_steps: int, warmup_ratio: float):
@@ -56,7 +111,8 @@ def ensure_phase3_embedding_cache(
 ) -> None:
     """Extract and cache `(T_song, 256)` float16 MERT+LoRA embeddings (+ `(T_song, 60)` CQT) + `frame_rms_db` per song."""
     cache_split_dir.mkdir(parents=True, exist_ok=True)
-    need_cqt = bool(getattr(model, "bass_first", False))
+    need_cqt = bool(getattr(model, "bass_first", False) or hasattr(model, "cqt_bank"))
+    expected_cqt_bins = int(getattr(model, "cqt_bins", 60))
 
     def _cache_valid(sid_chk: str) -> bool:
         p = cache_split_dir / f"{sid_chk}.npz"
@@ -66,7 +122,7 @@ def ensure_phase3_embedding_cache(
             return True
         try:
             with np.load(p) as zf:
-                return "cqt" in zf
+                return "cqt" in zf and int(zf["cqt"].shape[-1]) == expected_cqt_bins
         except Exception:
             return False
 
@@ -126,9 +182,12 @@ def train_one_epoch(
     device: torch.device,
     cfg: Config,
     scheduler=None,
+    ema: ModelEMA | None = None,
 ) -> dict[str, float]:
     model.train()
-    is_v5 = getattr(cfg.model, "arch_version", 4) >= 5
+    arch = getattr(cfg.model, "arch_version", 4)
+    is_v5 = arch >= 5
+    is_v6 = arch >= 6
     is_phase3 = is_v5 and cfg.train.phase == 3
     if is_phase3:
         # Keep frozen MERT in eval mode during Phase 3 sequence polish
@@ -138,6 +197,7 @@ def train_one_epoch(
     n_batches = 0
     use_amp = cfg.train.fp16 and device.type == "cuda"
     accum_steps = max(1, int(getattr(cfg.train, "grad_accum_steps", 1)))
+    cqt_spec_p = float(getattr(cfg.augment, "cqt_spec_aug_prob", 0.0)) if cfg.augment.enabled else 0.0
     num_loader_batches = len(loader)
 
     optimizer.zero_grad(set_to_none=True)
@@ -160,6 +220,10 @@ def train_one_epoch(
                         frame_rms_db=gpu_batch["frame_rms_db"],
                         cqt=gpu_batch.get("cqt"),
                     )
+                elif is_v6 and cqt_spec_p > 0.0:
+                    emb = model.encode_chunks(gpu_batch["wav"])
+                    cqt = apply_cqt_spec_augment_torch(model.encode_cqt(gpu_batch["wav"]), prob=cqt_spec_p)
+                    outputs = model.decode_context(emb, frame_rms_db=gpu_batch["frame_rms_db"], cqt=cqt)
                 else:
                     outputs = model(gpu_batch["wav"], frame_rms_db=gpu_batch["frame_rms_db"])
                 loss, details = criterion(outputs, gpu_batch, model.crf)
@@ -185,8 +249,11 @@ def train_one_epoch(
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
-                if scheduler is not None and scaler.get_scale() >= scale_before:
-                    scheduler.step()
+                if scaler.get_scale() >= scale_before:
+                    if scheduler is not None:
+                        scheduler.step()
+                    if ema is not None:
+                        ema.update(model)
         else:
             scaled_loss.backward()
             if should_step:
@@ -195,6 +262,8 @@ def train_one_epoch(
                 optimizer.zero_grad(set_to_none=True)
                 if scheduler is not None:
                     scheduler.step()
+                if ema is not None:
+                    ema.update(model)
 
         total_loss += details["loss_total"]
         n_batches += 1
@@ -211,8 +280,88 @@ def validate(
     cfg: Config,
 ) -> dict[str, float]:
     model.eval()
-    is_v5 = getattr(cfg.model, "arch_version", 4) >= 5
+    arch = getattr(cfg.model, "arch_version", 4)
+    is_v6 = arch >= 6
+    is_v5 = arch >= 5
     use_amp = cfg.train.fp16 and device.type == "cuda"
+
+    if is_v6:
+        from src.music_theory import N_TENSIONS_V6
+
+        all_rp, all_rt = [], []
+        all_sp, all_st = [], []
+        all_tp, all_tt, all_tv = [], [], []
+        all_ip, all_it = [], []
+        all_bp, all_bt = [], []
+        all_tbp, all_tbt = [], []
+        all_kp, all_kt = [], []
+        all_bndp, all_bndt = [], []
+        all_dur = []
+        total_loss = 0.0
+        n_batches = 0
+
+        for batch in loader:
+            gpu_batch = {
+                k: (v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v)
+                for k, v in batch.items()
+            }
+            with autocast("cuda", enabled=use_amp):
+                if "emb" in gpu_batch:
+                    outputs = model.decode_context(
+                        gpu_batch["emb"],
+                        frame_rms_db=gpu_batch["frame_rms_db"],
+                        cqt=gpu_batch.get("cqt"),
+                    )
+                else:
+                    outputs = model(gpu_batch["wav"], frame_rms_db=gpu_batch["frame_rms_db"])
+                loss, _ = criterion(outputs, gpu_batch, model.crf)
+
+            preds = decode_v6_batch(outputs, model.crf, crf_stride=cfg.model.crf_stride)
+            T = min(preds["root"].shape[1], gpu_batch["root"].shape[1])
+            total_loss += float(loss.item())
+            n_batches += 1
+
+            all_rp.append(preds["root"][:, :T].cpu())
+            all_rt.append(gpu_batch["root"][:, :T].cpu())
+            all_sp.append(preds["skel14"][:, :T].cpu())
+            all_st.append(gpu_batch["skel14"][:, :T].cpu())
+            all_tp.append(preds["tension_bits"][:, :T].cpu())
+            all_tt.append(gpu_batch["tension_bits"][:, :T].cpu())
+            all_tv.append(gpu_batch["tension_valid"][:, :T].cpu())
+            all_ip.append(preds["inversion"][:, :T].cpu())
+            all_it.append(gpu_batch["inversion"][:, :T].cpu())
+            all_bp.append(preds["bass"][:, :T].cpu())
+            all_bt.append(gpu_batch["bass"][:, :T].cpu())
+            all_tbp.append(preds["true_bass"][:, :T].cpu())
+            all_tbt.append(gpu_batch["true_bass"][:, :T].cpu())
+            all_kp.append(preds["key"][:, :T].cpu())
+            all_kt.append(gpu_batch["local_key"][:, :T].cpu())
+            all_bndp.append(preds["boundary_prob"][:, :T].cpu())
+            all_bndt.append(gpu_batch["boundary_chord"][:, :T].cpu())
+            all_dur.append(gpu_batch["chord_dur_ms"][:, :T].cpu())
+
+        metrics = compute_v6_metrics(
+            torch.cat(all_rp).reshape(-1).numpy(),
+            torch.cat(all_rt).reshape(-1).numpy(),
+            torch.cat(all_sp).reshape(-1).numpy(),
+            torch.cat(all_st).reshape(-1).numpy(),
+            torch.cat(all_tp).reshape(-1, N_TENSIONS_V6).numpy(),
+            torch.cat(all_tt).reshape(-1, N_TENSIONS_V6).numpy(),
+            torch.cat(all_tv).reshape(-1).numpy(),
+            torch.cat(all_ip).reshape(-1).numpy(),
+            torch.cat(all_it).reshape(-1).numpy(),
+            torch.cat(all_bp).reshape(-1).numpy(),
+            torch.cat(all_bt).reshape(-1).numpy(),
+            torch.cat(all_tbp).reshape(-1).numpy(),
+            torch.cat(all_tbt).reshape(-1).numpy(),
+            key_pred=torch.cat(all_kp).reshape(-1).numpy(),
+            key_true=torch.cat(all_kt).reshape(-1).numpy(),
+            bnd_prob=torch.cat(all_bndp).reshape(-1).numpy(),
+            bnd_true=torch.cat(all_bndt).reshape(-1).numpy(),
+            chord_dur_ms=torch.cat(all_dur).reshape(-1).numpy(),
+        )
+        metrics["val_loss"] = total_loss / max(n_batches, 1)
+        return metrics
 
     if is_v5:
         all_rp, all_rt = [], []
@@ -335,19 +484,22 @@ def validate(
     return metrics
 
 
-def save_checkpoint(model, optimizer, scheduler, scaler, epoch, metrics, path: Path) -> None:
+def save_checkpoint(model, optimizer, scheduler, scaler, epoch, metrics, path: Path, ema: ModelEMA | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({
+    payload = {
         "epoch": epoch,
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
         "scaler_state_dict": scaler.state_dict(),
         "metrics": metrics,
-    }, path)
+    }
+    if ema is not None:
+        payload["ema_state_dict"] = ema.state_dict()
+    torch.save(payload, path)
 
 
-def load_checkpoint(path: Path, model, optimizer=None, scheduler=None, scaler=None, strict: bool = True):
+def load_checkpoint(path: Path, model, optimizer=None, scheduler=None, scaler=None, strict: bool = True, ema: ModelEMA | None = None):
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
     model.load_state_dict(ckpt["model_state_dict"], strict=strict)
     if optimizer and "optimizer_state_dict" in ckpt:
@@ -359,6 +511,8 @@ def load_checkpoint(path: Path, model, optimizer=None, scheduler=None, scaler=No
             log.warning(f"Could not restore scheduler state ({exc}); continuing with fresh scheduler")
     if scaler and "scaler_state_dict" in ckpt:
         scaler.load_state_dict(ckpt["scaler_state_dict"])
+    if ema is not None and "ema_state_dict" in ckpt:
+        ema.load_state_dict(ckpt["ema_state_dict"])
     return ckpt.get("epoch", 0), ckpt.get("metrics", {})
 
 
@@ -491,7 +645,18 @@ def run(
     )
 
     train_pq = Path(cfg.data_dir) / "train" / "chords.parquet"
-    if is_v5:
+    is_v6 = getattr(cfg.model, "arch_version", 4) >= 6
+    if is_v6:
+        skel_cw = compute_skel14_class_weights(train_pq) if train_pq.exists() else None
+        criterion = ChordLossV6(
+            weights=cfg.train.loss_weights,
+            focal_gamma=cfg.train.focal_gamma,
+            label_smoothing=float(getattr(cfg.train, "label_smoothing", 0.08)),
+            skel14_class_weight=skel_cw,
+            crf_stride=cfg.model.crf_stride,
+            crf_prior_reg=float(getattr(cfg.train, "crf_prior_reg", 1e-3)),
+        ).to(device)
+    elif is_v5:
         type_cw = compute_type_class_weights(train_pq) if train_pq.exists() else None
         criterion = ChordLossV5(
             weights=cfg.train.loss_weights,
@@ -524,19 +689,24 @@ def run(
     scheduler = build_scheduler(optimizer, total_steps=total_steps, warmup_ratio=cfg.train.warmup_ratio)
     scaler = GradScaler("cuda", enabled=use_amp)
 
+    ema_decay = float(getattr(cfg.train, "ema_decay", 0.0))
+    ema = ModelEMA(model, decay=ema_decay) if ema_decay > 0.0 else None
+
     start_epoch = 0
     best_val_loss = float("inf")
+    best_comp_score = -1.0
     patience_counter = 0
 
     if resume_path:
         start_epoch, prev_metrics = load_checkpoint(
-            Path(resume_path), model, optimizer, scheduler, scaler
+            Path(resume_path), model, optimizer, scheduler, scaler, ema=ema
         )
         best_val_loss = prev_metrics.get("val_loss", float("inf"))
+        best_comp_score = prev_metrics.get("composite_val_score", -1.0)
         log.info(f"Resumed from epoch {start_epoch}")
 
     log.info(
-        f"Train: {len(base_train_ds._valid_songs)} songs ({len(train_ds)} items/epoch, accum={accum_steps}) | "
+        f"Train: {len(base_train_ds._valid_songs)} songs ({len(train_ds)} items/epoch, accum={accum_steps}, ema={ema_decay}) | "
         f"Val: {len(base_val_ds._valid_songs)} songs ({len(val_ds)} items)"
     )
     log.info(f"Trainable params: {sum(p.numel() for p in model.parameters() if p.requires_grad):,}")
@@ -545,44 +715,72 @@ def run(
         t0 = time.time()
 
         train_metrics = train_one_epoch(
-            model, train_loader, criterion, optimizer, scaler, device, cfg, scheduler=scheduler
+            model, train_loader, criterion, optimizer, scaler, device, cfg, scheduler=scheduler, ema=ema
         )
+        if ema is not None:
+            ema.apply_shadow(model)
         val_metrics = validate(model, val_loader, criterion, device, cfg)
 
         elapsed = time.time() - t0
         val_loss = val_metrics["val_loss"]
         cur_lr = optimizer.param_groups[0]["lr"]
 
-        skel_str = f" | skel={val_metrics['skeleton_acc']:.3f}" if "skeleton_acc" in val_metrics else ""
-        tbass_str = f" | tbass={val_metrics['true_bass_acc']:.3f}" if "true_bass_acc" in val_metrics else ""
-        key_str = f" | key={val_metrics['key_rel_acc']:.3f}" if "key_rel_acc" in val_metrics else ""
-        log.info(
-            f"Epoch {epoch+1}/{cfg.train.epochs} ({elapsed:.0f}s, lr={cur_lr:.2e}) | "
-            f"train_loss={train_metrics['train_loss']:.4f} | "
-            f"val_loss={val_loss:.4f} | "
-            f"root={val_metrics.get('root_acc', 0):.3f}{tbass_str}{skel_str}{key_str} | "
-            f"qual={val_metrics.get('quality_acc', 0):.3f} | "
-            f"ext={val_metrics.get('ext_acc', 0):.3f} | "
-            f"slash_f1={val_metrics.get('bass_slash_f1', 0):.3f} | "
-            f"chord={val_metrics.get('chord_acc', 0):.3f}"
-        )
+        if is_v6:
+            log.info(
+                f"Epoch {epoch+1}/{cfg.train.epochs} ({elapsed:.0f}s, lr={cur_lr:.2e}) | "
+                f"train={train_metrics['train_loss']:.4f} | val={val_loss:.4f} | "
+                f"S_val={val_metrics.get('composite_val_score', 0):.4f} | "
+                f"root={val_metrics.get('root_acc', 0):.3f} | skel14={val_metrics.get('skel14_acc', 0):.3f} | "
+                f"pass_f1={val_metrics.get('short_passing_chord_f1', 0):.3f} | "
+                f"6th_f1={val_metrics.get('sixth_chord_f1', 0):.3f} | "
+                f"tens_f1={val_metrics.get('tension_macro_f1', 0):.3f} | "
+                f"slash_f1={val_metrics.get('bass_slash_f1', 0):.3f} | "
+                f"bnd_f1={val_metrics.get('boundary_f1', 0):.3f}"
+            )
+        else:
+            skel_str = f" | skel={val_metrics['skeleton_acc']:.3f}" if "skeleton_acc" in val_metrics else ""
+            tbass_str = f" | tbass={val_metrics['true_bass_acc']:.3f}" if "true_bass_acc" in val_metrics else ""
+            key_str = f" | key={val_metrics['key_rel_acc']:.3f}" if "key_rel_acc" in val_metrics else ""
+            log.info(
+                f"Epoch {epoch+1}/{cfg.train.epochs} ({elapsed:.0f}s, lr={cur_lr:.2e}) | "
+                f"train_loss={train_metrics['train_loss']:.4f} | "
+                f"val_loss={val_loss:.4f} | "
+                f"root={val_metrics.get('root_acc', 0):.3f}{tbass_str}{skel_str}{key_str} | "
+                f"qual={val_metrics.get('quality_acc', 0):.3f} | "
+                f"ext={val_metrics.get('ext_acc', 0):.3f} | "
+                f"slash_f1={val_metrics.get('bass_slash_f1', 0):.3f} | "
+                f"chord={val_metrics.get('chord_acc', 0):.3f}"
+            )
 
         all_metrics = {**train_metrics, **val_metrics, "epoch": epoch + 1, "elapsed_s": elapsed, "lr": cur_lr}
         append_results(cfg.results_csv, all_metrics)
 
         ckpt_dir = Path(cfg.checkpoint_dir)
-        save_checkpoint(model, optimizer, scheduler, scaler, epoch + 1, val_metrics, ckpt_dir / "last.pt")
-
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        # Save best.pt with EMA weights (currently applied), then restore raw weights for last.pt & next epoch
+        improved = (
+            (val_metrics.get("composite_val_score", -1.0) > best_comp_score)
+            if is_v6
+            else (val_loss < best_val_loss)
+        )
+        if improved:
+            best_val_loss = min(best_val_loss, val_loss)
+            best_comp_score = max(best_comp_score, val_metrics.get("composite_val_score", -1.0))
             patience_counter = 0
-            save_checkpoint(model, optimizer, scheduler, scaler, epoch + 1, val_metrics, ckpt_dir / "best.pt")
-            log.info(f"  ↑ New best val_loss={val_loss:.4f}")
+            save_checkpoint(model, optimizer, scheduler, scaler, epoch + 1, val_metrics, ckpt_dir / "best.pt", ema=ema)
+            if is_v6:
+                log.info(f"  ↑ New best S_val={best_comp_score:.4f} (val_loss={val_loss:.4f})")
+            else:
+                log.info(f"  ↑ New best val_loss={val_loss:.4f}")
         else:
             patience_counter += 1
-            if patience_counter >= cfg.train.early_stop_patience:
-                log.info(f"Early stopping at epoch {epoch + 1}")
-                break
+
+        if ema is not None:
+            ema.restore(model)
+        save_checkpoint(model, optimizer, scheduler, scaler, epoch + 1, val_metrics, ckpt_dir / "last.pt", ema=ema)
+
+        if patience_counter >= cfg.train.early_stop_patience:
+            log.info(f"Early stopping at epoch {epoch + 1}")
+            break
 
 
 if __name__ == "__main__":

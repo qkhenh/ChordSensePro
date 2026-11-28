@@ -5,7 +5,7 @@ import torch
 import torchaudio.functional as AF
 
 from src.config import AugmentCfg
-from src.music_theory import QE_TO_TYPE, ROOT_SILENCE_ID
+from src.music_theory import N_SKELETONS_V6, QE_TO_TYPE, ROOT_SILENCE_ID, TENSION_BIT_V6
 
 _MAJOR_SCALE_STEPS = np.array([0, 2, 4, 5, 7, 9, 11], dtype=np.int64)
 _MINOR_SCALE_STEPS = np.array([0, 2, 3, 5, 7, 8, 10], dtype=np.int64)
@@ -312,3 +312,224 @@ def pitch_shift_bass(bass_id: int, n_steps: int) -> int:
     if bass_id < 0 or bass_id >= 12:
         return bass_id
     return (bass_id + n_steps) % 12
+
+
+def apply_high_register_piano_hpf(audio: np.ndarray, sr: int, cutoff_hz: float = 215.0) -> np.ndarray:
+    """High-pass filter (`180-260Hz`) simulating high-register Octave 3-4 Intro Solo Piano (e.g. Phep Mau)."""
+    return _highpass_subbass_dropout(audio, sr, cutoff_hz)
+
+
+def apply_cqt_spec_augment(
+    cqt: np.ndarray,
+    max_freq_mask: int = 8,
+    max_time_mask: int = 24,
+    n_freq: int = 2,
+    n_time: int = 2,
+) -> np.ndarray:
+    """In-place-safe SpecAugment on `(T, F)` CQT array masking random frequency bands & short time spans."""
+    out = cqt.copy()
+    seq_len, n_bins = out.shape
+    if seq_len < 16 or n_bins < 12:
+        return out
+    for _ in range(int(np.random.randint(1, n_freq + 1))):
+        w = int(np.random.randint(1, min(max_freq_mask, n_bins // 4) + 1))
+        f0 = int(np.random.randint(0, n_bins - w + 1))
+        out[:, f0 : f0 + w] = 0.0
+    for _ in range(int(np.random.randint(1, n_time + 1))):
+        w = int(np.random.randint(1, min(max_time_mask, seq_len // 6) + 1))
+        t0 = int(np.random.randint(0, seq_len - w + 1))
+        out[t0 : t0 + w, :] = 0.0
+    return out
+
+
+def apply_cqt_spec_augment_torch(
+    cqt: torch.Tensor,
+    prob: float = 0.35,
+    max_freq_mask: int = 8,
+    max_time_mask: int = 24,
+) -> torch.Tensor:
+    """Batch-level CQT SpecAugment `(B, T, F)` for Phase 1/2/3 training against overfitting."""
+    if prob <= 0.0 or cqt.ndim != 3:
+        return cqt
+    bsz, seq_len, n_bins = cqt.shape
+    if seq_len < 16 or n_bins < 12:
+        return cqt
+    out = cqt.clone()
+    for b in range(bsz):
+        if np.random.random() >= prob:
+            continue
+        for _ in range(int(np.random.randint(1, 3))):
+            w = int(np.random.randint(1, min(max_freq_mask, n_bins // 4) + 1))
+            f0 = int(np.random.randint(0, n_bins - w + 1))
+            out[b, :, f0 : f0 + w] = 0.0
+        for _ in range(int(np.random.randint(1, 3))):
+            w = int(np.random.randint(1, min(max_time_mask, seq_len // 6) + 1))
+            t0 = int(np.random.randint(0, seq_len - w + 1))
+            out[b, t0 : t0 + w, :] = 0.0
+    return out
+
+
+def _augmenter_apply_v6_musical(
+    self: Augmenter,
+    audio: np.ndarray,
+    sr: int,
+    frame_times_ms: np.ndarray,
+    crop_start_ms: float,
+    labels: dict[str, np.ndarray],
+) -> np.ndarray:
+    """Apply v6 musical augmentations in-place on v6 label arrays:
+    1. Sub-bass dropout (`bass_dropout_prob`, `135-195Hz`) AND High-Register Piano HPF (`high_reg_piano_prob`, `180-260Hz`)
+    2. Silent intro/outro (`silence_intro_prob`) updating `skel14`, `tension_bits`, `inversion`, `crf_state`
+    3. Melody overlay (`80%` fast 1-note upper-register passing melody / `20%` sustained 9th tension)
+    """
+    if not self.cfg.enabled:
+        return audio
+
+    out = audio.copy()
+    total_samples = len(out)
+
+    # 1a. High-Register Solo Piano HPF (180-260Hz) simulating Octave 3-4 Intro -> Full-Band
+    hr_prob = float(getattr(self.cfg, "high_reg_piano_prob", 0.0))
+    did_hpf = False
+    if hr_prob > 0.0 and total_samples >= sr * 2 and np.random.random() < hr_prob:
+        cutoff_hz = float(np.random.uniform(180.0, 260.0))
+        if np.random.random() < 0.5 or total_samples < sr * 8:
+            out = apply_high_register_piano_hpf(out, sr, cutoff_hz)
+        else:
+            split_samp = int(total_samples * np.random.uniform(0.30, 0.60))
+            xfade = min(int(0.08 * sr), split_samp // 4, (total_samples - split_samp) // 4)
+            hp_seg = apply_high_register_piano_hpf(out[: split_samp + xfade], sr, cutoff_hz)
+            if xfade > 1:
+                w = 0.5 - 0.5 * np.cos(np.pi * np.linspace(0.0, 1.0, xfade, dtype=np.float32))
+                out[:split_samp] = hp_seg[:split_samp]
+                out[split_samp : split_samp + xfade] = (
+                    hp_seg[split_samp : split_samp + xfade] * (1.0 - w)
+                    + out[split_samp : split_samp + xfade] * w
+                )
+            else:
+                out[:split_samp] = hp_seg[:split_samp]
+        did_hpf = True
+
+    # 1b. Standard Sub-Bass Register Dropout (135-195Hz)
+    bass_drop_prob = float(getattr(self.cfg, "bass_dropout_prob", 0.0))
+    if not did_hpf and bass_drop_prob > 0.0 and total_samples >= sr * 2 and np.random.random() < bass_drop_prob:
+        cutoff_hz = float(np.random.uniform(135.0, 195.0))
+        if np.random.random() < 0.5 or total_samples < sr * 8:
+            out = _highpass_subbass_dropout(out, sr, cutoff_hz)
+        else:
+            split_samp = int(total_samples * np.random.uniform(0.30, 0.60))
+            out[:split_samp] = _highpass_subbass_dropout(out[:split_samp], sr, cutoff_hz)
+
+    # 2. Silent intro / outro
+    sil_prob = float(getattr(self.cfg, "silence_intro_prob", 0.0))
+    if sil_prob > 0.0 and total_samples >= sr * 4 and np.random.random() < sil_prob:
+        sil_sec = float(np.random.uniform(0.6, min(2.2, total_samples / sr * 0.25)))
+        sil_samples = int(sil_sec * sr)
+        hiss_amp = float(10.0 ** (np.random.uniform(-66.0, -53.0) / 20.0))
+        hiss = np.random.randn(sil_samples).astype(np.float32) * hiss_amp
+        rel_ft_ms = frame_times_ms - crop_start_ms
+        if np.random.random() < 0.7:
+            out[:sil_samples] = hiss
+            f_mask = rel_ft_ms < (sil_sec * 1000.0 - 20.0)
+        else:
+            out[-sil_samples:] = hiss
+            total_ms = total_samples / float(sr) * 1000.0
+            f_mask = rel_ft_ms > (total_ms - sil_sec * 1000.0 + 20.0)
+        if f_mask.any():
+            labels["root"][f_mask] = ROOT_SILENCE_ID
+            labels["quality"][f_mask] = -100
+            labels["ext"][f_mask] = -100
+            labels["skel14"][f_mask] = -100
+            labels["tension_bits"][f_mask] = 0.0
+            labels["tension_valid"][f_mask] = False
+            labels["inversion"][f_mask] = -100
+            labels["crf_state"][f_mask] = 0
+            labels["bass"][f_mask] = -100
+            labels["true_bass"][f_mask] = ROOT_SILENCE_ID
+            labels["shell_chroma"][f_mask] = 0.0
+            labels["full_chroma"][f_mask] = 0.0
+
+    # 3. Melody Overlay / Sustained 9th Tension
+    mel_prob = float(getattr(self.cfg, "melody_overlay_prob", 0.0))
+    if mel_prob <= 0.0 or np.random.random() >= mel_prob:
+        return out
+
+    root_arr = labels["root"]
+    skel_arr = labels["skel14"]
+    active_frames = (root_arr >= 0) & (root_arr < 12)
+    if active_frames.sum() < 30:
+        return out
+    rms_bg = float(np.sqrt(np.mean(out ** 2) + 1e-8))
+    if rms_bg < 2e-3:
+        return out
+
+    sust_prob = float(getattr(self.cfg, "sustained_tension_prob", 0.2))
+    applied_sustained = False
+    if np.random.random() < sust_prob:
+        # Bare major (skel 0) or minor (skel 5) span >= 70 frames (~0.93s) with no 9th yet
+        bare_mask = active_frames & ((skel_arr == 0) | (skel_arr == 5)) & (labels["tension_bits"][:, 1] < 0.5)
+        spans: list[tuple[int, int]] = []
+        i, n_f = 0, len(root_arr)
+        while i < n_f:
+            if not bare_mask[i]:
+                i += 1
+                continue
+            j = i + 1
+            while j < n_f and bare_mask[j] and root_arr[j] == root_arr[i] and skel_arr[j] == skel_arr[i]:
+                j += 1
+            if (j - i) >= 70:
+                spans.append((i, j))
+            i = j
+        if spans:
+            f_s, f_e = spans[int(np.random.randint(0, len(spans)))]
+            r_id = int(root_arr[f_s])
+            ninth_pc = (r_id + 2) % 12
+            midi_note = 60 + ninth_pc + 12 * int(np.random.randint(0, 2))
+            freq = 440.0 * (2.0 ** ((midi_note - 69.0) / 12.0))
+            s_samp = max(0, int((frame_times_ms[f_s] - crop_start_ms) / 1000.0 * sr))
+            e_samp = min(total_samples, int((frame_times_ms[f_e - 1] - crop_start_ms) / 1000.0 * sr))
+            dur_samp = e_samp - s_samp
+            if dur_samp >= int(0.75 * sr):
+                note_wav = _synth_piano_like_note(freq, dur_samp, sr)
+                note_rms = float(np.sqrt(np.mean(note_wav ** 2) + 1e-8))
+                scale = (rms_bg * (10.0 ** (float(np.random.uniform(-4.5, 0.5)) / 20.0))) / note_rms
+                out[s_samp:e_samp] += note_wav * scale
+                labels["tension_bits"][f_s:f_e, 1] = 1.0  # bit 1 = "9"
+                labels["tension_valid"][f_s:f_e] = True
+                labels["full_chroma"][f_s:f_e, ninth_pc] = 1.0
+                applied_sustained = True
+
+    if not applied_sustained:
+        key_arr = labels["local_key"]
+        valid_keys = key_arr[(key_arr >= 0) & (key_arr < 24)]
+        dom_key = int(np.bincount(valid_keys).argmax()) if len(valid_keys) > 0 else 0
+        tonic = dom_key % 12
+        scale_pcs = (tonic + (_MAJOR_SCALE_STEPS if dom_key < 12 else _MINOR_SCALE_STEPS)) % 12
+        melody_track = np.zeros(total_samples, dtype=np.float32)
+        pos = int(np.random.uniform(0.0, 0.4) * sr)
+        deg_idx = int(np.random.randint(0, 7))
+        octave = 5
+        while pos < total_samples - int(0.15 * sr):
+            f_idx = min(len(root_arr) - 1, int(pos / float(total_samples) * len(root_arr)))
+            if root_arr[f_idx] == ROOT_SILENCE_ID or np.random.random() < 0.18:
+                pos += int(np.random.uniform(0.15, 0.35) * sr)
+                continue
+            n_samp = min(int(float(np.random.uniform(0.12, 0.27)) * sr), total_samples - pos)
+            step = int(np.random.choice([-2, -1, -1, 1, 1, 2]))
+            deg_idx = (deg_idx + step) % 7
+            pc = int(scale_pcs[deg_idx])
+            freq = 440.0 * (2.0 ** ((12 * octave + pc - 69.0) / 12.0))
+            melody_track[pos : pos + n_samp] += _synth_piano_like_note(freq, n_samp, sr)
+            pos += n_samp
+        mel_rms = float(np.sqrt(np.mean(melody_track ** 2) + 1e-8))
+        if mel_rms > 1e-6:
+            scale = (rms_bg * (10.0 ** (float(np.random.uniform(-7.0, 1.0)) / 20.0))) / mel_rms
+            out = out + melody_track * scale
+
+    peak = float(np.max(np.abs(out))) if len(out) else 0.0
+    if peak > 0.99:
+        out = out * (0.99 / peak)
+    return out.astype(np.float32)
+
+
+Augmenter.apply_v6_musical_augment = _augmenter_apply_v6_musical  # type: ignore[attr-defined]

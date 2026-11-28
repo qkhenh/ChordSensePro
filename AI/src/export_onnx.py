@@ -76,6 +76,47 @@ class V5DecoderExportWrapper(torch.nn.Module):
         )
 
 
+class V6EncoderExportWrapper(torch.nn.Module):
+    """Exports v6 MERT (with merged LoRA) + 25-layer weighted sum + 256d proj + 96-bin Harmonic CQT."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, wav: torch.Tensor):
+        emb = self.model._encode_single_chunk_batch(wav)
+        cqt = self.model.cqt_bank(wav)
+        return emb, cqt
+
+
+class V6DecoderExportWrapper(torch.nn.Module):
+    """Exports v6 Full-Song Parallel-Kernel Conformer + Cross-Section Attention + Factorized Heads + Dynamic CRF params."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, emb: torch.Tensor, frame_rms_db: torch.Tensor, cqt: torch.Tensor):
+        out = self.model.decode_context(emb, frame_rms_db=frame_rms_db, cqt=cqt)
+        stay_s, boost = self.model.crf._effective_params()
+        crf_dyn_params = torch.stack([stay_s, boost], dim=0)  # (2,)
+        return (
+            out["crf_emissions"],
+            self.model.crf.transitions,
+            self.model.crf.start_transitions,
+            self.model.crf.end_transitions,
+            crf_dyn_params,
+            out["tension_logits_by_root"],
+            out["inv_logits_by_root"],
+            out["bass_logits"],
+            out["true_bass_logits"],
+            out["boundary_logits"],
+            out["key_logits"],
+            out["sustain_env"],
+            out["fast_chord_env"],
+        )
+
+
 def companion_decoder_path(encoder_path: str | Path) -> Path:
     p = Path(encoder_path)
     return p.with_name(f"{p.stem}_decoder{p.suffix}")
@@ -100,7 +141,9 @@ def export_onnx(
     opset: int = 17,
 ) -> None:
     cfg = load_config(cfg_path)
-    is_v5 = getattr(cfg.model, "arch_version", 4) >= 5
+    arch = getattr(cfg.model, "arch_version", 4)
+    is_v6 = arch >= 6
+    is_v5 = arch >= 5
     device = torch.device("cpu")
 
     model = build_model(cfg.model, sample_rate=cfg.sample_rate).to(device)
@@ -121,6 +164,90 @@ def export_onnx(
     out_p = Path(output_path)
     out_p.parent.mkdir(parents=True, exist_ok=True)
     common_kw = _base_onnx_kwargs(opset)
+
+    if is_v6:
+        chunk_samples = cfg.chunk_samples
+        t_chunk = mert_output_length(chunk_samples)
+        cqt_bins = int(getattr(model, "cqt_bins", 96))
+
+        enc_wrapper = V6EncoderExportWrapper(model).eval()
+        dummy_wav = torch.randn(1, chunk_samples, device=device)
+        torch.onnx.export(
+            enc_wrapper,
+            (dummy_wav,),
+            str(out_p),
+            input_names=["wav"],
+            output_names=["emb", "cqt"],
+            dynamic_axes={
+                "wav": {0: "batch"},
+                "emb": {0: "batch", 1: "time"},
+                "cqt": {0: "batch", 1: "time"},
+            },
+            **common_kw,
+        )
+        log.info(f"Exported v6 Acoustic Encoder ONNX (cqt_bins={cqt_bins}) -> {out_p}")
+
+        dec_path = companion_decoder_path(out_p)
+        dec_wrapper = V6DecoderExportWrapper(model).eval()
+        dummy_emb = torch.randn(1, t_chunk * 4, cfg.model.context_dim, device=device)
+        dummy_rms = torch.full((1, t_chunk * 4), -22.0, device=device)
+        dummy_cqt = torch.rand(1, t_chunk * 4, cqt_bins, device=device)
+        dec_out_names = [
+            "crf_emissions",
+            "crf_transitions",
+            "crf_start",
+            "crf_end",
+            "crf_dyn_params",
+            "tension_logits_by_root",
+            "inv_logits_by_root",
+            "bass_logits",
+            "true_bass_logits",
+            "boundary_logits",
+            "key_logits",
+            "sustain_env",
+            "fast_chord_env",
+        ]
+        dec_dyn_axes = {
+            "emb": {0: "batch", 1: "time"},
+            "frame_rms_db": {0: "batch", 1: "time"},
+            "cqt": {0: "batch", 1: "time"},
+            "crf_emissions": {0: "batch", 1: "crf_time"},
+            "tension_logits_by_root": {0: "batch", 1: "time"},
+            "inv_logits_by_root": {0: "batch", 1: "time"},
+            "bass_logits": {0: "batch", 1: "time"},
+            "true_bass_logits": {0: "batch", 1: "time"},
+            "boundary_logits": {0: "batch", 1: "time"},
+            "key_logits": {0: "batch", 1: "time"},
+            "sustain_env": {0: "batch", 1: "time"},
+            "fast_chord_env": {0: "batch", 1: "time"},
+        }
+        torch.onnx.export(
+            dec_wrapper,
+            (dummy_emb, dummy_rms, dummy_cqt),
+            str(dec_path),
+            input_names=["emb", "frame_rms_db", "cqt"],
+            output_names=dec_out_names,
+            dynamic_axes=dec_dyn_axes,
+            **common_kw,
+        )
+        log.info(f"Exported v6 Full-Song Context Decoder ONNX -> {dec_path}")
+
+        meta = {
+            "arch_version": 6,
+            "bass_first": True,
+            "cqt_bins": cqt_bins,
+            "n_skeletons": 14,
+            "n_tensions": 7,
+            "n_inversions": 5,
+            "decoder_onnx": dec_path.name,
+            "sample_rate": cfg.sample_rate,
+            "chunk_s": cfg.model.chunk_s,
+            "context_dim": cfg.model.context_dim,
+            "crf_stride": cfg.model.crf_stride,
+            "silence_db_threshold": cfg.model.silence_db_threshold,
+        }
+        companion_meta_path(out_p).write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        return
 
     if is_v5:
         chunk_samples = cfg.chunk_samples

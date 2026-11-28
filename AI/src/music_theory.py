@@ -574,3 +574,671 @@ def resolve_jazz_chord_theory(
             return r, 1, 12, b, None
 
     return r, q, e, b, None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model v6 / Dataset v4 Music-Theory Constants, Tonnetz, Functional CRF Prior,
+# Decomposed Label Parser & Deterministic Chord Assembler
+# ─────────────────────────────────────────────────────────────────────────────
+
+SKELETON_NAMES_V6: tuple[str, ...] = (
+    "MAJ_SHELL",   # 0: maj, add9, add4
+    "MAJ6_SHELL",  # 1: 6, 6/9
+    "MAJ7_SHELL",  # 2: maj7, maj9, maj7#11, maj9#11, maj13
+    "DOM7_NAT",    # 3: 7, 9, 13, 9(13), 7#11, 9#11, 13#11
+    "DOM7_ALT",    # 4: 7b5, 7#5, 7b9, 7#9, 7b13, 13b9, 7alt, 7(#5,b9), ...
+    "MIN_SHELL",   # 5: m, madd9, madd4
+    "MIN6_SHELL",  # 6: m6, m6/9
+    "MIN7_SHELL",  # 7: m7, m9, m11, m13
+    "MIN_MAJ7",    # 8: m(maj7), m(maj9)
+    "HDIM_SHELL",  # 9: m7b5, m11b5
+    "DIM_SHELL",   # 10: dim, dim7
+    "AUG_SHELL",   # 11: aug
+    "SUS2_SHELL",  # 12: sus2, maj7sus2
+    "SUS4_SHELL",  # 13: sus4, maj7sus4, 7sus4, 9sus4, 13sus4, 7b9sus4, 13b9sus4
+)
+N_SKELETONS_V6: int = len(SKELETON_NAMES_V6)        # 14
+N_CRF_STATES_V6: int = 1 + N_ROOTS * N_SKELETONS_V6  # 169
+
+TENSION_NAMES_V6: tuple[str, ...] = ("b9", "9", "#9", "4_11", "#11", "b13_#5", "6_13")
+N_TENSIONS_V6: int = len(TENSION_NAMES_V6)           # 7
+TENSION_BIT_V6: dict[str, int] = {name: 1 << i for i, name in enumerate(TENSION_NAMES_V6)}
+
+INVERSION_NAMES_V6: tuple[str, ...] = ("root_pos", "inv1_3rd", "inv2_5th", "inv3_7th", "other_slash")
+N_INVERSIONS_V6: int = len(INVERSION_NAMES_V6)       # 5
+
+# Representative legacy (quality_id, ext_id) for each v6 skeleton
+SKEL14_BASE_QE: tuple[tuple[int, int], ...] = (
+    (0, 0),  # 0: MAJ_SHELL
+    (0, 0),  # 1: MAJ6_SHELL
+    (0, 3),  # 2: MAJ7_SHELL
+    (2, 5),  # 3: DOM7_NAT
+    (2, 7),  # 4: DOM7_ALT
+    (1, 0),  # 5: MIN_SHELL
+    (1, 0),  # 6: MIN6_SHELL
+    (1, 4),  # 7: MIN7_SHELL
+    (1, 3),  # 8: MIN_MAJ7
+    (3, 4),  # 9: HDIM_SHELL
+    (3, 0),  # 10: DIM_SHELL
+    (0, 2),  # 11: AUG_SHELL
+    (4, 0),  # 12: SUS2_SHELL
+    (5, 0),  # 13: SUS4_SHELL
+)
+
+# Relative semitone core intervals for each of the 14 v6 skeletons
+_SKEL14_CORE_INTERVALS: tuple[tuple[int, ...], ...] = (
+    (0, 4, 7),          # 0: MAJ_SHELL
+    (0, 4, 7, 9),       # 1: MAJ6_SHELL
+    (0, 4, 7, 11),      # 2: MAJ7_SHELL
+    (0, 4, 7, 10),      # 3: DOM7_NAT
+    (0, 4, 10),         # 4: DOM7_ALT
+    (0, 3, 7),          # 5: MIN_SHELL
+    (0, 3, 7, 9),       # 6: MIN6_SHELL
+    (0, 3, 7, 10),      # 7: MIN7_SHELL
+    (0, 3, 7, 11),      # 8: MIN_MAJ7
+    (0, 3, 6, 10),      # 9: HDIM_SHELL
+    (0, 3, 6),          # 10: DIM_SHELL
+    (0, 4, 8),          # 11: AUG_SHELL
+    (0, 2, 7),          # 12: SUS2_SHELL
+    (0, 5, 7),          # 13: SUS4_SHELL
+)
+
+_TENSION_SEMITONES_V6: tuple[int, ...] = (1, 2, 3, 5, 6, 8, 9)
+
+
+def _build_tonnetz_matrix() -> np.ndarray:
+    """Harte et al. (2006) 6-D Tonal Centroid projection matrix `(12, 6)` (0 trainable parameters)."""
+    phi = np.zeros((12, 6), dtype=np.float32)
+    r1, r2, r3 = 1.0, 1.0, 0.5
+    for l in range(12):
+        phi[l, 0] = r1 * np.sin(l * 7.0 * np.pi / 6.0)
+        phi[l, 1] = r1 * np.cos(l * 7.0 * np.pi / 6.0)
+        phi[l, 2] = r2 * np.sin(l * 3.0 * np.pi / 2.0)
+        phi[l, 3] = r2 * np.cos(l * 3.0 * np.pi / 2.0)
+        phi[l, 4] = r3 * np.sin(l * 2.0 * np.pi / 3.0)
+        phi[l, 5] = r3 * np.cos(l * 2.0 * np.pi / 3.0)
+    return phi
+
+
+TONNETZ_MATRIX: np.ndarray = _build_tonnetz_matrix()  # (12, 6)
+
+
+def encode_crf_skeleton_state_v6(root_id: int, skel14_id: int) -> int:
+    """Encode `(root_id, skel14_id)` -> CRF state in `0..168` (`-100` for ignored/missing_third)."""
+    if root_id == ROOT_SILENCE_ID:
+        return 0
+    if 0 <= root_id < 12 and 0 <= skel14_id < N_SKELETONS_V6:
+        return 1 + root_id * N_SKELETONS_V6 + skel14_id
+    return -100
+
+
+def decode_crf_skeleton_state_v6(crf_state: int) -> tuple[int, int]:
+    """Inverse of `encode_crf_skeleton_state_v6`: returns `(root_id, skel14_id)` (`12, -1` for `N`)."""
+    if crf_state <= 0:
+        return ROOT_SILENCE_ID, -1
+    idx = int(crf_state) - 1
+    return idx // N_SKELETONS_V6, idx % N_SKELETONS_V6
+
+
+def build_functional_crf_prior_v6(stay_bonus: float = 2.4) -> np.ndarray:
+    """Construct `(169, 169)` music-theory functional transition prior for `DynamicBoundaryCRF`.
+
+    Encodes:
+    - Self-transition `stay_bonus` (`2.4`)
+    - Same-root resolution (`SUS4 -> DOM7/MAJ`, `MAJ/MAJ7 -> MIN/MIN6` modal borrow, `m -> m6 -> m7` line cliché)
+    - Circle-of-Fifths (`ii -> V` and `V -> I / i` descending fifth, `+0.45`)
+    - Tritone Substitution (`bII7 -> I / i`, `-1` semitone, `+0.35`)
+    - Modal Plagal Cadence (`ivm6 -> I`, `+0.35`) and stepwise passing transitions (`+/-1, +/-2` semitones, `+0.15`)
+    """
+    prior = np.zeros((N_CRF_STATES_V6, N_CRF_STATES_V6), dtype=np.float32)
+
+    dom_like = (3, 4, 13)          # DOM7_NAT, DOM7_ALT, SUS4_SHELL
+    predom_like = (5, 7, 9)        # MIN_SHELL, MIN7_SHELL, HDIM_SHELL
+    tonic_like = (0, 1, 2, 5, 6, 7, 8)
+    maj_like = (0, 1, 2)
+    min_like = (5, 6, 7)
+
+    for r in range(N_ROOTS):
+        base = 1 + r * N_SKELETONS_V6
+
+        # Same-root harmonic affinity
+        prior[base : base + N_SKELETONS_V6, base : base + N_SKELETONS_V6] += 0.30
+        for s_dst in (0, 1, 2, 3, 4):
+            prior[base + 13, base + s_dst] += 0.25  # Vsus4 -> V / V7
+        # Modal interchange on same root (IVmaj7 -> ivm6, I -> i)
+        for s_src in maj_like:
+            for s_dst in (5, 6):
+                prior[base + s_src, base + s_dst] += 0.20
+
+        # Circle of Fifths: descending fifth (r -> (r + 5) % 12), i.e., V -> I and ii -> V
+        r_down5 = (r + 5) % 12
+        b_down5 = 1 + r_down5 * N_SKELETONS_V6
+        for s_src in dom_like:
+            for s_dst in tonic_like:
+                prior[base + s_src, b_down5 + s_dst] = max(prior[base + s_src, b_down5 + s_dst], 0.55)
+        for s_src in predom_like:
+            for s_dst in dom_like:
+                prior[base + s_src, b_down5 + s_dst] = max(prior[base + s_src, b_down5 + s_dst], 0.40)
+        # vi -> ii / iii -> vi / I -> IV
+        for s_src in (0, 2, 5, 7):
+            for s_dst in (0, 2, 5, 7):
+                prior[base + s_src, b_down5 + s_dst] = max(prior[base + s_src, b_down5 + s_dst], 0.20)
+
+        # Tritone substitution: descending semitone (bII7 -> I / i), strictly below authentic V -> I
+        r_tri = (r + 11) % 12
+        b_tri = 1 + r_tri * N_SKELETONS_V6
+        for s_src in (3, 4):
+            for s_dst in tonic_like:
+                prior[base + s_src, b_tri + s_dst] = max(prior[base + s_src, b_tri + s_dst], 0.35)
+
+        # Plagal / Modal borrow resolution: iv(m6) -> I (ascending 5th / descending 4th: r -> (r + 7) % 12)
+        r_plagal = (r + 7) % 12
+        b_plagal = 1 + r_plagal * N_SKELETONS_V6
+        for s_src in (0, 2, 5, 6):
+            for s_dst in maj_like:
+                prior[base + s_src, b_plagal + s_dst] = max(prior[base + s_src, b_plagal + s_dst], 0.25)
+        prior[base + 6, b_plagal + 0] = max(prior[base + 6, b_plagal + 0], 0.40)
+        prior[base + 6, b_plagal + 2] = max(prior[base + 6, b_plagal + 2], 0.40)
+
+        # Stepwise bass/root motion (+/-1, +/-2 semitones: passing chords & deceptive V -> vi)
+        for delta in (-2, -1, 1, 2):
+            r_step = (r + delta) % 12
+            b_step = 1 + r_step * N_SKELETONS_V6
+            block = prior[base : base + N_SKELETONS_V6, b_step : b_step + N_SKELETONS_V6]
+            np.maximum(block, 0.12, out=block)
+
+    np.fill_diagonal(prior, float(stay_bonus))
+    return prior
+
+
+_V6_NOTE_TO_ID: dict[str, int] = {
+    "C": 0, "C#": 1, "Db": 1, "D": 2, "D#": 3, "Eb": 3,
+    "E": 4, "F": 5, "F#": 6, "Gb": 6, "G": 7, "G#": 8,
+    "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11,
+}
+_V6_NAT_PITCH: dict[str, int] = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+_V6_NOTE_RE = re.compile(r"^([A-G])([#b]*)$")
+_V6_REST_RE = re.compile(r"^([^()]*)(?:\(([^()]*)\))?$")
+_V6_BASS_INTERVALS: dict[str, int] = {
+    "1": 0, "b2": 1, "2": 2, "#2": 3, "b3": 3, "3": 4, "#3": 5,
+    "4": 5, "#4": 6, "b5": 6, "5": 7, "#5": 8, "b6": 8, "6": 9, "#6": 10, "b7": 10, "7": 11,
+}
+
+
+def compute_inversion_id_v6(root_id: int, bass_id: int, skel14_id: int) -> int:
+    """Classify `(root_id, bass_id, skel14_id)` into 5 inversion classes (`0..4`, `-1` for `N`)."""
+    if root_id < 0 or root_id >= 12:
+        return -1
+    if bass_id < 0 or bass_id >= 12 or bass_id == root_id:
+        return 0
+    iv = (bass_id - root_id) % 12
+    if skel14_id in (0, 1, 2, 3, 4, 11) and iv == 4:
+        return 1
+    if skel14_id in (5, 6, 7, 8, 9, 10) and iv == 3:
+        return 1
+    if skel14_id == 12 and iv == 2:
+        return 1
+    if skel14_id == 13 and iv == 5:
+        return 1
+    if skel14_id in (9, 10) and iv == 6:
+        return 2
+    if skel14_id == 11 and iv == 8:
+        return 2
+    if skel14_id not in (9, 10, 11) and iv == 7:
+        return 2
+    if skel14_id == 4 and iv in (6, 8):
+        return 2
+    if skel14_id in (2, 8) and iv == 11:
+        return 3
+    if skel14_id in (3, 4, 7, 9, 13) and iv == 10:
+        return 3
+    if skel14_id in (1, 6, 10) and iv == 9:
+        return 3
+    return 4
+
+
+def parse_v6_label_targets(
+    label_raw: str | None,
+    root_id: int | None = None,
+    quality_id: int | None = None,
+    ext_id: int | None = None,
+    bass_id: int | None = None,
+) -> dict[str, int | bool]:
+    """Self-contained v6 target parser mirroring DE's `parse_v6_chord_targets` (works on both v4 & v3)."""
+    b_in = BASS_NONE_ID if bass_id is None else int(bass_id)
+
+    def _fallback(r_fb: int | None) -> dict[str, int | bool]:
+        if r_fb is None or r_fb < 0:
+            return dict(root_id=-1, skel14_id=-1, tension_mask=0, tension_valid=False, bass_id=BASS_NONE_ID, inversion_id=-1, missing_third=False)
+        if r_fb == ROOT_SILENCE_ID:
+            return dict(root_id=12, skel14_id=-1, tension_mask=0, tension_valid=False, bass_id=BASS_NONE_ID, inversion_id=-1, missing_third=False)
+        b_use = b_in if (0 <= b_in < 12 and b_in != r_fb) else BASS_NONE_ID
+        if quality_id is None or quality_id < 0 or quality_id > 5:
+            return dict(root_id=r_fb, skel14_id=-1, tension_mask=0, tension_valid=False, bass_id=b_use, inversion_id=compute_inversion_id_v6(r_fb, b_use, -1), missing_third=True)
+        q, e = int(quality_id), (-1 if ext_id is None else int(ext_id))
+        tm, valid = 0, True
+        if q == 0:
+            sk = {0: 0, 1: 0, 2: 11, 3: 2, 6: 0, 8: 2, 10: 0, 11: 2, 12: 2}.get(e, 0)
+            if e == 6 or e == 8:
+                tm = TENSION_BIT_V6["9"]
+            elif e == 10:
+                tm = TENSION_BIT_V6["4_11"]
+            elif e == 11:
+                tm = TENSION_BIT_V6["#11"]
+            elif e == 12:
+                tm = TENSION_BIT_V6["9"] | TENSION_BIT_V6["6_13"]
+            elif e < 0:
+                valid = False
+        elif q == 1:
+            sk = {0: 5, 3: 8, 4: 7, 6: 5, 7: 7, 8: 7, 10: 7, 11: 7, 12: 7, 13: 7}.get(e, 5)
+            if e == 6 or e == 8:
+                tm = TENSION_BIT_V6["9"]
+            elif e == 10:
+                tm = TENSION_BIT_V6["9"] | TENSION_BIT_V6["4_11"]
+            elif e == 12:
+                tm = TENSION_BIT_V6["9"] | TENSION_BIT_V6["6_13"]
+            elif e < 0:
+                valid = False
+        elif q == 2:
+            if e == 10:
+                sk, tm = 13, TENSION_BIT_V6["9"] | TENSION_BIT_V6["4_11"]
+            elif e in (1, 2, 7, 9, 13, 14):
+                sk = 4
+                tm = {
+                    1: TENSION_BIT_V6["#11"],
+                    2: TENSION_BIT_V6["b13_#5"],
+                    7: TENSION_BIT_V6["b9"],
+                    9: TENSION_BIT_V6["#9"],
+                    13: TENSION_BIT_V6["b13_#5"],
+                    14: TENSION_BIT_V6["b9"] | TENSION_BIT_V6["#9"] | TENSION_BIT_V6["b13_#5"],
+                }[e]
+            else:
+                sk = 3
+                if e == 8:
+                    tm = TENSION_BIT_V6["9"]
+                elif e == 11:
+                    tm = TENSION_BIT_V6["#11"]
+                elif e == 12:
+                    tm = TENSION_BIT_V6["9"] | TENSION_BIT_V6["6_13"]
+                elif e < 0:
+                    valid = False
+        elif q == 3:
+            sk = 9 if e == 4 else 10
+            valid = e >= 0
+        elif q == 4:
+            sk = 12
+            valid = e >= 0
+        else:
+            sk = 13
+            tm = TENSION_BIT_V6["4_11"] if e >= 0 else 0
+            if e == 8:
+                tm |= TENSION_BIT_V6["9"]
+            elif e == 12:
+                tm |= TENSION_BIT_V6["9"] | TENSION_BIT_V6["6_13"]
+            elif e < 0:
+                valid = False
+        return dict(
+            root_id=r_fb, skel14_id=sk, tension_mask=tm, tension_valid=valid,
+            bass_id=b_use, inversion_id=compute_inversion_id_v6(r_fb, b_use, sk), missing_third=False,
+        )
+
+    if label_raw is None or (isinstance(label_raw, float) and np.isnan(label_raw)):
+        return _fallback(root_id)
+    raw = str(label_raw).strip()
+    if raw in ("", "N", "X", "N.C.", "NC"):
+        return dict(root_id=12, skel14_id=-1, tension_mask=0, tension_valid=False, bass_id=BASS_NONE_ID, inversion_id=-1, missing_third=False)
+
+    head = raw
+    bid = BASS_NONE_ID
+    if "/" in raw:
+        h_part, _, b_part = raw.rpartition("/")
+        if ")" not in b_part:
+            head = h_part
+            b_tok = b_part.strip()
+            # Resolve root first to compute interval bass
+            root_tok_tmp = head.partition(":")[0].strip()
+            m_rt = _V6_NOTE_RE.match(root_tok_tmp)
+            if m_rt:
+                r_tmp = (_V6_NAT_PITCH[m_rt.group(1)] + sum(1 if c == "#" else -1 for c in m_rt.group(2))) % 12
+                if b_tok in _V6_BASS_INTERVALS:
+                    iv = _V6_BASS_INTERVALS[b_tok]
+                    bid = BASS_NONE_ID if iv == 0 else ((r_tmp + iv) % 12)
+                elif b_tok in _V6_NOTE_TO_ID:
+                    cand = _V6_NOTE_TO_ID[b_tok]
+                    bid = BASS_NONE_ID if cand == r_tmp else cand
+
+    root_tok, _, rest = head.partition(":")
+    m_r = _V6_NOTE_RE.match(root_tok.strip())
+    if not m_r:
+        return _fallback(root_id)
+    rid = (_V6_NAT_PITCH[m_r.group(1)] + sum(1 if c == "#" else -1 for c in m_r.group(2))) % 12
+    if bid == BASS_NONE_ID and 0 <= b_in < 12 and b_in != rid:
+        bid = b_in
+
+    m = _V6_REST_RE.match(rest.strip())
+    if not m:
+        return _fallback(rid)
+    sh = m.group(1).strip()
+    degs = [d.strip() for d in (m.group(2) or "").split(",") if d.strip() and not d.strip().startswith("*")]
+    dset = set(degs)
+
+    if sh in ("5", "1") or (sh == "" and degs and dset <= {"1", "5"}):
+        return dict(root_id=rid, skel14_id=-1, tension_mask=0, tension_valid=False, bass_id=bid, inversion_id=compute_inversion_id_v6(rid, bid, -1), missing_third=True)
+
+    def _dt(tokens: list[str], minor: bool = False) -> int:
+        tm = 0
+        for tok in tokens:
+            if tok in ("b9", "b2") and not minor:
+                tm |= TENSION_BIT_V6["b9"]
+            elif tok in ("9", "2"):
+                tm |= TENSION_BIT_V6["9"]
+            elif tok in ("#9", "#2") and not minor:
+                tm |= TENSION_BIT_V6["#9"]
+            elif tok in ("11", "4"):
+                tm |= TENSION_BIT_V6["4_11"]
+            elif tok in ("#11", "#4", "b5") and not minor:
+                tm |= TENSION_BIT_V6["#11"]
+            elif tok in ("b13", "#5", "b6") and not minor:
+                tm |= TENSION_BIT_V6["b13_#5"]
+            elif tok in ("13", "6"):
+                tm |= TENSION_BIT_V6["6_13"]
+        return tm
+
+    def _ret(sk: int, tm: int) -> dict[str, int | bool]:
+        return dict(root_id=rid, skel14_id=sk, tension_mask=tm, tension_valid=True, bass_id=bid, inversion_id=compute_inversion_id_v6(rid, bid, sk), missing_third=False)
+
+    if sh in ("6", "maj6"):
+        return _ret(1, TENSION_BIT_V6["6_13"] | _dt(degs, False))
+    if sh == "min6":
+        return _ret(6, TENSION_BIT_V6["6_13"] | _dt(degs, True))
+
+    if sh == "" and degs:
+        has_3, has_b3 = "3" in dset, "b3" in dset
+        has_7, has_b7, has_bb7 = "7" in dset, "b7" in dset, "bb7" in dset
+        has_b5, has_s5 = "b5" in dset, "#5" in dset
+        has_4 = ("4" in dset) or ("11" in dset)
+        has_2 = ("2" in dset) or ("9" in dset)
+        has_6 = ("6" in dset) or ("13" in dset)
+        if has_b3:
+            if has_b5:
+                return _ret(9, _dt([d for d in degs if d != "b5"], True)) if (has_b7 and not has_bb7) else _ret(10, 0)
+            if has_7:
+                return _ret(8, _dt(degs, True))
+            if has_b7:
+                return _ret(7, _dt(degs, True))
+            if has_6:
+                return _ret(6, TENSION_BIT_V6["6_13"] | _dt(degs, True))
+            return _ret(5, _dt(degs, True))
+        if has_3:
+            if has_b7:
+                if has_4 and not ({"b9", "#9", "#11", "b5", "#5", "b13"} & dset):
+                    return _ret(13, TENSION_BIT_V6["4_11"] | (TENSION_BIT_V6["9"] if has_2 else 0) | (TENSION_BIT_V6["6_13"] if has_6 else 0))
+                sk = 4 if ({"b9", "#9", "b5", "#5", "b13"} & dset) else 3
+                return _ret(sk, _dt(degs, False))
+            if has_7:
+                return _ret(2, _dt([d for d in degs if d not in ("4", "11")], False))
+            if has_6:
+                return _ret(1, TENSION_BIT_V6["6_13"] | _dt(degs, False))
+            if has_s5 and not has_b5:
+                return _ret(11, 0)
+            return _ret(0, _dt([d for d in degs if d not in ("b5", "#5", "b9", "#9", "b13")], False))
+        if has_4:
+            return _ret(13, TENSION_BIT_V6["4_11"] | _dt(degs, False))
+        if has_2:
+            return _ret(12, 0)
+
+    if sh in ("", "maj"):
+        if "b7" in dset:
+            return _ret(4 if ({"b9", "#9", "b5", "#5", "b13"} & dset) else 3, _dt(degs, False))
+        if "7" in dset:
+            return _ret(2, _dt([d for d in degs if d not in ("4", "11")], False))
+        if "6" in dset or "13" in dset:
+            return _ret(1, TENSION_BIT_V6["6_13"] | _dt(degs, False))
+        if "#5" in dset and "b5" not in dset:
+            return _ret(11, 0)
+        return _ret(0, _dt([d for d in degs if d not in ("b5", "#5", "b9", "#9", "b13")], False))
+    if sh in ("min", "m"):
+        if "b5" in dset:
+            return _ret(9 if "b7" in dset else 10, _dt([d for d in degs if d != "b5"], True))
+        if "7" in dset:
+            return _ret(8, _dt(degs, True))
+        if "b7" in dset:
+            return _ret(7, _dt(degs, True))
+        if "6" in dset or "13" in dset:
+            return _ret(6, TENSION_BIT_V6["6_13"] | _dt(degs, True))
+        return _ret(5, _dt(degs, True))
+    if sh == "maj7":
+        return _ret(2, _dt([d for d in degs if d not in ("4", "11")], False))
+    if sh in ("maj9", "maj11"):
+        return _ret(2, TENSION_BIT_V6["9"] | _dt([d for d in degs if d not in ("4", "11")], False))
+    if sh == "maj13":
+        return _ret(2, TENSION_BIT_V6["9"] | TENSION_BIT_V6["6_13"] | _dt([d for d in degs if d not in ("4", "11")], False))
+    if sh == "min7":
+        return _ret(9 if "b5" in dset else 7, _dt([d for d in degs if d != "b5"], True))
+    if sh == "min9":
+        return _ret(7, TENSION_BIT_V6["9"] | _dt(degs, True))
+    if sh == "min11":
+        return _ret(9 if "b5" in dset else 7, TENSION_BIT_V6["9"] | TENSION_BIT_V6["4_11"] | _dt([d for d in degs if d != "b5"], True))
+    if sh == "min13":
+        return _ret(7, TENSION_BIT_V6["9"] | TENSION_BIT_V6["6_13"] | _dt(degs, True))
+    if sh == "minmaj7":
+        return _ret(8, _dt(degs, True))
+    if sh == "hdim7":
+        return _ret(9, _dt(degs, True))
+    if sh in ("dim", "dim7"):
+        return _ret(10, 0)
+    if sh == "aug":
+        return _ret(11, 0)
+    if sh == "aug7":
+        return _ret(4, TENSION_BIT_V6["b13_#5"] | _dt(degs, False))
+    if sh in ("7", "9", "13"):
+        base_tm = TENSION_BIT_V6["9"] if sh == "9" else ((TENSION_BIT_V6["9"] | TENSION_BIT_V6["6_13"]) if sh == "13" else 0)
+        tm = base_tm | _dt(degs, False)
+        alt_bits = TENSION_BIT_V6["b9"] | TENSION_BIT_V6["#9"] | TENSION_BIT_V6["b13_#5"]
+        return _ret(4 if ((tm & alt_bits) or ("b5" in dset)) else 3, tm)
+    if sh == "11":
+        return _ret(13, TENSION_BIT_V6["9"] | TENSION_BIT_V6["4_11"] | _dt(degs, False))
+    if sh in ("sus2", "7sus2"):
+        return _ret(12, 0)
+    if sh in ("sus", "sus4", "7sus4", "9sus4"):
+        base_tm = TENSION_BIT_V6["4_11"] | (TENSION_BIT_V6["9"] if sh == "9sus4" else 0)
+        return _ret(13, base_tm | _dt(degs, False))
+
+    return _fallback(rid)
+
+
+def chord_chroma_targets_v6(
+    root_id: int,
+    skel14_id: int,
+    tension_mask: int = 0,
+    bass_id: int = BASS_NONE_ID,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute exact 12-dim `(shell_chroma, full_chroma)` for v6 `(root_id, skel14_id, tension_mask, bass_id)`."""
+    shell = np.zeros(12, dtype=np.float32)
+    full = np.zeros(12, dtype=np.float32)
+    if root_id < 0 or root_id >= 12:
+        return shell, full
+
+    if 0 <= skel14_id < N_SKELETONS_V6:
+        for iv in _SKEL14_CORE_INTERVALS[skel14_id]:
+            pc = (root_id + iv) % 12
+            shell[pc] = 1.0
+            full[pc] = 1.0
+        # 7th for sus4 extended chords (9sus4 / 13sus4 / 7b9sus4)
+        if skel14_id == 13 and (tension_mask & (TENSION_BIT_V6["9"] | TENSION_BIT_V6["b9"] | TENSION_BIT_V6["6_13"])):
+            shell[(root_id + 10) % 12] = 1.0
+            full[(root_id + 10) % 12] = 1.0
+        for b_idx, sem in enumerate(_TENSION_SEMITONES_V6):
+            if tension_mask & (1 << b_idx):
+                full[(root_id + sem) % 12] = 1.0
+    else:
+        shell[root_id] = 1.0
+        full[root_id] = 1.0
+        full[(root_id + 7) % 12] = 1.0
+
+    if 0 <= bass_id < 12:
+        shell[bass_id] = 1.0
+        full[bass_id] = 1.0
+
+    return shell, full
+
+
+def assemble_v6_chord_name(
+    root_id: int,
+    skel14_id: int,
+    tensions: np.ndarray | int = 0,
+    bass_id: int = BASS_NONE_ID,
+    prefer_flats: bool = False,
+    threshold: float = 0.45,
+    rel_sustain: np.ndarray | None = None,
+    key_id: int | None = None,
+) -> str:
+    """Deterministically assemble a clean Jazz/Pop chord symbol from v6 decomposed predictions.
+
+    Supports 6th-family (`6, m6, 6/9, m6/9`), compound extensions (`add4, madd4, maj9#11, 9(13), 13b9,
+    7#9, 7(#5,b9), m11b5, 7b9sus4, 13b9sus4`), and guarantees 0% banned chords (`maj11, dom11, m7b9,
+    m7#11, m7b13, b5, 7sus2`).
+    """
+    if root_id < 0 or root_id >= 12 or skel14_id < 0 or skel14_id >= N_SKELETONS_V6:
+        return "N"
+
+    names = ROOT_NAMES_FLAT if prefer_flats else ROOT_NAMES
+    r = int(root_id)
+    sk = int(skel14_id)
+    b = int(bass_id) if (0 <= int(bass_id) < 12 and int(bass_id) != r) else BASS_NONE_ID
+
+    if isinstance(tensions, (int, np.integer)):
+        mask = int(tensions)
+        t_b9 = bool(mask & 1)
+        t_9 = bool(mask & 2)
+        t_s9 = bool(mask & 4)
+        t_11 = bool(mask & 8)
+        t_s11 = bool(mask & 16)
+        t_b13 = bool(mask & 32)
+        t_13 = bool(mask & 64)
+    else:
+        tp = np.asarray(tensions, dtype=np.float32)
+        t_b9 = bool(tp[0] >= threshold)
+        t_9 = bool(tp[1] >= threshold)
+        t_s9 = bool(tp[2] >= threshold)
+        t_11 = bool(tp[3] >= threshold)
+        t_s11 = bool(tp[4] >= threshold)
+        t_b13 = bool(tp[5] >= threshold)
+        t_13 = bool(tp[6] >= threshold)
+
+    # Power chord (missing 3rd) key-aware major/minor fallback when sustain confirms absent 3rd & b3
+    if rel_sustain is not None and sk in (0, 5) and b == BASS_NONE_ID:
+        s3, sb3, s5 = float(rel_sustain[4]), float(rel_sustain[3]), float(rel_sustain[7])
+        if s3 < 0.16 and sb3 < 0.16 and abs(s3 - sb3) < 0.08 and s5 >= 0.30:
+            q_dia = resolve_power_chord_quality_by_key(r, key_id, default_qual=(0 if sk == 0 else 1))
+            sk = 0 if q_dia == 0 else 5
+
+    # Half-diminished Xm7b5 over its minor 3rd Y = (X + 3) % 12 === root-position Ym6
+    if sk == 9 and b == (r + 3) % 12:
+        r = b
+        sk = 6
+        b = BASS_NONE_ID
+
+    suffix = ""
+    if sk == 0:  # MAJ_SHELL
+        if t_11 and not t_9:
+            suffix = "add4"
+        elif t_9:
+            suffix = "add9"
+    elif sk == 1:  # MAJ6_SHELL
+        suffix = "6/9" if t_9 else "6"
+    elif sk == 2:  # MAJ7_SHELL
+        if t_s11 and t_9:
+            suffix = "maj9#11"
+        elif t_s11:
+            suffix = "maj7#11"
+        elif t_13:
+            suffix = "maj13"
+        elif t_9:
+            suffix = "maj9"
+        else:
+            suffix = "maj7"
+    elif sk == 3:  # DOM7_NAT
+        if t_s11 and t_13:
+            suffix = "13#11"
+        elif t_s11 and t_9:
+            suffix = "9#11"
+        elif t_s11:
+            suffix = "7#11"
+        elif t_13 and t_9:
+            suffix = "9(13)"
+        elif t_13:
+            suffix = "13"
+        elif t_9:
+            suffix = "9"
+        else:
+            suffix = "7"
+    elif sk == 4:  # DOM7_ALT
+        alts: list[str] = []
+        if t_s11:
+            alts.append("b5")
+        if t_b13:
+            alts.append("#5")
+        if t_b9:
+            alts.append("b9")
+        if t_s9:
+            alts.append("#9")
+        if t_b9 and t_13 and not t_b13 and not t_s9:
+            suffix = "13b9"
+        elif len(alts) >= 3:
+            suffix = "7alt"
+        elif len(alts) == 2:
+            suffix = f"7({','.join(alts)})"
+        elif len(alts) == 1:
+            suffix = "7b13" if (alts[0] == "#5" and rel_sustain is not None and float(rel_sustain[7]) >= 0.35) else f"7{alts[0]}"
+        else:
+            suffix = "7alt"
+    elif sk == 5:  # MIN_SHELL
+        if t_11 and not t_9:
+            suffix = "madd4"
+        elif t_9:
+            suffix = "madd9"
+        else:
+            suffix = "m"
+    elif sk == 6:  # MIN6_SHELL
+        suffix = "m6/9" if t_9 else "m6"
+    elif sk == 7:  # MIN7_SHELL (banned m7b9, m7#11, m7b13 are structurally impossible here)
+        if t_13:
+            suffix = "m13"
+        elif t_11:
+            suffix = "m11"
+        elif t_9:
+            suffix = "m9"
+        else:
+            suffix = "m7"
+    elif sk == 8:  # MIN_MAJ7
+        suffix = "m(maj9)" if t_9 else "m(maj7)"
+    elif sk == 9:  # HDIM_SHELL
+        suffix = "m11b5" if t_11 else "m7b5"
+    elif sk == 10:  # DIM_SHELL
+        if rel_sustain is not None and float(rel_sustain[9]) >= 0.42:
+            suffix = "dim7"
+        else:
+            suffix = "dim"
+    elif sk == 11:  # AUG_SHELL
+        suffix = "aug"
+    elif sk == 12:  # SUS2_SHELL (banned 7sus2 structurally impossible)
+        suffix = "sus2"
+    elif sk == 13:  # SUS4_SHELL
+        if t_b9 and t_13:
+            suffix = "13b9sus4"
+        elif t_b9:
+            suffix = "7b9sus4"
+        elif t_13:
+            suffix = "13sus4"
+        elif t_9:
+            suffix = "9sus4"
+        elif rel_sustain is not None and float(rel_sustain[10]) >= 0.38:
+            suffix = "7sus4"
+        else:
+            suffix = "sus4"
+
+    chord_str = f"{names[r]}{suffix}"
+    if b != BASS_NONE_ID:
+        chord_str = f"{chord_str}/{names[b]}"
+    return chord_str

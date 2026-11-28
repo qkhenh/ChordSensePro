@@ -10,9 +10,13 @@ import torch.nn.functional as F
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
 
 from src.music_theory import (
+    N_INVERSIONS_V6,
     N_SKELETONS,
+    N_SKELETONS_V6,
+    N_TENSIONS_V6,
     REL_PITCH_INDEX,
     ROOT_SILENCE_ID,
+    SKEL14_BASE_QE,
     SKEL_TYPE_MASK,
     TYPE_TENSION_REL_MASK,
     TYPE_TO_QE,
@@ -142,6 +146,216 @@ def decode_v5_batch(
         "skel": skel_pred,
         "key": key_pred,
     }
+
+
+@torch.no_grad()
+def decode_v6_batch(
+    outputs: dict[str, torch.Tensor],
+    crf_module: torch.nn.Module,
+    crf_stride: int = 2,
+    slash_bass_threshold: float = 0.45,
+    tension_threshold: float = 0.45,
+) -> dict[str, torch.Tensor]:
+    """Decode `ChordModelV6` outputs into frame-level `(root, skel14, tension_bits, inversion, bass, true_bass, boundary, key)`."""
+    crf_emissions = outputs["crf_emissions"]                      # (B, T_crf, 169)
+    boundary_prob_crf = outputs.get("boundary_prob_crf")          # (B, T_crf)
+    tension_logits_by_root = outputs["tension_logits_by_root"]    # (B, T, 12, 7)
+    inv_logits_by_root = outputs["inv_logits_by_root"]            # (B, T, 12, 5)
+    bass_logits = outputs["bass_logits"]                          # (B, T, 13)
+    true_bass_logits = outputs["true_bass_logits"]                # (B, T, 13)
+    boundary_logits = outputs["boundary_logits"]                  # (B, T, 2)
+    key_logits = outputs["key_logits"]                            # (B, T, 24)
+
+    bsz, seq_len = tension_logits_by_root.shape[:2]
+    dev = tension_logits_by_root.device
+
+    crf_states_ds = crf_module.decode(crf_emissions, boundary_prob=boundary_prob_crf)
+    if crf_stride > 1:
+        crf_states = crf_states_ds.repeat_interleave(crf_stride, dim=1)[:, :seq_len]
+        if crf_states.shape[1] < seq_len:
+            crf_states = F.pad(crf_states, (0, seq_len - crf_states.shape[1]), value=0)
+    else:
+        crf_states = crf_states_ds[:, :seq_len]
+
+    is_silence = crf_states <= 0
+    active_idx = (crf_states - 1).clamp(min=0)
+    root_pred = torch.where(is_silence, torch.full_like(crf_states, ROOT_SILENCE_ID), active_idx // N_SKELETONS_V6)
+    skel14_pred = torch.where(is_silence, torch.full_like(crf_states, -1), active_idx % N_SKELETONS_V6)
+
+    safe_r = root_pred.clamp(0, 11)
+    b_idx = torch.arange(bsz, device=dev)[:, None].expand(bsz, seq_len)
+    t_idx = torch.arange(seq_len, device=dev)[None, :].expand(bsz, seq_len)
+
+    t_prob = torch.sigmoid(tension_logits_by_root[b_idx, t_idx, safe_r].float())  # (B, T, 7)
+    tension_bits = (t_prob >= tension_threshold) & (~is_silence.unsqueeze(-1))
+
+    inv_pred = torch.where(
+        is_silence,
+        torch.full_like(root_pred, -1),
+        inv_logits_by_root[b_idx, t_idx, safe_r].argmax(dim=-1),
+    )
+
+    tb_prob = F.softmax(true_bass_logits.float(), dim=-1)
+    true_bass_pred = torch.where(is_silence, torch.full_like(root_pred, ROOT_SILENCE_ID), tb_prob[:, :, :12].argmax(dim=-1))
+
+    bass_prob = F.softmax(bass_logits.float(), dim=-1)
+    bass_prob_mix = 0.65 * bass_prob + 0.35 * F.pad(tb_prob[:, :, :12], (0, 1))
+    root_bp = bass_prob_mix.gather(-1, safe_r.unsqueeze(-1)).squeeze(-1)
+    bass_adj = bass_prob_mix.clone()
+    bass_adj.scatter_(-1, safe_r.unsqueeze(-1), 0.0)
+    bass_adj[:, :, 12] = bass_adj[:, :, 12] + root_bp
+    slash_p, slash_id = bass_adj[:, :, :12].max(dim=-1)
+    use_slash = (~is_silence) & (slash_p >= slash_bass_threshold) & (slash_p > bass_adj[:, :, 12])
+    bass_pred = torch.where(use_slash, slash_id, torch.full_like(slash_id, 12))
+
+    # Map skel14 -> representative legacy (quality, ext) for quick cross-version tracking
+    sk_qe = torch.tensor(SKEL14_BASE_QE, dtype=torch.long, device=dev)
+    safe_sk = skel14_pred.clamp(0, N_SKELETONS_V6 - 1)
+    qual_pred = torch.where(is_silence, torch.full_like(root_pred, -1), sk_qe[safe_sk, 0])
+    ext_pred = torch.where(is_silence, torch.full_like(root_pred, -1), sk_qe[safe_sk, 1])
+
+    return {
+        "root": root_pred,
+        "skel14": skel14_pred,
+        "quality": qual_pred,
+        "ext": ext_pred,
+        "tension_bits": tension_bits.to(torch.int64),
+        "inversion": inv_pred,
+        "bass": bass_pred,
+        "true_bass": true_bass_pred,
+        "boundary_prob": torch.sigmoid(boundary_logits[:, :, 0].float()),
+        "key": key_logits.argmax(dim=-1),
+    }
+
+
+def compute_v6_metrics(
+    root_pred: np.ndarray,
+    root_true: np.ndarray,
+    skel_pred: np.ndarray,
+    skel_true: np.ndarray,
+    tension_pred: np.ndarray,       # (N, 7) int/bool
+    tension_true: np.ndarray,       # (N, 7) float/int
+    tension_valid: np.ndarray,      # (N,) bool
+    inv_pred: np.ndarray,
+    inv_true: np.ndarray,
+    bass_pred: np.ndarray,
+    bass_true: np.ndarray,
+    true_bass_pred: np.ndarray,
+    true_bass_true: np.ndarray,
+    key_pred: np.ndarray | None = None,
+    key_true: np.ndarray | None = None,
+    bnd_prob: np.ndarray | None = None,
+    bnd_true: np.ndarray | None = None,
+    chord_dur_ms: np.ndarray | None = None,
+) -> dict[str, float]:
+    """Compute Model v6 generalization metrics and the Composite Validation Score (`composite_val_score`)."""
+    res: dict[str, float] = {}
+
+    chord_mask = (root_true >= 0) & (root_true < 12)
+    res["root_acc"] = float(accuracy_score(root_true[chord_mask], root_pred[chord_mask])) if chord_mask.any() else 0.0
+
+    sil_mask = root_true == ROOT_SILENCE_ID
+    if sil_mask.any():
+        res["silence_acc"] = float((root_pred[sil_mask] == ROOT_SILENCE_ID).mean())
+
+    sk_mask = chord_mask & (skel_true >= 0) & (skel_true < N_SKELETONS_V6)
+    if sk_mask.any():
+        sk_ok = (root_pred[sk_mask] == root_true[sk_mask]) & (skel_pred[sk_mask] == skel_true[sk_mask])
+        res["skel14_acc"] = float(sk_ok.mean())
+        res["skeleton_acc"] = res["skel14_acc"]
+        # 6th-family F1 (MAJ6_SHELL=1, MIN6_SHELL=6)
+        is_six_t = (skel_true[sk_mask] == 1) | (skel_true[sk_mask] == 6)
+        is_six_p = (skel_pred[sk_mask] == 1) | (skel_pred[sk_mask] == 6)
+        res["sixth_chord_f1"] = float(f1_score(is_six_t.astype(int), is_six_p.astype(int), zero_division=0)) if is_six_t.any() else 0.0
+    else:
+        res["skel14_acc"] = 0.0
+        res["skeleton_acc"] = 0.0
+        res["sixth_chord_f1"] = 0.0
+
+    # Short Passing Chord F1 / Accuracy (chords <= 800ms)
+    if chord_dur_ms is not None:
+        short_mask = sk_mask & (chord_dur_ms > 0.0) & (chord_dur_ms <= 800.0)
+        if short_mask.any():
+            res["short_passing_chord_f1"] = float(
+                ((root_pred[short_mask] == root_true[short_mask]) & (skel_pred[short_mask] == skel_true[short_mask])).mean()
+            )
+        else:
+            res["short_passing_chord_f1"] = res["skel14_acc"]
+    else:
+        res["short_passing_chord_f1"] = res["skel14_acc"]
+
+    # 7-D Tension Macro F1
+    tv = chord_mask & tension_valid.astype(bool)
+    if tv.any():
+        tp = (tension_pred[tv] > 0.5).astype(int)
+        tt = (tension_true[tv] > 0.5).astype(int)
+        per_t = [float(f1_score(tt[:, i], tp[:, i], zero_division=0)) for i in range(N_TENSIONS_V6) if tt[:, i].any()]
+        res["tension_macro_f1"] = float(np.mean(per_t)) if per_t else 0.0
+    else:
+        res["tension_macro_f1"] = 0.0
+
+    # TrueBass, SlashBass & 1st-Inversion F1
+    tb_mask = (true_bass_true >= 0) & (true_bass_true < 12)
+    res["true_bass_acc"] = float(accuracy_score(true_bass_true[tb_mask], true_bass_pred[tb_mask])) if tb_mask.any() else 0.0
+
+    bp, bt = _masked(bass_pred, bass_true)
+    res["bass_acc"] = float(accuracy_score(bt, bp)) if len(bt) else 0.0
+    slash_mask = (bass_true >= 0) & (bass_true < 12)
+    if slash_mask.any():
+        res["bass_slash_acc"] = float(accuracy_score(bass_true[slash_mask], bass_pred[slash_mask]))
+        res["bass_slash_f1"] = float(
+            f1_score(bass_true[slash_mask], bass_pred[slash_mask], labels=list(range(12)), average="macro", zero_division=0)
+        )
+    else:
+        res["bass_slash_acc"] = 0.0
+        res["bass_slash_f1"] = 0.0
+
+    inv_mask = (inv_true >= 0) & (inv_true < N_INVERSIONS_V6)
+    if inv_mask.any():
+        res["slash_inv1_f1"] = float(
+            f1_score((inv_true[inv_mask] == 1).astype(int), (inv_pred[inv_mask] == 1).astype(int), zero_division=0)
+        )
+    else:
+        res["slash_inv1_f1"] = 0.0
+
+    if bnd_prob is not None and bnd_true is not None:
+        bt_bin = (bnd_true >= 0.5).astype(int)
+        bp_bin = (bnd_prob >= 0.45).astype(int)
+        res["boundary_f1"] = float(f1_score(bt_bin, bp_bin, zero_division=0)) if bt_bin.any() else 0.0
+
+    if key_pred is not None and key_true is not None:
+        kp, kt = _masked(key_pred, key_true)
+        if len(kt):
+            exact_k = kp == kt
+            rel_maj = (kt - 12 + 3) % 12
+            rel_min = 12 + ((kt + 9) % 12)
+            rel_eq = np.where(kt < 12, kp == rel_min, kp == rel_maj)
+            res["key_acc"] = float(exact_k.mean())
+            res["key_rel_acc"] = float((exact_k | rel_eq).mean())
+
+    exact_mask = sk_mask & tv & (bass_true != -100)
+    if exact_mask.any():
+        tp_m = (tension_pred[exact_mask] > 0.5).astype(int)
+        tt_m = (tension_true[exact_mask] > 0.5).astype(int)
+        exact_ok = (
+            (root_pred[exact_mask] == root_true[exact_mask])
+            & (skel_pred[exact_mask] == skel_true[exact_mask])
+            & np.all(tp_m == tt_m, axis=-1)
+            & (bass_pred[exact_mask] == bass_true[exact_mask])
+        )
+        res["chord_acc"] = float(exact_ok.mean())
+    else:
+        res["chord_acc"] = res["skel14_acc"]
+
+    # Composite Generalization Score (Section 5.4 of 80_plan_v6_full_retrain.md)
+    res["composite_val_score"] = float(
+        0.30 * res["skel14_acc"]
+        + 0.25 * res["short_passing_chord_f1"]
+        + 0.20 * res["bass_slash_f1"]
+        + 0.15 * res["tension_macro_f1"]
+        + 0.10 * res["sixth_chord_f1"]
+    )
+    return res
 
 
 def compute_metrics(
@@ -337,12 +551,14 @@ def evaluate_split(
 
     from src.config import load_config
     from src.dataset import ChordDataset
-    from src.losses import ChordLoss, ChordLossV5
+    from src.losses import ChordLoss, ChordLossV5, ChordLossV6
     from src.model import build_model
     from src.train import load_checkpoint
 
     cfg = load_config(cfg_path)
-    is_v5 = getattr(cfg.model, "arch_version", 4) >= 5
+    arch = getattr(cfg.model, "arch_version", 4)
+    is_v6 = arch >= 6
+    is_v5 = arch >= 5
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     ds = ChordDataset(cfg, split=split)
@@ -364,7 +580,81 @@ def evaluate_split(
 
     use_amp = cfg.train.fp16 and device.type == "cuda"
 
-    if is_v5:
+    if is_v6:
+        criterion_v6 = ChordLossV6(
+            weights=cfg.train.loss_weights,
+            focal_gamma=cfg.train.focal_gamma,
+            label_smoothing=float(getattr(cfg.train, "label_smoothing", 0.08)),
+            crf_stride=cfg.model.crf_stride,
+            crf_prior_reg=float(getattr(cfg.train, "crf_prior_reg", 1e-3)),
+        ).to(device)
+        all_rp, all_rt = [], []
+        all_sp, all_st = [], []
+        all_tp, all_tt, all_tv = [], [], []
+        all_ip, all_it = [], []
+        all_bp, all_bt = [], []
+        all_tbp, all_tbt = [], []
+        all_kp, all_kt = [], []
+        all_bndp, all_bndt = [], []
+        all_dur = []
+        total_loss = 0.0
+        n_batches = 0
+
+        with torch.no_grad():
+            for batch in loader:
+                gpu_batch = {
+                    k: (v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v)
+                    for k, v in batch.items()
+                }
+                with autocast("cuda", enabled=use_amp):
+                    outputs = model(gpu_batch["wav"], frame_rms_db=gpu_batch["frame_rms_db"])
+                    loss, _ = criterion_v6(outputs, gpu_batch, model.crf)
+
+                preds = decode_v6_batch(outputs, model.crf, crf_stride=cfg.model.crf_stride)
+                T = min(preds["root"].shape[1], gpu_batch["root"].shape[1])
+
+                total_loss += float(loss.item())
+                n_batches += 1
+                all_rp.append(preds["root"][:, :T].cpu())
+                all_rt.append(gpu_batch["root"][:, :T].cpu())
+                all_sp.append(preds["skel14"][:, :T].cpu())
+                all_st.append(gpu_batch["skel14"][:, :T].cpu())
+                all_tp.append(preds["tension_bits"][:, :T].cpu())
+                all_tt.append(gpu_batch["tension_bits"][:, :T].cpu())
+                all_tv.append(gpu_batch["tension_valid"][:, :T].cpu())
+                all_ip.append(preds["inversion"][:, :T].cpu())
+                all_it.append(gpu_batch["inversion"][:, :T].cpu())
+                all_bp.append(preds["bass"][:, :T].cpu())
+                all_bt.append(gpu_batch["bass"][:, :T].cpu())
+                all_tbp.append(preds["true_bass"][:, :T].cpu())
+                all_tbt.append(gpu_batch["true_bass"][:, :T].cpu())
+                all_kp.append(preds["key"][:, :T].cpu())
+                all_kt.append(gpu_batch["local_key"][:, :T].cpu())
+                all_bndp.append(preds["boundary_prob"][:, :T].cpu())
+                all_bndt.append(gpu_batch["boundary_chord"][:, :T].cpu())
+                all_dur.append(gpu_batch["chord_dur_ms"][:, :T].cpu())
+
+        metrics = compute_v6_metrics(
+            torch.cat(all_rp).reshape(-1).numpy(),
+            torch.cat(all_rt).reshape(-1).numpy(),
+            torch.cat(all_sp).reshape(-1).numpy(),
+            torch.cat(all_st).reshape(-1).numpy(),
+            torch.cat(all_tp).reshape(-1, N_TENSIONS_V6).numpy(),
+            torch.cat(all_tt).reshape(-1, N_TENSIONS_V6).numpy(),
+            torch.cat(all_tv).reshape(-1).numpy(),
+            torch.cat(all_ip).reshape(-1).numpy(),
+            torch.cat(all_it).reshape(-1).numpy(),
+            torch.cat(all_bp).reshape(-1).numpy(),
+            torch.cat(all_bt).reshape(-1).numpy(),
+            torch.cat(all_tbp).reshape(-1).numpy(),
+            torch.cat(all_tbt).reshape(-1).numpy(),
+            key_pred=torch.cat(all_kp).reshape(-1).numpy(),
+            key_true=torch.cat(all_kt).reshape(-1).numpy(),
+            bnd_prob=torch.cat(all_bndp).reshape(-1).numpy(),
+            bnd_true=torch.cat(all_bndt).reshape(-1).numpy(),
+            chord_dur_ms=torch.cat(all_dur).reshape(-1).numpy(),
+        )
+    elif is_v5:
         criterion_v5 = ChordLossV5(
             weights=cfg.train.loss_weights,
             focal_gamma=cfg.train.focal_gamma,

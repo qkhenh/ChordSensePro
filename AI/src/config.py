@@ -18,6 +18,8 @@ class ModelCfg:
     n_bass: int = 13
     n_types: int = 41
     n_skeletons: int = 12
+    n_tensions: int = 7
+    n_inversions: int = 5
     n_keys: int = 24
     head_hidden: int = 128
     ext_head_hidden: int = 256
@@ -28,6 +30,8 @@ class ModelCfg:
     conformer_layers: int = 4
     conformer_heads: int = 4
     conformer_conv_kernel: int = 15
+    drop_path: float = 0.0
+    global_ctx_stride: int = 15
     crf_stride: int = 4
     chunk_s: int = 5
     silence_db_threshold: float = -45.0
@@ -53,6 +57,10 @@ class TrainCfg:
     early_stop_patience: int = 3
     loss_weights: list[float] = field(default_factory=lambda: [0.4, 0.3, 0.2, 0.1])
     focal_gamma: float = 2.0
+    label_smoothing: float = 0.0
+    ema_decay: float = 0.0
+    max_synthetic_ratio: float = 0.04
+    crf_prior_reg: float = 1e-3
     fp16: bool = True
     seed: int = 42
     num_workers: int = 2
@@ -66,6 +74,7 @@ class LoRACfg:
     alpha: int = 32
     dropout: float = 0.1
     target_modules: list[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
+    layer_range: list[int] | None = None
 
 
 @dataclass
@@ -83,6 +92,9 @@ class AugmentCfg:
     sustained_tension_prob: float = 0.2
     silence_intro_prob: float = 0.0
     bass_dropout_prob: float = 0.0
+    high_reg_piano_prob: float = 0.0
+    cqt_spec_aug_prob: float = 0.0
+    raw_demucs_mixup_prob: float = 0.0
 
 
 @dataclass

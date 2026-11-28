@@ -1,0 +1,84 @@
+# Model v6 — Phase 1: Warmup New v6 Context, Boundary, Factorized Heads & Dynamic CRF (Frozen MERT)
+# Fast 8-epoch schedule with full Anti-Overfitting Guardrails (DropPath=0.15, LabelSmoothing=0.08, CQT SpecAugment, EMA)
+data_dir: "../DE/data/export/v4"
+crop_s: 20
+sample_rate: 24000
+checkpoint_dir: "results/checkpoints/v6_20s_p1"
+results_csv: "results/results_v6_p1.csv"
+
+model:
+  name: "m-a-p/MERT-v1-330M"
+  arch_version: 6
+  n_layers: 25
+  hidden_dim: 1024
+  n_root: 13
+  n_quality: 6
+  n_ext: 15
+  n_bass: 13
+  n_types: 41
+  n_skeletons: 14
+  n_tensions: 7
+  n_inversions: 5
+  n_keys: 24
+  head_hidden: 128
+  bass_head_hidden: 128
+  type_head_hidden: 192
+  context_dim: 256
+  conformer_layers: 4
+  conformer_heads: 4
+  conformer_conv_kernel: 15
+  drop_path: 0.15
+  global_ctx_stride: 15
+  crf_stride: 2
+  chunk_s: 5
+  silence_db_threshold: -45.0
+  bass_first: true
+  cqt_bins: 96
+  dropout: 0.25
+  frame_level: true
+
+train:
+  phase: 1
+  epochs: 8
+  batch_size: 8
+  grad_accum_steps: 2
+  lr_head: 3.5e-4
+  lr_lora: 0.0
+  weight_decay: 0.02
+  warmup_ratio: 0.08
+  grad_clip: 1.0
+  early_stop_patience: 4
+  # [crf_169, boundary, tension_7d, bass_inv, root_skel14, chroma_physbass, local_key]
+  loss_weights: [0.28, 0.16, 0.18, 0.16, 0.10, 0.07, 0.05]
+  focal_gamma: 2.0
+  label_smoothing: 0.08
+  ema_decay: 0.995
+  max_synthetic_ratio: 0.04
+  crf_prior_reg: 1.0e-3
+  fp16: true
+  seed: 42
+  num_workers: 4
+
+lora:
+  enabled: false
+  r: 16
+  alpha: 32
+  dropout: 0.15
+  target_modules: ["q_proj", "v_proj", "k_proj", "out_proj"]
+  layer_range: [8, 21]
+
+augment:
+  enabled: true
+  pitch_shift_range: [-5, 6]
+  gain_db: 6.0
+  noise_snr_range: [12, 30]
+  noise_prob: 0.4
+  time_mask_prob: 0.25
+  time_mask_max_ms: 140
+  n_time_masks: 2
+  melody_overlay_prob: 0.35
+  sustained_tension_prob: 0.20
+  silence_intro_prob: 0.20
+  bass_dropout_prob: 0.25
+  high_reg_piano_prob: 0.18
+  cqt_spec_aug_prob: 0.30

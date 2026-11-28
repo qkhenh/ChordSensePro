@@ -1,4 +1,5 @@
 from __future__ import annotations
+import math
 from pathlib import Path
 
 import numpy as np
@@ -6,7 +7,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-from src.augment import pitch_shift_bass, pitch_shift_root
+from src.augment import apply_cqt_spec_augment, pitch_shift_bass, pitch_shift_root
 from src.config import Config
 from src.model import (
     NORM_STD_FLOOR,
@@ -16,10 +17,17 @@ from src.model import (
     mert_output_length,
 )
 from src.music_theory import (
+    BASS_NONE_ID,
+    N_SKELETONS_V6,
+    N_TENSIONS_V6,
     ROOT_SILENCE_ID,
+    SKEL14_BASE_QE,
     chord_chroma_targets,
+    chord_chroma_targets_v6,
     encode_crf_skeleton_state,
+    encode_crf_skeleton_state_v6,
     estimate_local_keys,
+    parse_v6_label_targets,
 )
 
 
@@ -47,9 +55,22 @@ class ChordDataset(Dataset):
         self.chunk_samples = cfg.chunk_samples
         self.sr = cfg.sample_rate
         self.is_v5 = getattr(cfg.model, "arch_version", 4) >= 5
+        self.is_v6 = getattr(cfg.model, "arch_version", 4) >= 6
 
         split_dir = Path(cfg.data_dir) / split
         chords_df = pd.read_parquet(split_dir / "chords.parquet")
+
+        # Anti-Overfitting Guardrail for Synthetic Rare Data:
+        # Phase 2 (LoRA): strictly 0% synthetic rare songs!
+        # Phase 1 & 3: track synthetic song IDs to cap <= cfg.train.max_synthetic_ratio (default 4%).
+        self._synthetic_songs: set[str] = set()
+        if "is_synthetic_rare" in chords_df.columns:
+            syn_mask = chords_df["is_synthetic_rare"].fillna(False).astype(bool)
+            syn_sids = set(chords_df.loc[syn_mask, "song_id"].unique())
+            if self.is_v6 and split == "train" and int(getattr(cfg.train, "phase", 1)) == 2:
+                chords_df = chords_df.loc[~syn_mask].reset_index(drop=True)
+            else:
+                self._synthetic_songs = syn_sids
 
         self.audio_dir = split_dir / "audio"
         self.song_ids = sorted(chords_df["song_id"].unique())
@@ -78,7 +99,80 @@ class ChordDataset(Dataset):
                 basses = np.where(roots == -100, -100, 12)
             self._fast_chords[sid] = (starts, ends, roots, quals, exts, basses)
 
-            if self.is_v5:
+            if self.is_v6:
+                n_ev = len(starts)
+                skel14s = np.full(n_ev, -100, dtype=np.int64)
+                tension_bits = np.zeros((n_ev, N_TENSIONS_V6), dtype=np.float32)
+                tension_valid = np.zeros(n_ev, dtype=bool)
+                inversions = np.full(n_ev, -100, dtype=np.int64)
+                crfs = np.full(n_ev, -100, dtype=np.int64)
+                shell_c = np.zeros((n_ev, 12), dtype=np.float32)
+                full_c = np.zeros((n_ev, 12), dtype=np.float32)
+                durs_ms = np.maximum(0.0, ends - starts).astype(np.float32)
+
+                has_v4_cols = {"skel14_id", "tension_mask", "tension_valid", "inversion_id"} <= set(g.columns)
+                if has_v4_cols:
+                    s14_col = g["skel14_id"].fillna(-1).astype(np.int64).to_numpy()
+                    tm_col = g["tension_mask"].fillna(0).astype(np.int64).to_numpy()
+                    tv_col = g["tension_valid"].fillna(False).astype(bool).to_numpy()
+                    inv_col = g["inversion_id"].fillna(-1).astype(np.int64).to_numpy()
+                    for k in range(n_ev):
+                        r_k, sk_k, tm_k, b_k = int(roots[k]), int(s14_col[k]), int(tm_col[k]), int(basses[k])
+                        skel14s[k] = sk_k if 0 <= sk_k < N_SKELETONS_V6 else -100
+                        tension_valid[k] = bool(tv_col[k])
+                        inversions[k] = int(inv_col[k]) if 0 <= int(inv_col[k]) < 5 else -100
+                        for bi in range(N_TENSIONS_V6):
+                            if tm_k & (1 << bi):
+                                tension_bits[k, bi] = 1.0
+                        crfs[k] = encode_crf_skeleton_state_v6(r_k, sk_k)
+                        sh_m, fu_m = chord_chroma_targets_v6(r_k, sk_k, tm_k, b_k)
+                        shell_c[k] = sh_m
+                        full_c[k] = fu_m
+                else:
+                    raw_col = g["label_raw"].tolist() if "label_raw" in g.columns else [None] * n_ev
+                    for k in range(n_ev):
+                        r_k, q_k, e_k, b_k = int(roots[k]), int(quals[k]), int(exts[k]), int(basses[k])
+                        raw_s = str(raw_col[k]) if raw_col[k] is not None and pd.notna(raw_col[k]) else None
+                        t6 = parse_v6_label_targets(raw_s, r_k if r_k >= 0 else None, q_k if q_k >= 0 else None, e_k if e_k >= 0 else None, b_k if b_k >= 0 else BASS_NONE_ID)
+                        sk_k = int(t6["skel14_id"])
+                        tm_k = int(t6["tension_mask"])
+                        inv_k = int(t6["inversion_id"])
+                        skel14s[k] = sk_k if 0 <= sk_k < N_SKELETONS_V6 else -100
+                        tension_valid[k] = bool(t6["tension_valid"])
+                        inversions[k] = inv_k if 0 <= inv_k < 5 else -100
+                        for bi in range(N_TENSIONS_V6):
+                            if tm_k & (1 << bi):
+                                tension_bits[k, bi] = 1.0
+                        crfs[k] = encode_crf_skeleton_state_v6(r_k, sk_k)
+                        sh_m, fu_m = chord_chroma_targets_v6(r_k, sk_k, tm_k, b_k)
+                        shell_c[k] = sh_m
+                        full_c[k] = fu_m
+
+                local_keys = estimate_local_keys(starts, ends, roots, quals, exts)
+                true_basses = np.where(
+                    (basses >= 0) & (basses < 12),
+                    basses,
+                    np.where((roots >= 0) & (roots < 12), roots, -100),
+                ).astype(np.int64)
+                self._v5_chords[sid] = {
+                    "starts": starts,
+                    "ends": ends,
+                    "durs_ms": durs_ms,
+                    "roots": roots,
+                    "quals": quals,
+                    "exts": exts,
+                    "basses": basses,
+                    "true_basses": true_basses,
+                    "skel14s": skel14s,
+                    "tension_bits": tension_bits,
+                    "tension_valid": tension_valid,
+                    "inversions": inversions,
+                    "crfs": crfs,
+                    "keys": local_keys,
+                    "shell_c": shell_c,
+                    "full_c": full_c,
+                }
+            elif self.is_v5:
                 n_ev = len(starts)
                 types = np.full(n_ev, -100, dtype=np.int64)
                 skels = np.full(n_ev, -100, dtype=np.int64)
@@ -220,10 +314,26 @@ class ChordDataset(Dataset):
             if sid not in self._crop_bounds:
                 self._crop_bounds[sid] = (lo, hi)
 
+        # Anti-overfitting guardrail: cap synthetic rare-chord items to <= max_synthetic_ratio in Phase 1/3
+        if self.is_v6 and self.split == "train" and self._synthetic_songs:
+            max_ratio = float(getattr(cfg.train, "max_synthetic_ratio", 0.04))
+            real_items = [s for s in self._samples if s[0] not in self._synthetic_songs]
+            syn_items = [s for s in self._samples if s[0] in self._synthetic_songs]
+            if real_items and syn_items:
+                max_syn = int(math.floor(len(real_items) * max_ratio / max(1.0 - max_ratio, 1e-6)))
+                if max_syn <= 0:
+                    self._samples = real_items
+                elif len(syn_items) > max_syn:
+                    rng = np.random.default_rng(int(getattr(cfg.train, "seed", 42)))
+                    keep = rng.choice(len(syn_items), size=max_syn, replace=False)
+                    self._samples = real_items + [syn_items[int(i)] for i in sorted(keep)]
+
     def __len__(self) -> int:
         return len(self._samples)
 
     def __getitem__(self, idx: int) -> dict:
+        if self.is_v6:
+            return self._getitem_v6(idx)
         if self.is_v5:
             return self._getitem_v5(idx)
 
@@ -399,6 +509,203 @@ class ChordDataset(Dataset):
             "song_id": song_id,
         }
 
+    @staticmethod
+    def _compute_gaussian_boundaries(
+        root_arr: np.ndarray,
+        skel_arr: np.ndarray,
+        true_bass_arr: np.ndarray,
+        sigma_frames: float = 2.0,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Build Gaussian-smoothed `[0, 1]` chord-change and bass-change boundary targets (`sigma = 26.7ms`)."""
+        n = len(root_arr)
+        bnd_chord = np.zeros(n, dtype=np.float32)
+        bnd_bass = np.zeros(n, dtype=np.float32)
+        if n <= 1:
+            return bnd_chord, bnd_bass
+
+        rad = max(1, int(round(3.0 * sigma_frames)))
+        offsets = np.arange(-rad, rad + 1, dtype=np.float32)
+        gauss = np.exp(-0.5 * (offsets / float(sigma_frames)) ** 2).astype(np.float32)
+
+        def _stamp(target: np.ndarray, pos_list: np.ndarray) -> None:
+            for p in pos_list:
+                lo = max(0, int(p) - rad)
+                hi = min(n, int(p) + rad + 1)
+                g_lo = lo - (int(p) - rad)
+                g_hi = g_lo + (hi - lo)
+                target[lo:hi] = np.maximum(target[lo:hi], gauss[g_lo:g_hi])
+
+        obs_c = (root_arr[:-1] >= 0) & (root_arr[1:] >= 0)
+        chg_c = obs_c & ((root_arr[1:] != root_arr[:-1]) | (skel_arr[1:] != skel_arr[:-1]))
+        _stamp(bnd_chord, np.nonzero(chg_c)[0] + 1)
+
+        obs_b = (true_bass_arr[:-1] >= 0) & (true_bass_arr[:-1] < 12) & (true_bass_arr[1:] >= 0) & (true_bass_arr[1:] < 12)
+        chg_b = obs_b & (true_bass_arr[1:] != true_bass_arr[:-1])
+        _stamp(bnd_bass, np.nonzero(chg_b)[0] + 1)
+        return bnd_chord, bnd_bass
+
+    def _lookup_v6_frames(
+        self,
+        song_id: str,
+        frame_times: np.ndarray,
+        min_eval_ms: float | None = None,
+        max_eval_ms: float | None = None,
+    ) -> dict[str, np.ndarray]:
+        n_frames = len(frame_times)
+        out = {
+            "root": np.full(n_frames, -100, dtype=np.int64),
+            "quality": np.full(n_frames, -100, dtype=np.int64),
+            "ext": np.full(n_frames, -100, dtype=np.int64),
+            "skel14": np.full(n_frames, -100, dtype=np.int64),
+            "tension_bits": np.zeros((n_frames, N_TENSIONS_V6), dtype=np.float32),
+            "tension_valid": np.zeros(n_frames, dtype=bool),
+            "inversion": np.full(n_frames, -100, dtype=np.int64),
+            "crf_state": np.full(n_frames, -100, dtype=np.int64),
+            "bass": np.full(n_frames, -100, dtype=np.int64),
+            "true_bass": np.full(n_frames, -100, dtype=np.int64),
+            "local_key": np.full(n_frames, -100, dtype=np.int64),
+            "shell_chroma": np.zeros((n_frames, 12), dtype=np.float32),
+            "full_chroma": np.zeros((n_frames, 12), dtype=np.float32),
+            "chord_dur_ms": np.zeros(n_frames, dtype=np.float32),
+        }
+        vc = self._v5_chords.get(song_id)
+        if vc is None or len(vc["starts"]) == 0 or n_frames == 0:
+            return out
+
+        starts, ends = vc["starts"], vc["ends"]
+        idx = np.searchsorted(starts, frame_times, side="right") - 1
+        safe_idx = np.maximum(idx, 0)
+        valid = (frame_times >= 0.0) & (idx >= 0) & (frame_times < ends[safe_idx])
+        if min_eval_ms is not None:
+            valid &= frame_times >= min_eval_ms
+        if max_eval_ms is not None:
+            valid &= frame_times <= max_eval_ms
+
+        if valid.any():
+            hit = safe_idx[valid]
+            out["root"][valid] = vc["roots"][hit]
+            out["quality"][valid] = vc["quals"][hit]
+            out["ext"][valid] = vc["exts"][hit]
+            out["skel14"][valid] = vc["skel14s"][hit]
+            out["tension_bits"][valid] = vc["tension_bits"][hit]
+            out["tension_valid"][valid] = vc["tension_valid"][hit]
+            out["inversion"][valid] = vc["inversions"][hit]
+            out["crf_state"][valid] = vc["crfs"][hit]
+            out["bass"][valid] = vc["basses"][hit]
+            out["true_bass"][valid] = vc["true_basses"][hit]
+            out["local_key"][valid] = vc["keys"][hit]
+            out["shell_chroma"][valid] = vc["shell_c"][hit]
+            out["full_chroma"][valid] = vc["full_c"][hit]
+            out["chord_dur_ms"][valid] = vc["durs_ms"][hit]
+
+        return out
+
+    def _getitem_v6(self, idx: int) -> dict:
+        song_id, fixed_start, min_eval_ms = self._samples[idx]
+        audio_len = self._audio_lengths[song_id]
+        lo, hi = self._crop_bounds[song_id]
+
+        audio = np.load(self.audio_dir / f"{song_id}.npy", mmap_mode="r")
+        n_chunks = max(1, self.crop_samples // self.chunk_samples)
+        total_samples = n_chunks * self.chunk_samples
+
+        if audio_len >= total_samples:
+            crop_start = int(np.random.randint(lo, hi + 1)) if fixed_start is None else int(fixed_start)
+            raw_crop = audio[crop_start : crop_start + total_samples].astype(np.float32) / 32768.0
+            valid_audio_end_ms = (crop_start + total_samples) / float(self.sr) * 1000.0
+        else:
+            spare = total_samples - audio_len
+            pad_offset = int(np.random.randint(0, spare + 1)) if (self.split == "train" and fixed_start is None) else 0
+            raw_crop = np.random.randn(total_samples).astype(np.float32) * 3e-4
+            raw_crop[pad_offset : pad_offset + audio_len] = audio[:audio_len].astype(np.float32) / 32768.0
+            crop_start = -pad_offset
+            valid_audio_end_ms = audio_len / float(self.sr) * 1000.0
+
+        crop_start_ms = crop_start / float(self.sr) * 1000.0
+        frame_times = mert_chunked_frame_times_ms(crop_start_ms, n_chunks, self.chunk_samples, self.sr)
+
+        labels = self._lookup_v6_frames(
+            song_id,
+            frame_times,
+            min_eval_ms=min_eval_ms,
+            max_eval_ms=(valid_audio_end_ms if self.split != "train" else None),
+        )
+
+        if self.augment_fn is not None:
+            raw_crop, pitch_shift_n = self.augment_fn(raw_crop, self.sr)
+            if pitch_shift_n != 0:
+                vr = (labels["root"] >= 0) & (labels["root"] < 12)
+                labels["root"][vr] = (labels["root"][vr] + pitch_shift_n) % 12
+                vb = (labels["bass"] >= 0) & (labels["bass"] < 12)
+                labels["bass"][vb] = (labels["bass"][vb] + pitch_shift_n) % 12
+                vtb = (labels["true_bass"] >= 0) & (labels["true_bass"] < 12)
+                labels["true_bass"][vtb] = (labels["true_bass"][vtb] + pitch_shift_n) % 12
+                vc_mask = vr & (labels["skel14"] >= 0) & (labels["skel14"] < N_SKELETONS_V6)
+                labels["crf_state"][vc_mask] = 1 + labels["root"][vc_mask] * N_SKELETONS_V6 + labels["skel14"][vc_mask]
+                vk = (labels["local_key"] >= 0) & (labels["local_key"] < 24)
+                is_min_k = labels["local_key"][vk] >= 12
+                labels["local_key"][vk] = np.where(
+                    is_min_k,
+                    12 + ((labels["local_key"][vk] - 12 + pitch_shift_n) % 12),
+                    (labels["local_key"][vk] + pitch_shift_n) % 12,
+                )
+                labels["shell_chroma"] = np.roll(labels["shell_chroma"], pitch_shift_n, axis=-1)
+                labels["full_chroma"] = np.roll(labels["full_chroma"], pitch_shift_n, axis=-1)
+            if hasattr(self.augment_fn, "apply_v6_musical_augment"):
+                raw_crop = self.augment_fn.apply_v6_musical_augment(
+                    raw_crop, self.sr, frame_times, crop_start_ms, labels
+                )
+
+        frame_rms_db = compute_chunked_frame_rms_db(raw_crop, n_chunks, self.chunk_samples)
+        sil_thresh = float(self.cfg.model.silence_db_threshold)
+        in_eval_window = (frame_times >= 0.0) & (frame_times <= valid_audio_end_ms)
+        if self.split == "train":
+            silent_frames = frame_rms_db < sil_thresh
+        else:
+            silent_frames = in_eval_window & (frame_rms_db < (sil_thresh - 3.0)) & (labels["root"] == -100)
+
+        if silent_frames.any():
+            labels["root"][silent_frames] = ROOT_SILENCE_ID
+            labels["quality"][silent_frames] = -100
+            labels["ext"][silent_frames] = -100
+            labels["skel14"][silent_frames] = -100
+            labels["tension_bits"][silent_frames] = 0.0
+            labels["tension_valid"][silent_frames] = False
+            labels["inversion"][silent_frames] = -100
+            labels["crf_state"][silent_frames] = 0
+            labels["bass"][silent_frames] = -100
+            labels["true_bass"][silent_frames] = ROOT_SILENCE_ID
+            labels["shell_chroma"][silent_frames] = 0.0
+            labels["full_chroma"][silent_frames] = 0.0
+            labels["chord_dur_ms"][silent_frames] = 0.0
+
+        bnd_chord, bnd_bass = self._compute_gaussian_boundaries(
+            labels["root"], labels["skel14"], labels["true_bass"]
+        )
+        norm_crop = normalize_chunks_clamped(raw_crop, self.chunk_samples)
+
+        return {
+            "wav": torch.from_numpy(norm_crop),
+            "frame_rms_db": torch.from_numpy(frame_rms_db),
+            "root": torch.from_numpy(labels["root"]),
+            "quality": torch.from_numpy(labels["quality"]),
+            "ext": torch.from_numpy(labels["ext"]),
+            "skel14": torch.from_numpy(labels["skel14"]),
+            "tension_bits": torch.from_numpy(labels["tension_bits"]),
+            "tension_valid": torch.from_numpy(labels["tension_valid"]),
+            "inversion": torch.from_numpy(labels["inversion"]),
+            "crf_state": torch.from_numpy(labels["crf_state"]),
+            "bass": torch.from_numpy(labels["bass"]),
+            "true_bass": torch.from_numpy(labels["true_bass"]),
+            "local_key": torch.from_numpy(labels["local_key"]),
+            "shell_chroma": torch.from_numpy(labels["shell_chroma"]),
+            "full_chroma": torch.from_numpy(labels["full_chroma"]),
+            "boundary_chord": torch.from_numpy(bnd_chord),
+            "boundary_bass": torch.from_numpy(bnd_bass),
+            "chord_dur_ms": torch.from_numpy(labels["chord_dur_ms"]),
+            "song_id": song_id,
+        }
+
     def _lookup_v5_frames(
         self,
         song_id: str,
@@ -556,10 +863,69 @@ class CachedSequenceDataset(Dataset):
                 oct1_scale = float(np.random.uniform(0.02, 0.12))
                 oct2_scale = float(np.random.uniform(0.08, 0.28))
                 drop_end = valid_len if np.random.random() < 0.5 else int(valid_len * np.random.uniform(0.25, 0.55))
-                cqt_win[:drop_end, :12] *= oct1_scale
-                cqt_win[:drop_end, 12:24] *= oct2_scale
+                if cqt_bins == 96:
+                    # v6: 24 bins/oct in low 3 octaves (C1..B1 = 0..23, C2..B2 = 24..47)
+                    cqt_win[:drop_end, :24] *= oct1_scale
+                    cqt_win[:drop_end, 24:48] *= oct2_scale
+                else:
+                    cqt_win[:drop_end, :12] *= oct1_scale
+                    cqt_win[:drop_end, 12:24] *= oct2_scale
+            spec_p = float(getattr(self.base.cfg.augment, "cqt_spec_aug_prob", 0.0))
+            if self.base.is_v6 and spec_p > 0.0 and np.random.random() < spec_p:
+                cqt_win[:valid_len] = apply_cqt_spec_augment(cqt_win[:valid_len])
 
         audio_end_ms = self.base._audio_lengths[sid] / float(self.base.sr) * 1000.0
+        if self.base.is_v6:
+            labels = self.base._lookup_v6_frames(
+                sid,
+                ft_win,
+                max_eval_ms=(audio_end_ms if self.base.split != "train" else None),
+            )
+            sil_thresh = float(self.base.cfg.model.silence_db_threshold)
+            if self.base.split == "train":
+                silent = (np.arange(self.max_frames) < valid_len) & (rms_win < sil_thresh)
+            else:
+                silent = (
+                    (np.arange(self.max_frames) < valid_len)
+                    & (ft_win <= audio_end_ms)
+                    & (rms_win < (sil_thresh - 3.0))
+                    & (labels["root"] == -100)
+                )
+            if silent.any():
+                labels["root"][silent] = ROOT_SILENCE_ID
+                labels["true_bass"][silent] = ROOT_SILENCE_ID
+                labels["skel14"][silent] = -100
+                labels["tension_bits"][silent] = 0.0
+                labels["tension_valid"][silent] = False
+                labels["inversion"][silent] = -100
+                labels["crf_state"][silent] = 0
+                labels["chord_dur_ms"][silent] = 0.0
+            bnd_chord, bnd_bass = self.base._compute_gaussian_boundaries(
+                labels["root"], labels["skel14"], labels["true_bass"]
+            )
+            return {
+                "emb": torch.from_numpy(emb_win),
+                "cqt": torch.from_numpy(cqt_win),
+                "frame_rms_db": torch.from_numpy(rms_win),
+                "root": torch.from_numpy(labels["root"]),
+                "quality": torch.from_numpy(labels["quality"]),
+                "ext": torch.from_numpy(labels["ext"]),
+                "skel14": torch.from_numpy(labels["skel14"]),
+                "tension_bits": torch.from_numpy(labels["tension_bits"]),
+                "tension_valid": torch.from_numpy(labels["tension_valid"]),
+                "inversion": torch.from_numpy(labels["inversion"]),
+                "crf_state": torch.from_numpy(labels["crf_state"]),
+                "bass": torch.from_numpy(labels["bass"]),
+                "true_bass": torch.from_numpy(labels["true_bass"]),
+                "local_key": torch.from_numpy(labels["local_key"]),
+                "shell_chroma": torch.from_numpy(labels["shell_chroma"]),
+                "full_chroma": torch.from_numpy(labels["full_chroma"]),
+                "boundary_chord": torch.from_numpy(bnd_chord),
+                "boundary_bass": torch.from_numpy(bnd_bass),
+                "chord_dur_ms": torch.from_numpy(labels["chord_dur_ms"]),
+                "song_id": sid,
+            }
+
         labels = self.base._lookup_v5_frames(
             sid,
             ft_win,

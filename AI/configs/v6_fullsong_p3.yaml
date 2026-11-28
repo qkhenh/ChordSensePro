@@ -1,0 +1,73 @@
+# Model v6 — Phase 3: 60s Full-Song Cross-Section & Dynamic CRF Polish on Cached Embeddings + 96-bin CQT
+# Fast 8-epoch schedule (~15 min on T4/L4 GPU) refining Intro-to-Chorus attention & DynamicBoundaryCRF
+data_dir: "../DE/data/export/v4"
+crop_s: 60
+sample_rate: 24000
+checkpoint_dir: "results/checkpoints/v6_fullsong_p3"
+results_csv: "results/results_v6_p3.csv"
+
+model:
+  name: "m-a-p/MERT-v1-330M"
+  arch_version: 6
+  n_layers: 25
+  hidden_dim: 1024
+  n_root: 13
+  n_quality: 6
+  n_ext: 15
+  n_bass: 13
+  n_types: 41
+  n_skeletons: 14
+  n_tensions: 7
+  n_inversions: 5
+  n_keys: 24
+  head_hidden: 128
+  bass_head_hidden: 128
+  type_head_hidden: 192
+  context_dim: 256
+  conformer_layers: 4
+  conformer_heads: 4
+  conformer_conv_kernel: 15
+  drop_path: 0.15
+  global_ctx_stride: 15
+  crf_stride: 2
+  chunk_s: 5
+  silence_db_threshold: -45.0
+  bass_first: true
+  cqt_bins: 96
+  dropout: 0.25
+  frame_level: true
+
+train:
+  phase: 3
+  epochs: 8
+  batch_size: 16
+  grad_accum_steps: 1
+  lr_head: 6.0e-5
+  lr_lora: 0.0
+  weight_decay: 0.02
+  warmup_ratio: 0.10
+  grad_clip: 1.0
+  early_stop_patience: 4
+  loss_weights: [0.30, 0.16, 0.18, 0.16, 0.10, 0.05, 0.05]
+  focal_gamma: 2.0
+  label_smoothing: 0.08
+  ema_decay: 0.998
+  max_synthetic_ratio: 0.04
+  crf_prior_reg: 1.0e-3
+  fp16: true
+  seed: 42
+  num_workers: 2
+  cache_dir: "results/v6_emb_cache"
+
+lora:
+  enabled: false
+  r: 16
+  alpha: 32
+  dropout: 0.15
+  target_modules: ["q_proj", "v_proj", "k_proj", "out_proj"]
+  layer_range: [8, 21]
+
+augment:
+  enabled: true
+  pitch_shift_range: [0, 0]
+  cqt_spec_aug_prob: 0.30
